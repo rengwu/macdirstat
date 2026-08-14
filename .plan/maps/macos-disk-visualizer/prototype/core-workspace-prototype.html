@@ -1,0 +1,1155 @@
+<!--
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │  PROTOTYPE — THROWAWAY.  macOS Disk Visualizer · core scanning workspace   │
+  │  Ticket #04. Answers: "What should v1 look & feel like across empty,       │
+  │  choosing, scanning, completed, cancelled, and partially-failed states?"   │
+  │                                                                            │
+  │  This is an HTML mock of a NATIVE AppKit app (NSSplitViewController +       │
+  │  NSOutlineView tree + custom Core Graphics treemap NSView). It exists only  │
+  │  to be reacted to. No production code lives here. Double-click to run —     │
+  │  no server, no build.                                                       │
+  │                                                                            │
+  │  • ◀ / ▶ (or Left/Right arrows) cycle the 3 LAYOUT variants.                │
+  │  • The "State" segmented control jumps to any lifecycle state.              │
+  │  • "Choose…" runs the real flow: chooser → live scan → results.            │
+  │  Treemap layout/coloring here is illustrative — Ticket #05 owns the real    │
+  │  algorithm. Sizes use binary IEC units (KiB/MiB/GiB) per Ticket #01.        │
+  └─────────────────────────────────────────────────────────────────────────┘
+-->
+<title>Disk Visualizer Prototype</title>
+<style>
+  /* ---- macOS system tokens (light) ---- */
+  :root{
+    --sf: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Monaco, monospace;
+
+    --win-bg:#ECECEC;          /* titlebar / toolbar material */
+    --content-bg:#FFFFFF;
+    --sidebar-bg:#F3F3F4;
+    --panel-bg:#FAFAFB;
+    --sep:rgba(0,0,0,.10);
+    --sep-strong:rgba(0,0,0,.16);
+
+    --text:#1D1D1F;
+    --text-2:#6E6E73;
+    --text-3:#9A9AA0;
+
+    --accent:#007AFF;
+    --sel-bg:#0A6CFF;          /* focused row selection */
+    --sel-bg-blur:#D3D3D6;     /* unfocused selection */
+    --sel-text:#FFFFFF;
+
+    --danger:#E5352B;
+    --warning:#C77700;
+    --cloud:#8E8E93;
+
+    --ctl-bg:#FFFFFF;
+    --ctl-bg-2:#F5F5F7;
+    --ctl-border:rgba(0,0,0,.16);
+    --shadow:0 12px 40px rgba(0,0,0,.22),0 1px 3px rgba(0,0,0,.12);
+
+    --tm-void:#EFEFF1;
+    --dir-border:rgba(0,0,0,.30);
+    --tm-label:rgba(0,0,0,.55);
+
+    --hairline:.5px;
+  }
+  :root:not([data-theme="light"]){ }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --win-bg:#2B2B2D;
+      --content-bg:#1E1E1E;
+      --sidebar-bg:#242426;
+      --panel-bg:#1B1B1D;
+      --sep:rgba(255,255,255,.12);
+      --sep-strong:rgba(255,255,255,.18);
+      --text:#F5F5F7;
+      --text-2:#A1A1A6;
+      --text-3:#6E6E73;
+      --accent:#0A84FF;
+      --sel-bg:#0A6CFF;
+      --sel-bg-blur:#3A3A3D;
+      --sel-text:#FFFFFF;
+      --danger:#FF6961;
+      --warning:#FFB340;
+      --cloud:#98989D;
+      --ctl-bg:#3A3A3C;
+      --ctl-bg-2:#2C2C2E;
+      --ctl-border:rgba(255,255,255,.14);
+      --shadow:0 12px 40px rgba(0,0,0,.55),0 1px 3px rgba(0,0,0,.4);
+      --tm-void:#242426;
+      --dir-border:rgba(255,255,255,.28);
+      --tm-label:rgba(255,255,255,.62);
+    }
+  }
+  :root[data-theme="dark"]{
+    --win-bg:#2B2B2D; --content-bg:#1E1E1E; --sidebar-bg:#242426; --panel-bg:#1B1B1D;
+    --sep:rgba(255,255,255,.12); --sep-strong:rgba(255,255,255,.18);
+    --text:#F5F5F7; --text-2:#A1A1A6; --text-3:#6E6E73;
+    --accent:#0A84FF; --sel-bg:#0A6CFF; --sel-bg-blur:#3A3A3D; --sel-text:#FFFFFF;
+    --danger:#FF6961; --warning:#FFB340; --cloud:#98989D;
+    --ctl-bg:#3A3A3C; --ctl-bg-2:#2C2C2E; --ctl-border:rgba(255,255,255,.14);
+    --shadow:0 12px 40px rgba(0,0,0,.55),0 1px 3px rgba(0,0,0,.4);
+    --tm-void:#242426; --dir-border:rgba(255,255,255,.28); --tm-label:rgba(255,255,255,.62);
+  }
+
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; font-family:var(--sf); color:var(--text);
+    background:var(--content-bg);
+    font-size:13px; -webkit-font-smoothing:antialiased;
+    overflow:hidden; user-select:none;
+  }
+
+  /* ===== window shell ===== */
+  .win{ position:fixed; inset:0; display:flex; flex-direction:column; }
+
+  /* unified titlebar + toolbar */
+  .toolbar{
+    background:var(--win-bg);
+    border-bottom:var(--hairline) solid var(--sep-strong);
+    display:flex; align-items:center; gap:10px;
+    padding:0 12px; height:52px; flex:0 0 auto; position:relative; z-index:5;
+  }
+  .lights{ display:flex; gap:8px; margin-right:6px }
+  .lights i{ width:12px; height:12px; border-radius:50%; display:block }
+  .lights .r{background:#FF5F57;box-shadow:inset 0 0 0 .5px rgba(0,0,0,.18)}
+  .lights .y{background:#FEBC2E;box-shadow:inset 0 0 0 .5px rgba(0,0,0,.18)}
+  .lights .g{background:#28C840;box-shadow:inset 0 0 0 .5px rgba(0,0,0,.18)}
+
+  .tb-title{ font-weight:600; font-size:13px; color:var(--text); margin-right:4px; white-space:nowrap }
+  .tb-title small{ color:var(--text-3); font-weight:500 }
+  .tb-spring{ flex:1 1 auto }
+
+  .btn{
+    font-family:var(--sf); font-size:13px; color:var(--text);
+    background:var(--ctl-bg); border:var(--hairline) solid var(--ctl-border);
+    border-radius:6px; padding:5px 11px; display:inline-flex; align-items:center; gap:6px;
+    cursor:pointer; box-shadow:0 1px 0 rgba(0,0,0,.04); white-space:nowrap;
+  }
+  .btn:hover{ filter:brightness(.985) }
+  .btn:active{ filter:brightness(.94) }
+  .btn[disabled]{ opacity:.4; cursor:default }
+  .btn.primary{ background:var(--accent); border-color:transparent; color:#fff; box-shadow:0 1px 2px rgba(10,120,255,.35) }
+  .btn.danger{ color:var(--danger) }
+  .btn svg{ width:14px; height:14px }
+  .btn.iconbtn{ padding:5px 8px }
+
+  kbd{ font-family:var(--sf); font-size:10px; color:var(--text-2); background:var(--ctl-bg-2);
+       border:var(--hairline) solid var(--ctl-border); border-radius:4px; padding:1px 5px }
+
+  /* ===== main area ===== */
+  .stage{ flex:1 1 auto; position:relative; min-height:0; background:var(--content-bg) }
+
+  /* split primitives */
+  .split{ display:flex; width:100%; height:100%; min-height:0 }
+  .split.vert{ flex-direction:column }
+  .divider{ flex:0 0 auto; background:var(--sep); position:relative }
+  .split:not(.vert) > .divider{ width:var(--hairline); cursor:col-resize }
+  .split.vert > .divider{ height:var(--hairline); cursor:row-resize }
+  .divider::after{ content:""; position:absolute; inset:-3px; }
+  .split:not(.vert) > .divider::after{ inset:-3px -4px }
+  .split.vert > .divider::after{ inset:-4px -3px }
+
+  .pane{ min-width:0; min-height:0; overflow:hidden; display:flex; flex-direction:column }
+
+  .pane-head{
+    flex:0 0 auto; height:28px; display:flex; align-items:center; gap:8px;
+    padding:0 12px; font-size:11px; font-weight:600; letter-spacing:.03em;
+    text-transform:uppercase; color:var(--text-3);
+    background:var(--panel-bg); border-bottom:var(--hairline) solid var(--sep);
+  }
+  .pane-head .rt{ margin-left:auto; text-transform:none; letter-spacing:0; font-weight:500; color:var(--text-2) }
+
+  /* ===== source list / tree ===== */
+  .tree{ flex:1 1 auto; overflow:auto; background:var(--sidebar-bg); outline:none }
+  .tree.plain{ background:var(--content-bg) }
+  .trow{
+    display:flex; align-items:center; height:24px; padding-right:12px;
+    white-space:nowrap; cursor:default; position:relative; gap:6px;
+  }
+  .trow .disc{ width:14px; height:14px; flex:0 0 14px; display:grid; place-items:center; color:var(--text-3); cursor:pointer }
+  .trow .disc svg{ width:9px; height:9px; transition:transform .12s ease }
+  .trow.open > .disc svg{ transform:rotate(90deg) }
+  .trow .swatch{ width:9px; height:9px; border-radius:2px; flex:0 0 9px }
+  .trow .nm{ overflow:hidden; text-overflow:ellipsis; flex:1 1 auto; color:var(--text) }
+  .trow .sz{ font-variant-numeric:tabular-nums; color:var(--text-2); font-size:12px; margin-left:8px; flex:0 0 auto }
+  .trow .bar{ width:38px; height:5px; border-radius:3px; background:var(--sep); overflow:hidden; flex:0 0 auto; margin-left:2px }
+  .trow .bar > i{ display:block; height:100%; background:var(--text-3); opacity:.55 }
+  .trow .tag{ font-size:10px; padding:0 5px; border-radius:4px; flex:0 0 auto;
+              border:var(--hairline) solid transparent }
+  .tag.err{ color:var(--danger); background:color-mix(in srgb,var(--danger) 14%,transparent) }
+  .tag.warn{ color:var(--warning); background:color-mix(in srgb,var(--warning) 18%,transparent) }
+  .tag.link{ color:var(--cloud); background:color-mix(in srgb,var(--cloud) 16%,transparent) }
+  .tag.pkg{ color:var(--accent); background:color-mix(in srgb,var(--accent) 14%,transparent) }
+  .trow:hover{ background:color-mix(in srgb,var(--text) 5%,transparent) }
+  .trow.sel{ background:var(--sel-bg) }
+  .tree:focus-within .trow.sel, .tree.focused .trow.sel{ background:var(--sel-bg) }
+  .trow.sel, .trow.sel .nm, .trow.sel .sz, .trow.sel .disc{ color:var(--sel-text) }
+  .trow.sel .bar{ background:rgba(255,255,255,.3) } .trow.sel .bar>i{ background:rgba(255,255,255,.85) }
+  .tree:not(.focused) .trow.sel{ background:var(--sel-bg-blur) }
+  .tree:not(.focused) .trow.sel .nm,
+  .tree:not(.focused) .trow.sel .sz,
+  .tree:not(.focused) .trow.sel .disc{ color:var(--text) }
+
+  /* ===== treemap ===== */
+  .tmwrap{ flex:1 1 auto; position:relative; background:var(--tm-void); overflow:hidden }
+  .tmcanvas{ position:absolute; inset:0 }
+  .cell{ position:absolute; overflow:hidden; }
+  .cell.leaf{ border:.5px solid rgba(0,0,0,.14) }
+  .cell.dir{ border:1px solid var(--dir-border); background:transparent; pointer-events:none }
+  .cell.leaf:hover{ filter:brightness(1.08) saturate(1.1); z-index:3 }
+  .cell.hot{ outline:2px solid #fff; outline-offset:-2px; box-shadow:0 0 0 2px var(--accent),0 0 12px rgba(0,0,0,.4); z-index:6 }
+  .cell.dir.hot{ outline:2px solid var(--accent); outline-offset:-2px; background:color-mix(in srgb,var(--accent) 12%,transparent) }
+  .cell .clbl{ position:absolute; left:4px; top:2px; right:4px; font-size:10px; color:var(--tm-label);
+               white-space:nowrap; overflow:hidden; text-overflow:ellipsis; pointer-events:none; font-weight:600 }
+  .cell.leaf .clbl{ color:rgba(255,255,255,.92); text-shadow:0 1px 1px rgba(0,0,0,.4) }
+
+  /* ===== inspector / details ===== */
+  .inspector{ background:var(--panel-bg); overflow:auto; flex:1 1 auto }
+  .insp-pad{ padding:14px 16px }
+  .insp-empty{ height:100%; display:grid; place-items:center; color:var(--text-3); text-align:center; padding:24px }
+  .ins-title{ display:flex; align-items:center; gap:8px; margin-bottom:2px }
+  .ins-title .swatch{ width:12px; height:12px; border-radius:3px; flex:0 0 12px }
+  .ins-title h3{ font-size:15px; font-weight:600; margin:0; overflow-wrap:anywhere }
+  .ins-kind{ color:var(--text-2); font-size:12px; margin-bottom:12px }
+  .ins-size{ font-size:26px; font-weight:600; letter-spacing:-.01em; font-variant-numeric:tabular-nums }
+  .ins-size small{ font-size:13px; font-weight:500; color:var(--text-2); margin-left:6px }
+  .ins-bytes{ color:var(--text-3); font-size:11px; font-variant-numeric:tabular-nums; margin-top:2px; font-family:var(--mono) }
+  .kv{ display:grid; grid-template-columns:auto 1fr; gap:5px 12px; margin-top:14px; font-size:12px }
+  .kv dt{ color:var(--text-2); white-space:nowrap }
+  .kv dd{ margin:0; text-align:right; overflow-wrap:anywhere; font-variant-numeric:tabular-nums }
+  .path{ font-family:var(--mono); font-size:11px; color:var(--text-2); background:var(--ctl-bg-2);
+         border:var(--hairline) solid var(--sep); border-radius:6px; padding:7px 9px; margin-top:14px; overflow-wrap:anywhere; user-select:text }
+  .note{ margin-top:12px; padding:9px 11px; border-radius:8px; font-size:12px; line-height:1.4; display:flex; gap:8px }
+  .note.err{ background:color-mix(in srgb,var(--danger) 12%,transparent); color:var(--danger) }
+  .note.warn{ background:color-mix(in srgb,var(--warning) 14%,transparent); color:var(--warning) }
+  .note.info{ background:color-mix(in srgb,var(--cloud) 12%,transparent); color:var(--text-2) }
+  .note b{ font-weight:600 }
+  .ins-actions{ display:flex; gap:8px; margin-top:16px }
+  .ins-actions .btn{ flex:1 1 auto; justify-content:center }
+
+  /* ===== empty state ===== */
+  .empty{ position:absolute; inset:0; display:grid; place-items:center; text-align:center; padding:32px }
+  .empty .inner{ max-width:420px; display:flex; flex-direction:column; align-items:center; gap:6px }
+  .empty .disk{ width:96px; height:96px; margin-bottom:10px; opacity:.9 }
+  .empty h1{ font-size:22px; font-weight:600; margin:0 }
+  .empty p{ color:var(--text-2); margin:0 0 12px; line-height:1.45 }
+  .empty .droplist{ margin-top:16px; font-size:12px; color:var(--text-3); line-height:1.8 }
+
+  /* ===== scanning progress ===== */
+  .scanbar{
+    position:absolute; left:50%; top:44%; transform:translate(-50%,-50%);
+    width:min(560px,80%); background:var(--panel-bg); border:var(--hairline) solid var(--sep-strong);
+    border-radius:14px; box-shadow:var(--shadow); padding:22px 24px; z-index:4;
+  }
+  .scanbar h2{ margin:0 0 3px; font-size:16px; font-weight:600 }
+  .scanbar .cur{ font-family:var(--mono); font-size:11px; color:var(--text-2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; direction:rtl; text-align:left }
+  .track{ height:6px; border-radius:4px; background:var(--sep); overflow:hidden; margin:14px 0 4px; position:relative }
+  .track > i{ position:absolute; top:0; bottom:0; width:34%; border-radius:4px; background:var(--accent);
+              animation:indet 1.25s ease-in-out infinite }
+  .track.determinate > i{ position:absolute; left:0; animation:none; transition:width .18s linear }
+  @keyframes indet{ 0%{left:-34%} 100%{left:100%} }
+  .telem{ display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-top:14px }
+  .telem .t{ background:var(--ctl-bg-2); border-radius:8px; padding:8px 10px }
+  .telem .t .lab{ font-size:10px; text-transform:uppercase; letter-spacing:.04em; color:var(--text-3) }
+  .telem .t .val{ font-size:15px; font-weight:600; font-variant-numeric:tabular-nums; margin-top:2px }
+  .scan-actions{ display:flex; justify-content:flex-end; gap:8px; margin-top:16px }
+
+  /* ===== status banner ===== */
+  .banner{ flex:0 0 auto; display:flex; align-items:center; gap:9px; padding:7px 14px; font-size:12px;
+           border-bottom:var(--hairline) solid var(--sep) }
+  .banner.warn{ background:color-mix(in srgb,var(--warning) 16%,var(--win-bg)); color:var(--warning) }
+  .banner.err{ background:color-mix(in srgb,var(--danger) 12%,var(--win-bg)); color:var(--danger) }
+  .banner .dot{ width:8px; height:8px; border-radius:50%; background:currentColor; flex:0 0 8px }
+  .banner b{ color:var(--text); font-weight:600 }
+  .banner .b-actions{ margin-left:auto; display:flex; gap:8px }
+  .banner .lnk{ color:var(--accent); cursor:pointer; font-weight:500 }
+
+  /* ===== status bar (bottom of window) ===== */
+  .statusbar{
+    flex:0 0 auto; height:26px; display:flex; align-items:center; gap:14px;
+    padding:0 14px; font-size:11px; color:var(--text-2);
+    background:var(--win-bg); border-top:var(--hairline) solid var(--sep-strong);
+    font-variant-numeric:tabular-nums;
+  }
+  .statusbar .s{ display:flex; align-items:center; gap:5px }
+  .statusbar .s b{ color:var(--text); font-weight:600 }
+  .statusbar .spring{ flex:1 1 auto }
+  .legend{ display:flex; gap:10px; overflow:hidden }
+  .legend .lg{ display:flex; align-items:center; gap:4px; white-space:nowrap }
+  .legend .lg i{ width:8px; height:8px; border-radius:2px; flex:0 0 8px }
+
+  /* ===== chooser sheet ===== */
+  .sheet-scrim{ position:absolute; inset:0; background:rgba(0,0,0,.14); z-index:20; display:grid; place-items:start center; padding-top:0 }
+  .sheet{ width:min(560px,92%); background:var(--win-bg); border-radius:0 0 12px 12px;
+          box-shadow:var(--shadow); overflow:hidden; animation:drop .22s cubic-bezier(.2,.9,.3,1) }
+  @keyframes drop{ from{transform:translateY(-14px);opacity:.4} to{transform:none;opacity:1} }
+  .sheet header{ padding:16px 20px 4px }
+  .sheet header h2{ margin:0; font-size:15px; font-weight:600 }
+  .sheet header p{ margin:3px 0 0; font-size:12px; color:var(--text-2) }
+  .sheet .list{ padding:8px 12px 4px; max-height:320px; overflow:auto }
+  .vrow{ display:flex; align-items:center; gap:11px; padding:9px 10px; border-radius:8px; cursor:default }
+  .vrow:hover{ background:color-mix(in srgb,var(--accent) 12%,transparent) }
+  .vrow.sel{ background:var(--sel-bg); color:#fff }
+  .vrow.disabled{ opacity:.5 }
+  .vrow.disabled:hover{ background:transparent }
+  .vrow .ic{ width:30px; height:30px; flex:0 0 30px; display:grid; place-items:center }
+  .vrow .ic svg{ width:26px; height:26px }
+  .vrow .meta{ flex:1 1 auto; min-width:0 }
+  .vrow .meta .n{ font-weight:600; font-size:13px }
+  .vrow .meta .d{ font-size:11px; color:var(--text-2) }
+  .vrow.sel .meta .d{ color:rgba(255,255,255,.8) }
+  .vrow .cap{ font-size:11px; color:var(--text-3); text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap }
+  .vrow.sel .cap{ color:rgba(255,255,255,.85) }
+  .vrow .ineligible{ font-size:10px; color:var(--danger); text-align:right; max-width:150px; white-space:normal; line-height:1.25 }
+  .sheet footer{ display:flex; align-items:center; gap:8px; padding:12px 20px; border-top:var(--hairline) solid var(--sep) }
+  .sheet footer .spring{ flex:1 }
+  .sheet .other{ font-size:12px; color:var(--text-2); display:flex; align-items:center; gap:7px }
+
+  /* ===== breadcrumb (variant C) ===== */
+  .crumbs{ display:flex; align-items:center; gap:4px; font-size:12px; overflow:hidden }
+  .crumbs .c{ color:var(--accent); cursor:pointer; white-space:nowrap }
+  .crumbs .c.last{ color:var(--text); cursor:default; font-weight:600 }
+  .crumbs .sepc{ color:var(--text-3) }
+
+  /* floating popover (variant C details) */
+  .popover{ position:absolute; z-index:14; width:300px; background:var(--panel-bg);
+            border:var(--hairline) solid var(--sep-strong); border-radius:12px; box-shadow:var(--shadow); overflow:hidden }
+  .rail-toggle{ }
+
+  /* ===== PROTOTYPE switcher bar (deliberately NOT macOS) ===== */
+  .protobar{
+    position:fixed; left:50%; bottom:16px; transform:translateX(-50%);
+    display:flex; align-items:center; gap:6px; z-index:50;
+    background:rgba(24,24,27,.92); color:#fff; border:1px solid rgba(255,255,255,.14);
+    border-radius:12px; padding:6px 8px; box-shadow:0 10px 30px rgba(0,0,0,.4);
+    backdrop-filter:blur(20px); font-size:12px; max-width:calc(100vw - 24px); flex-wrap:wrap;
+  }
+  .protobar .plabel{ font-size:9px; letter-spacing:.14em; text-transform:uppercase; color:#ff9f3b; font-weight:700; padding:0 4px }
+  .protobar .arw{ width:26px; height:26px; border-radius:8px; background:rgba(255,255,255,.1); border:none; color:#fff;
+                  cursor:pointer; display:grid; place-items:center; font-size:14px }
+  .protobar .arw:hover{ background:rgba(255,255,255,.22) }
+  .protobar .vname{ min-width:118px; text-align:center; font-weight:600 }
+  .protobar .vname small{ display:block; font-size:9px; color:rgba(255,255,255,.55); font-weight:500 }
+  .protobar .vbar{ width:1px; align-self:stretch; background:rgba(255,255,255,.18); margin:0 3px }
+  .protobar .seg{ display:flex; background:rgba(255,255,255,.08); border-radius:8px; padding:2px; gap:2px; flex-wrap:wrap }
+  .protobar .seg button{ background:transparent; border:none; color:rgba(255,255,255,.72); font-size:11px;
+                         padding:3px 8px; border-radius:6px; cursor:pointer; font-family:var(--sf) }
+  .protobar .seg button:hover{ color:#fff }
+  .protobar .seg button.on{ background:rgba(255,255,255,.9); color:#111; font-weight:600 }
+  .protobar .theme{ width:26px;height:26px;border-radius:8px;background:rgba(255,255,255,.1);border:none;color:#fff;cursor:pointer;font-size:13px }
+
+  .toast{ position:fixed; left:50%; bottom:64px; transform:translateX(-50%) translateY(10px);
+          background:rgba(24,24,27,.96); color:#fff; padding:10px 16px; border-radius:10px; font-size:12.5px;
+          box-shadow:0 10px 30px rgba(0,0,0,.4); opacity:0; transition:opacity .18s, transform .18s; z-index:60; pointer-events:none;
+          border:1px solid rgba(255,255,255,.12); max-width:min(520px,90vw); text-align:center }
+  .toast.show{ opacity:1; transform:translateX(-50%) translateY(0) }
+  .toast code{ font-family:var(--mono); color:#8fd0ff }
+
+  @media (prefers-reduced-motion: reduce){ *{ animation-duration:.001ms !important; transition:none !important } }
+</style>
+
+<div class="win" id="win">
+  <div class="toolbar" id="toolbar"></div>
+  <div class="stage" id="stage"></div>
+  <div class="statusbar" id="statusbar"></div>
+</div>
+
+<div class="protobar" id="protobar"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+/* =====================================================================
+   PROTOTYPE glue — throwaway. Nothing here reflects production structure.
+   ===================================================================== */
+
+// ---------- IEC size formatting (Ticket #01: binary units) ----------
+const UNITS=["bytes","KiB","MiB","GiB","TiB"];
+function fmtIEC(b){
+  if(b===0) return "Zero KB";
+  if(b<1024) return b+" bytes";
+  let u=0,v=b; while(v>=1024&&u<UNITS.length-1){v/=1024;u++;}
+  const d = v>=100?0:(v>=10?1:2);
+  return v.toFixed(d)+" "+UNITS[u];
+}
+const KIB=1024, MIB=1024*KIB, GIB=1024*MIB;
+function withGrouping(n){ return n.toLocaleString('en-US'); }
+
+// ---------- kind → color (illustrative; real coloring is Ticket #05) ----------
+const KIND={
+  image:{c:'#32ADE6',label:'Image'}, video:{c:'#AF52DE',label:'Video'},
+  audio:{c:'#FF375F',label:'Audio'}, app:{c:'#5E5CE6',label:'Application'},
+  archive:{c:'#FF9F0A',label:'Archive'}, doc:{c:'#30D158',label:'Document'},
+  code:{c:'#FFD60A',label:'Code'}, data:{c:'#AC8E68',label:'Data'},
+  cache:{c:'#8E8E93',label:'Cache'}, system:{c:'#64748B',label:'System'},
+  dir:{c:'#8E8E93',label:'Folder'}, other:{c:'#7D7D82',label:'Other'}
+};
+
+// ---------- mock filesystem (a whole-volume scan) ----------
+// leaf: {name, kind, size, [flags]}  dir: {name, dir:[...]}
+function L(name,kind,size,flags){ return Object.assign({name,kind,size},flags||{}); }
+function D(name,children,flags){ return Object.assign({name,dir:children},flags||{}); }
+
+const RAW = D("Macintosh HD", [
+  D("Applications", [
+    L("Xcode.app","app",14.2*GIB,{pkg:true}),
+    L("Final Cut Pro.app","app",3.9*GIB,{pkg:true}),
+    L("Safari.app","app",480*MIB,{pkg:true}),
+    L("Photos.app","app",210*MIB,{pkg:true}),
+  ]),
+  D("Library", [
+    D("Developer", [ L("CoreSimulator","data",41*GIB) ]),
+    D("Caches", [
+      L("com.apple.bird","cache",6.4*GIB),
+      L("Google","cache",2.1*GIB),
+      L("Homebrew","cache",1.3*GIB),
+    ]),
+    D("Application Support", [
+      L("MobileSync — iPhone Backup","data",22*GIB),
+      D("com.protected.vault", [ /* contents unreadable */ ], {unreadable:true}),
+    ]),
+  ]),
+  D("System", [
+    L("Library (system frameworks)","system",8.6*GIB),
+  ]),
+  D("Users", [
+    D("rengwu", [
+      D("Movies", [
+        L("project-render.mov","video",6.8*GIB),
+        L("Screen Recording 2026-08-02.mov","video",4.1*GIB),
+        L("vacation-2025.mp4","video",2.2*GIB),
+      ]),
+      D("Pictures", [
+        L("Photos Library.photoslibrary","image",58*GIB,{pkg:true}),
+      ]),
+      D("Music", [ L("Media","audio",9.3*GIB) ]),
+      D("Downloads", [
+        L("dataset-2026.zip","archive",3.2*GIB),
+        L("big-lecture-recording.mov","video",1.6*GIB,{cloud:'downloaded'}),
+        L("report-final.pdf","doc",18*MIB),
+        L("backup-hardlink.zip","archive",3.2*GIB,{hardlink:'dedup',owner:'/Users/rengwu/Downloads/dataset-2026.zip'}),
+        L("render-shortcut.mov","video",0,{symlink:'/Users/rengwu/Movies/project-render.mov'}),
+      ]),
+      D("Documents", [
+        D("code", [
+          L("app-source","code",210*MIB),
+          L("node_modules","code",180*MIB),
+        ]),
+        L("Thesis.pdf","doc",42*MIB),
+        L("budget-2026.xlsx","doc",8*MIB),
+      ]),
+      D("Desktop", [ L("screenshots","image",640*MIB) ]),
+      D(".config","dir".length?[ L("settings","code",92*MIB) ]:[],{hidden:true}),
+      D(".cache",[ L("misc","cache",1.2*GIB) ],{hidden:true}),
+      L(".DS_Store cache","cache",6*MIB,{hidden:true}),
+    ]),
+  ]),
+], {volume:true, capacity:994*GIB, free:210*GIB});
+
+// remote-only items that are OMITTED from the tree but counted (Ticket #01)
+const EXCLUSIONS = {
+  count:3,
+  examples:[
+    "keynote-remote-only.key — iCloud, not downloaded",
+    "2 more iCloud placeholders in Photos Library",
+  ]
+};
+
+// ---------- build node graph (ids, parents, rollups, order) ----------
+let SEQ=0;
+function build(raw, parent, path){
+  const n={
+    id:++SEQ, name:raw.name, parent,
+    path: parent ? path+"/"+raw.name : "/"+raw.name,
+    kind: raw.dir? 'dir' : raw.kind,
+    pkg:!!raw.pkg, hidden:!!raw.hidden, unreadable:!!raw.unreadable,
+    symlink:raw.symlink||null, cloud:raw.cloud||null,
+    hardlink:raw.hardlink||null, owner:raw.owner||null,
+    volume:!!raw.volume, capacity:raw.capacity||0, free:raw.free||0,
+    children:[], own:0, sub:0, files:0, dirs:0,
+  };
+  if(raw.dir){
+    for(const ch of raw.dir){ const c=build(ch,n,n.path); n.children.push(c); }
+  }else{
+    n.own = (raw.symlink||raw.hardlink==='dedup') ? 0 : raw.size; // attributed bytes
+    n.nominal = raw.size; // logical length even when not attributed
+  }
+  return n;
+}
+const ROOT = build(RAW,null,"");
+
+// attributed subtree bytes + counts + display order
+let ORDER=0;
+function rollup(n){
+  if(n.children.length===0){ n.sub=n.own; n.seq=++ORDER; return; }
+  // stable name sort (Ticket #03: deterministic order)
+  n.children.sort((a,b)=> a.name.localeCompare(b.name));
+  n.seq=++ORDER;
+  let s=0,f=0,d=0;
+  for(const c of n.children){ rollup(c); s+=c.sub; if(c.children.length){d+=1+c.dirs; f+=c.files;} else {f+=1;} }
+  n.sub=s; n.files=f; n.dirs=d;
+}
+rollup(ROOT);
+const TOTAL = ROOT.sub;
+
+// index by id
+const BYID={}; (function idx(n){BYID[n.id]=n; n.children.forEach(idx);})(ROOT);
+
+// nodes flat in traversal order (for scan reveal animation)
+const FLAT=[]; (function fl(n){ FLAT.push(n); n.children.forEach(fl); })(ROOT);
+FLAT.sort((a,b)=>a.seq-b.seq);
+
+// ======================= APP STATE =======================
+const S = {
+  phase:'empty',          // empty | choosing | scanning | completed | cancelled | partial
+  variant: 0,             // 0 classic, 1 inspector, 2 treemap-first
+  selectedId:null,
+  expanded:new Set(),
+  revealFrac:1,           // fraction of leaves discovered (for scanning/cancelled)
+  showErrors:false,       // partial state activates unreadable / incomplete markers
+  incompleteOpen:false,   // cancelled: open ancestors marked incomplete
+  scan:{bytes:0,files:0,dirs:0,elapsed:0,cur:'',running:false},
+  focusTree:true,         // is the tree the key view
+  crumbId:ROOT.id,        // variant C zoom root
+};
+const VARIANTS=[
+  {key:'classic', name:'Classic split', sub:'tree over treemap'},
+  {key:'inspector', name:'Three-pane', sub:'tree · map · inspector'},
+  {key:'treemap', name:'Treemap-first', sub:'map hero + rail'},
+];
+
+// default expansion
+[ROOT.id].forEach(id=>S.expanded.add(id));
+function expandTo(n){ let p=n.parent; while(p){ S.expanded.add(p.id); p=p.parent; } }
+// pre-expand a couple levels for a populated look
+(function pe(n,depth){ if(depth<1){S.expanded.add(n.id); n.children.forEach(c=>pe(c,depth+1));} })(ROOT,0);
+S.expanded.add(BYID[ROOT.id].id);
+for(const c of ROOT.children) S.expanded.add(c.id);
+
+// visible-during-scan predicate
+function discovered(n){
+  if(S.phase==='empty'||S.phase==='choosing') return false;
+  if(S.revealFrac>=1) return true;
+  return (n.seq/ORDER) <= S.revealFrac;
+}
+// error/marker predicates gated by state
+function isUnreadable(n){ return S.showErrors && n.unreadable; }
+function isIncomplete(n){
+  if(isUnreadable(n)) return false;
+  if(S.showErrors && n.unreadable) return true;
+  // ancestor of an unreadable node
+  if(S.showErrors){ let has=false; (function w(x){ if(x.unreadable) has=true; x.children.forEach(w); })(n); if(has && n.children.length) return true; }
+  if(S.incompleteOpen && n.children.length && S.expanded.has(n.id) && !discovered(lastChild(n))) return true;
+  return false;
+}
+function lastChild(n){ return n.children[n.children.length-1]||n; }
+
+// attributed bytes respecting reveal (scanning shows partial rollup)
+function shownSub(n){
+  if(S.revealFrac>=1) return n.sub;
+  let s=0; (function w(x){ if(x.children.length===0){ if(discovered(x)) s+=x.own; } else x.children.forEach(w); })(n);
+  return s;
+}
+
+// ======================= RENDER =======================
+const stage=document.getElementById('stage');
+const toolbar=document.getElementById('toolbar');
+const statusbar=document.getElementById('statusbar');
+
+function ic(path){ return `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`; }
+const I={
+  folder:'<path d="M1.5 4.5a1 1 0 0 1 1-1h3l1.2 1.4H13a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H2.5a1 1 0 0 1-1-1z"/>',
+  reveal:'<path d="M2 8s2.5-4 6-4 6 4 6 4-2.5 4-6 4-6-4-6-4z"/><circle cx="8" cy="8" r="1.7"/>',
+  open:'<path d="M4 2.5h5l3 3v8H4z"/><path d="M9 2.5v3h3"/>',
+  stop:'<rect x="4" y="4" width="8" height="8" rx="1.4"/>',
+  rescan:'<path d="M13 8a5 5 0 1 1-1.5-3.5"/><path d="M13 2.5V5h-2.5"/>',
+  chevron:'<path d="M6 4l4 4-4 4"/>',
+  disk:'<path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h9A1.5 1.5 0 0 1 14 4.5v7A1.5 1.5 0 0 1 12.5 13h-9A1.5 1.5 0 0 1 2 11.5z"/><circle cx="8" cy="8" r="2.2"/><circle cx="8" cy="8" r=".4" fill="currentColor"/>',
+};
+
+function toolbarHTML(){
+  const scanning = S.phase==='scanning';
+  const hasResults = ['completed','cancelled','partial'].includes(S.phase);
+  const sel = S.selectedId?BYID[S.selectedId]:null;
+  const actionable = sel && !sel.symlink && sel.own>=0;
+  let center='';
+  if(S.variant===2 && hasResults){ center = `<div class="crumbs" id="crumbs">${crumbsHTML()}</div>`; }
+  else { center = `<div class="tb-title">${S.phase==='empty'?'Disk Visualizer':escapeHtml(ROOT.name)} ${hasResults?`<small>· ${fmtIEC(TOTAL* (S.phase==='cancelled'? S.revealFrac:1))} scanned</small>`:''}</div>`; }
+  return `
+    <div class="lights"><i class="r"></i><i class="y"></i><i class="g"></i></div>
+    ${center}
+    <div class="tb-spring"></div>
+    ${scanning
+      ? `<button class="btn danger" onclick="cancelScan()">${ic(I.stop)} Cancel</button>`
+      : `<button class="btn ${S.phase==='empty'?'primary':''}" onclick="openChooser()">${ic(I.folder)} ${S.phase==='empty'?'Choose Folder or Drive…':'Choose…'}</button>`}
+    ${hasResults?`<button class="btn" onclick="openChooser()">${ic(I.rescan)} Rescan</button>`:''}
+    <div class="tb-vsep" style="width:1px;height:22px;background:var(--sep-strong);margin:0 2px"></div>
+    <button class="btn iconbtn" ${actionable?'':'disabled'} title="Open (⌘O)" onclick="doOpen()">${ic(I.open)}</button>
+    <button class="btn" ${sel?'':'disabled'} title="Reveal in Finder (⌘R)" onclick="doReveal()">${ic(I.reveal)} Reveal</button>
+  `;
+}
+
+function crumbsHTML(){
+  const chain=[]; let n=BYID[S.crumbId]; while(n){ chain.unshift(n); n=n.parent; }
+  return chain.map((c,i)=> (i?'<span class="sepc">›</span>':'')+
+    `<span class="c ${i===chain.length-1?'last':''}" onclick="zoomTo(${c.id})">${escapeHtml(c.name)}</span>`).join('');
+}
+
+// ---- TREE ----
+function treeHTML(rootId, plain){
+  const root=BYID[rootId||ROOT.id];
+  let html=`<div class="tree ${plain?'plain':''} ${S.focusTree?'focused':''}" id="tree" tabindex="0"
+              onfocus="setFocusTree(true)" onmousedown="setFocusTree(true)">`;
+  html+=rowsHTML(root,0, rootId?true:true);
+  html+='</div>';
+  return html;
+}
+function rowsHTML(n,depth,isRoot){
+  if(!discovered(n) && !isRoot) return '';
+  let out='';
+  const open=S.expanded.has(n.id);
+  const hasKids=n.children.length>0;
+  const sel = n.id===S.selectedId;
+  const kc = KIND[n.kind]||KIND.other;
+  const frac = TOTAL? shownSub(n)/TOTAL : 0;
+  const pad = 8+depth*15;
+  const tags=[];
+  if(n.pkg) tags.push('<span class="tag pkg">Package</span>');
+  if(n.symlink) tags.push('<span class="tag link">Symlink</span>');
+  if(n.hardlink==='dedup') tags.push('<span class="tag link">Hard link</span>');
+  if(n.cloud==='downloaded') tags.push('<span class="tag link">iCloud ✓</span>');
+  if(isUnreadable(n)) tags.push('<span class="tag err">Unreadable</span>');
+  else if(isIncomplete(n)) tags.push('<span class="tag warn">Incomplete</span>');
+
+  const showBytes = n.symlink ? '—' : (n.hardlink==='dedup' ? '0 bytes' : fmtIEC(shownSub(n)));
+  out+=`<div class="trow ${open?'open':''} ${sel?'sel':''}" style="padding-left:${pad}px"
+          onclick="selectNode(${n.id})" ondblclick="toggleOrOpen(${n.id})">
+    <span class="disc" onclick="event.stopPropagation();toggleExpand(${n.id})">${hasKids?ic(I.chevron):''}</span>
+    <span class="swatch" style="background:${hasKids?'var(--text-3)':kc.c}"></span>
+    <span class="nm">${escapeHtml(n.name)}</span>
+    ${tags.join('')}
+    <span class="sz">${showBytes}</span>
+    <span class="bar"><i style="width:${Math.min(100,frac*100).toFixed(1)}%"></i></span>
+  </div>`;
+  if(open && hasKids){
+    for(const c of n.children) out+=rowsHTML(c,depth+1,false);
+  }
+  return out;
+}
+
+// ---- TREEMAP (recursive squarified; illustrative — real algorithm is Ticket #05) ----
+// area-accurate squarified layout
+function treemapLayout(node,rect,depth,out){
+  out.push({node,rect,depth,leaf:node.children.length===0});
+  if(node.children.length===0) return;
+  if(rect.w<7||rect.h<7||depth>7) return;
+  const pad = depth===0?0:2;
+  const inner={x:rect.x+pad,y:rect.y+pad,w:rect.w-2*pad,h:rect.h-2*pad};
+  if(inner.w<5||inner.h<5) return;
+  let kids=node.children
+    .map(c=>({node:c,value:shownSub(c)}))
+    .filter(k=>k.value>0)
+    .sort((a,b)=>b.value-a.value);
+  if(!kids.length) return;
+  squarifyArea(kids,inner,depth,out);
+}
+function squarifyArea(kids,rect,depth,out){
+  let items=kids.slice();
+  let free={...rect};
+  const totalVal=items.reduce((a,b)=>a+b.value,0);
+  let valPerPx = totalVal/(free.w*free.h);
+  while(items.length){
+    const short=Math.min(free.w,free.h);
+    let row=[],rowVal=0,best=Infinity;
+    while(items.length){
+      const trial=worstRatio(row.concat(items[0]),rowVal+items[0].value,short,valPerPx);
+      if(row.length && trial>best){ break; }
+      row.push(items.shift()); rowVal+=row[row.length-1].value; best=worstRatio(row,rowVal,short,valPerPx);
+    }
+    const rowArea=rowVal/valPerPx;
+    const thick=rowArea/short;
+    // place row along the short side
+    let horizontal = free.w>=free.h; // strip runs along width? place stacked
+    if(free.w<free.h){
+      // free is tall: row is a horizontal band of height `thick` across full width
+      let cx=free.x;
+      for(const it of row){ const a=it.value/valPerPx; const wpx=a/thick;
+        treemapLayout(it.node,{x:cx,y:free.y,w:wpx,h:thick},depth+1,out); cx+=wpx; }
+      free={x:free.x,y:free.y+thick,w:free.w,h:free.h-thick};
+    }else{
+      // free is wide: row is a vertical band of width `thick` full height
+      let cy=free.y;
+      for(const it of row){ const a=it.value/valPerPx; const hpx=a/thick;
+        treemapLayout(it.node,{x:free.x,y:cy,w:thick,h:hpx},depth+1,out); cy+=hpx; }
+      free={x:free.x+thick,y:free.y,w:free.w-thick,h:free.h};
+    }
+    if(free.w<1||free.h<1) break;
+  }
+}
+function worstRatio(row,rowVal,short,valPerPx){
+  if(!row.length) return Infinity;
+  const rowArea=rowVal/valPerPx; const thick=rowArea/short;
+  let w=-Infinity;
+  for(const it of row){ const a=it.value/valPerPx; const len=a/thick;
+    w=Math.max(w, Math.max(len/thick,thick/len)); }
+  return w;
+}
+
+let TMCELLS=[];
+function treemapHTML(){
+  return `<div class="tmwrap" id="tmwrap"><div class="tmcanvas" id="tmcanvas"></div></div>`;
+}
+function renderTreemap(){
+  const wrap=document.getElementById('tmcanvas'); if(!wrap) return;
+  const box=wrap.getBoundingClientRect();
+  if(box.width<10||box.height<10){ requestAnimationFrame(renderTreemap); return; }
+  const rootNode=BYID[S.variant===2?S.crumbId:ROOT.id];
+  const out=[];
+  treemapLayout(rootNode,{x:0,y:0,w:box.width,h:box.height},0,out);
+  TMCELLS=out;
+  const selNode=S.selectedId?BYID[S.selectedId]:null;
+  const selChain=new Set(); if(selNode){ let p=selNode; while(p){selChain.add(p.id);p=p.parent;} }
+  let html='';
+  for(const cell of out){
+    const {node,rect,leaf,depth}=cell;
+    if(depth===0 && S.variant!==2) continue; // don't draw the root fill
+    const kc=KIND[node.kind]||KIND.other;
+    const hot = node.id===S.selectedId;
+    const showLabel = rect.w>46 && rect.h>15 && (leaf? rect.w>60 : depth<=1);
+    if(leaf){
+      html+=`<div class="cell leaf ${hot?'hot':''}" style="left:${rect.x}px;top:${rect.y}px;width:${Math.max(0,rect.w-1)}px;height:${Math.max(0,rect.h-1)}px;background:${kc.c}"
+               title="${escapeHtml(node.name)} — ${fmtIEC(node.own)}" onclick="event.stopPropagation();selectNode(${node.id})">
+               ${showLabel?`<span class="clbl">${escapeHtml(node.name)}</span>`:''}</div>`;
+    }else{
+      html+=`<div class="cell dir ${hot?'hot':''}" style="left:${rect.x}px;top:${rect.y}px;width:${Math.max(0,rect.w-1)}px;height:${Math.max(0,rect.h-1)}px"></div>`;
+    }
+  }
+  wrap.innerHTML=html;
+}
+
+// ---- INSPECTOR / DETAILS ----
+function inspectorHTML(){
+  const n=S.selectedId?BYID[S.selectedId]:null;
+  if(!n) return `<div class="insp-empty"><div>Select an item in the tree or treemap<br>to see its details.</div></div>`;
+  const kc=KIND[n.kind]||KIND.other;
+  const isDir=n.children.length>0;
+  const attributed = n.symlink? 0 : (n.hardlink==='dedup'?0:shownSub(n));
+  const pctTotal = TOTAL? (attributed/TOTAL*100):0;
+  const pctParent = n.parent? (n.parent.sub? attributed/n.parent.sub*100:0):100;
+
+  let notes='';
+  if(n.symlink) notes+=`<div class="note info">${ic(I.reveal)}<div><b>Symbolic link</b> — shown but never followed; contributes zero content bytes. Target: <span style="font-family:var(--mono)">${escapeHtml(n.symlink)}</span></div></div>`;
+  if(n.hardlink==='dedup') notes+=`<div class="note info">↳<div><b>Hard link — counted elsewhere.</b> Logical size ${fmtIEC(n.nominal)}, attributed to the first in-scope path:<br><span style="font-family:var(--mono)">${escapeHtml(n.owner)}</span></div></div>`;
+  if(n.cloud==='downloaded') notes+=`<div class="note info">☁︎<div><b>iCloud — materialized locally.</b> Counted normally (${fmtIEC(n.own)}). Remote-only placeholders are omitted and never downloaded.</div></div>`;
+  if(n.pkg) notes+=`<div class="note info">⧉<div><b>Package.</b> Measured by enumerating descendants; shown as one item until expanded.</div></div>`;
+  if(isUnreadable(n)) notes+=`<div class="note err">⚠<div><b>Unreadable.</b> Permission denied — its size is not guessed. Ancestors are marked Incomplete.</div></div>`;
+  else if(isIncomplete(n)) notes+=`<div class="note warn">⚠<div><b>Incomplete.</b> A descendant could not be fully read, so this total is a lower bound.</div></div>`;
+
+  const canOpen = !n.symlink;
+  return `<div class="insp-pad">
+    <div class="ins-title"><span class="swatch" style="background:${isDir?'var(--text-3)':kc.c}"></span><h3>${escapeHtml(n.name)}</h3></div>
+    <div class="ins-kind">${isDir?(n.pkg?'Package':'Folder'):kc.label}${n.hidden?' · Hidden':''}</div>
+    <div class="ins-size">${n.symlink?'—':fmtIEC(attributed)}<small>${n.symlink?'no attributed bytes':(isDir?'total':'on disk (logical)')}</small></div>
+    <div class="ins-bytes">${n.symlink?'symbolic link':withGrouping(Math.round(n.hardlink==='dedup'?0:attributed))+' bytes'}</div>
+    <dl class="kv">
+      ${isDir?`<dt>Items</dt><dd>${withGrouping(n.files)} files · ${withGrouping(n.dirs)} folders</dd>`:''}
+      <dt>Kind</dt><dd>${isDir?(n.pkg?'Package':'Folder'):kc.label}</dd>
+      <dt>% of scan</dt><dd>${pctTotal.toFixed(pctTotal<1?2:1)}%</dd>
+      <dt>% of parent</dt><dd>${pctParent.toFixed(pctParent<1?2:1)}%</dd>
+      ${n.hardlink==='dedup'||n.symlink?`<dt>Logical size</dt><dd>${fmtIEC(n.nominal)}</dd>`:''}
+    </dl>
+    <div class="path">${escapeHtml(n.path)}</div>
+    ${notes}
+    <div class="ins-actions">
+      <button class="btn" ${canOpen?'':'disabled'} onclick="doOpen()">${ic(I.open)} Open</button>
+      <button class="btn primary" onclick="doReveal()">${ic(I.reveal)} Reveal in Finder</button>
+    </div>
+    <div style="margin-top:12px;font-size:11px;color:var(--text-3);line-height:1.5">Read-only v1 · Open uses <span style="font-family:var(--mono)">NSWorkspace.open</span>, Reveal uses <span style="font-family:var(--mono)">activateFileViewerSelecting</span>.</div>
+  </div>`;
+}
+
+// ---- EMPTY ----
+function emptyHTML(){
+  return `<div class="empty"><div class="inner">
+    <svg class="disk" viewBox="0 0 16 16" fill="none" stroke="var(--text-3)" stroke-width=".7">
+      <rect x="1.5" y="3" width="13" height="10" rx="1.6"/><circle cx="8" cy="8" r="3"/><circle cx="8" cy="8" r=".7" fill="var(--text-3)"/></svg>
+    <h1>Visualize a disk</h1>
+    <p>Choose a folder or a locally attached drive to scan.<br>You'll see where every gigabyte lives — as a tree and a treemap.</p>
+    <button class="btn primary" style="font-size:14px;padding:8px 18px" onclick="openChooser()">${ic(I.folder)} Choose Folder or Drive…</button>
+    <div class="droplist">Read-only · nothing is moved or deleted · hidden files included<br>Internal &amp; directly-attached drives only — network &amp; cloud roots aren't scanned</div>
+  </div></div>`;
+}
+
+// ---- SCANNING ----
+function scanningHTML(){
+  const sc=S.scan;
+  const isVol=ROOT.volume;
+  const frac = isVol? Math.min(1, sc.bytes/(ROOT.capacity-ROOT.free)) : 0;
+  return `<div class="scanbar">
+    <h2>Scanning ${escapeHtml(ROOT.name)}…</h2>
+    <div class="cur">${escapeHtml(sc.cur||'Enumerating…')}</div>
+    <div class="track ${isVol?'determinate':''}"><i style="${isVol?`width:${(frac*100).toFixed(0)}%`:''}"></i></div>
+    <div style="font-size:11px;color:var(--text-3);margin-top:2px">${isVol?`≈${(frac*100).toFixed(0)}% of used space (approximate)`:'Total unknown until traversal finishes'}</div>
+    <div class="telem">
+      <div class="t"><div class="lab">Measured</div><div class="val">${fmtIEC(sc.bytes)}</div></div>
+      <div class="t"><div class="lab">Files</div><div class="val">${withGrouping(sc.files)}</div></div>
+      <div class="t"><div class="lab">Folders</div><div class="val">${withGrouping(sc.dirs)}</div></div>
+      <div class="t"><div class="lab">Elapsed</div><div class="val">${sc.elapsed.toFixed(1)}s</div></div>
+    </div>
+    <div class="scan-actions">
+      <button class="btn danger" onclick="cancelScan()">${ic(I.stop)} Cancel</button>
+    </div>
+  </div>`;
+}
+
+// ---- BANNER ----
+function bannerHTML(){
+  if(S.phase==='cancelled') return `<div class="banner warn"><span class="dot"></span><b>Incomplete — scan cancelled.</b> Partial results below are usable for browsing, Open, and Reveal. <span class="b-actions"><span class="lnk" onclick="openChooser()">Start a fresh scan →</span></span></div>`;
+  if(S.phase==='partial') return `<div class="banner err"><span class="dot"></span><b>Completed with errors.</b> 1 folder unreadable · ${EXCLUSIONS.count} cloud items excluded. Totals for affected branches are lower bounds. <span class="b-actions"><span class="lnk" onclick="showErrorSummary()">Error summary…</span></span></div>`;
+  return '';
+}
+
+// ---- STATUS BAR ----
+function statusbarHTML(){
+  if(S.phase==='empty') return `<div class="s">No scan</div><div class="spring"></div>${legendHTML()}`;
+  if(S.phase==='choosing') return `<div class="s">Choose a source…</div><div class="spring"></div>${legendHTML()}`;
+  if(S.phase==='scanning') return `<div class="s"><b>Scanning…</b></div><div class="s">${fmtIEC(S.scan.bytes)} · ${withGrouping(S.scan.files)} files</div><div class="spring"></div>${legendHTML()}`;
+  const shown = S.phase==='cancelled'? TOTAL*S.revealFrac : TOTAL;
+  const files = S.phase==='cancelled'? Math.round(ROOT.files*S.revealFrac) : ROOT.files;
+  let parts=`<div class="s"><b>${fmtIEC(shown)}</b> scanned</div><div class="s">${withGrouping(files)} files · ${withGrouping(ROOT.dirs)} folders</div>`;
+  if(ROOT.volume) parts+=`<div class="s">Capacity ${fmtIEC(ROOT.capacity)} · Free ${fmtIEC(ROOT.free)}</div>`;
+  if(S.phase==='partial') parts+=`<div class="s" style="color:var(--danger)">1 unreadable</div><div class="s" style="color:var(--cloud)">${EXCLUSIONS.count} excluded</div>`;
+  return parts+`<div class="spring"></div>${legendHTML()}`;
+}
+function legendHTML(){
+  const keys=['video','image','app','archive','audio','data','cache','doc'];
+  return `<div class="legend">${keys.map(k=>`<span class="lg"><i style="background:${KIND[k].c}"></i>${KIND[k].label}</span>`).join('')}</div>`;
+}
+
+// ---- CHOOSER SHEET ----
+const VOLUMES=[
+  {n:'Macintosh HD',d:'Internal · APFS',cap:'994 GB · 210 GB free',eligible:true,ic:'disk',root:true},
+  {n:'Home — rengwu',d:'Folder in Macintosh HD',cap:'',eligible:true,ic:'folder'},
+  {n:'Samsung T7',d:'USB · Thunderbolt SSD',cap:'2 TB · 1.1 TB free',eligible:true,ic:'disk'},
+  {n:'TimeMachine',d:'Network volume (SMB)',cap:'',eligible:false,why:'Network volumes are out of scope',ic:'disk'},
+  {n:'Ubuntu-24.iso',d:'Mounted disk image',cap:'',eligible:false,why:'Disk images aren’t scanned',ic:'disk'},
+  {n:'iCloud Drive',d:'Cloud provider root',cap:'',eligible:false,why:'Cloud roots aren’t scanned',ic:'folder'},
+];
+let chooserSel=0;
+function chooserHTML(){
+  return `<div class="sheet-scrim" onclick="closeChooser(event)">
+   <div class="sheet" onclick="event.stopPropagation()">
+    <header><h2>Choose a folder or drive to scan</h2>
+      <p>Only internal or directly-attached drives are eligible. Read-only — nothing is modified.</p></header>
+    <div class="list">
+      ${VOLUMES.map((v,i)=>`<div class="vrow ${v.eligible?'':'disabled'} ${i===chooserSel&&v.eligible?'sel':''}"
+           onclick="${v.eligible?`chooserSel=${i};beginScan();`:''}">
+        <div class="ic" style="color:${v.eligible?'var(--accent)':'var(--text-3)'}">${ic(I[v.ic])}</div>
+        <div class="meta"><div class="n">${escapeHtml(v.n)}</div><div class="d">${escapeHtml(v.d)}</div></div>
+        ${v.eligible?`<div class="cap">${v.cap||''}</div>`:`<div class="ineligible">${escapeHtml(v.why)}</div>`}
+      </div>`).join('')}
+    </div>
+    <footer>
+      <span class="other">${ic(I.folder)} <span>NSOpenPanel · canChooseDirectories</span></span>
+      <span class="spring"></span>
+      <button class="btn" onclick="closeChooser()">Cancel</button>
+      <button class="btn primary" onclick="beginScan()">Scan</button>
+    </footer>
+   </div></div>`;
+}
+
+// ======================= LAYOUT VARIANTS =======================
+function renderStage(){
+  toolbar.innerHTML=toolbarHTML();
+  statusbar.innerHTML=statusbarHTML();
+
+  if(S.phase==='empty'){ stage.innerHTML=emptyHTML(); return; }
+
+  // results present?
+  const results = ['completed','cancelled','partial'].includes(S.phase);
+  const scanning = S.phase==='scanning';
+
+  let inner='';
+  const banner = bannerHTML();
+
+  if(S.variant===0){ // CLASSIC: banner, tree (top), treemap (bottom), inspector strip? -> tree over map, details as bottom bar via status. Use split vert.
+    inner = `${banner}
+      <div class="split vert" id="splitV" style="flex:1 1 auto;min-height:0">
+        <div class="pane" style="flex:0 0 46%">
+          <div class="pane-head">Directory <span class="rt">${results?withGrouping(ROOT.files)+' files':''}</span></div>
+          ${treeHTML(null,false)}
+        </div>
+        <div class="divider" data-split="v"></div>
+        <div class="pane" style="flex:1 1 auto">
+          <div class="pane-head">Treemap <span class="rt">click a rectangle to select</span></div>
+          ${treemapHTML()}
+        </div>
+      </div>
+      <div class="split" style="flex:0 0 132px;border-top:var(--hairline) solid var(--sep-strong)">
+        <div class="pane inspector" style="flex:1 1 auto">${inspectorHTML()}</div>
+      </div>`;
+  } else if(S.variant===1){ // THREE-PANE: tree | treemap | inspector
+    inner = `${banner}
+      <div class="split" id="splitH" style="flex:1 1 auto;min-height:0">
+        <div class="pane" style="flex:0 0 300px">
+          <div class="pane-head">Directory</div>
+          ${treeHTML(null,false)}
+        </div>
+        <div class="divider" data-split="h"></div>
+        <div class="pane" style="flex:1 1 auto">
+          <div class="pane-head">Treemap</div>
+          ${treemapHTML()}
+        </div>
+        <div class="divider" data-split="h2"></div>
+        <div class="pane inspector" style="flex:0 0 300px;border-left:var(--hairline) solid var(--sep-strong)">
+          <div class="pane-head">Inspector</div>
+          <div style="flex:1 1 auto;overflow:auto">${inspectorHTML()}</div>
+        </div>
+      </div>`;
+  } else { // TREEMAP-FIRST: narrow tree rail (collapsible) + big treemap hero; details as popover
+    inner = `${banner}
+      <div class="split" id="splitH" style="flex:1 1 auto;min-height:0">
+        <div class="pane" id="rail" style="flex:0 0 ${S.railOpen===false?'0':'232px'};${S.railOpen===false?'display:none':''}">
+          <div class="pane-head">Directory <span class="rt" style="cursor:pointer" onclick="toggleRail()">Hide</span></div>
+          ${treeHTML(S.crumbId,true)}
+        </div>
+        ${S.railOpen===false?'':'<div class="divider" data-split="h"></div>'}
+        <div class="pane" style="flex:1 1 auto;position:relative">
+          ${S.railOpen===false?`<div class="pane-head">Treemap <span class="rt" style="cursor:pointer" onclick="toggleRail()">Show directory</span></div>`:''}
+          ${treemapHTML()}
+          <div id="popholder"></div>
+        </div>
+      </div>`;
+  }
+
+  stage.innerHTML = `<div style="display:flex;flex-direction:column;height:100%">${inner}</div>`;
+
+  if(scanning){ stage.insertAdjacentHTML('beforeend', scanningHTML()); }
+  requestAnimationFrame(renderTreemap);
+  if(S.variant===2) renderPopover();
+  wireDividers();
+}
+
+function renderPopover(){
+  const holder=document.getElementById('popholder'); if(!holder) return;
+  const n=S.selectedId?BYID[S.selectedId]:null;
+  if(!n){ holder.innerHTML=''; return; }
+  const cell=TMCELLS.find(c=>c.node.id===n.id);
+  let x=20,y=44;
+  if(cell){ x=Math.min(Math.max(8,cell.rect.x), (document.getElementById('tmwrap')?.clientWidth||600)-312);
+            y=Math.min(cell.rect.y+cell.rect.h+6, (document.getElementById('tmwrap')?.clientHeight||400)-260);
+            if(y<44) y=44; }
+  holder.innerHTML=`<div class="popover" style="left:${x}px;top:${y}px">${inspectorHTML()}</div>`;
+}
+
+// ======================= ACTIONS =======================
+function selectNode(id){
+  S.selectedId=id;
+  const n=BYID[id]; if(n) expandTo(n);
+  renderStage();
+}
+function toggleExpand(id){ if(S.expanded.has(id))S.expanded.delete(id); else S.expanded.add(id); renderStage(); }
+function toggleOrOpen(id){ const n=BYID[id]; if(n.children.length) toggleExpand(id); else doOpen(); }
+function setFocusTree(v){ if(S.focusTree!==v){ S.focusTree=v; } const t=document.getElementById('tree'); if(t){ t.classList.toggle('focused',v);} }
+function zoomTo(id){ S.crumbId=id; S.selectedId=id; renderStage(); }
+function toggleRail(){ S.railOpen = S.railOpen===false; renderStage(); }
+
+function openChooser(){ S.phase='choosing'; stopScan(); renderStage(); stage.insertAdjacentHTML('beforeend', chooserHTML()); }
+function closeChooser(e){ if(e&&e.target&&e.target.closest&&e.target.closest('.sheet')&&e.type==='click'&&!e.currentTarget.classList.contains('sheet-scrim')) return;
+  if(!hasResults()) S.phase='empty'; else S.phase=S.lastResultPhase||'completed'; renderStage(); }
+function hasResults(){ return ['completed','cancelled','partial'].includes(S.lastResultPhase); }
+
+let scanTimer=null;
+function beginScan(){
+  document.querySelector('.sheet-scrim')?.remove();
+  S.phase='scanning'; S.selectedId=null; S.revealFrac=0; S.showErrors=false; S.incompleteOpen=false;
+  S.scan={bytes:0,files:0,dirs:0,elapsed:0,cur:'',running:true};
+  const DURATION=3.0; const t0=performance.now();
+  const paths=FLAT.filter(n=>n.children.length===0);
+  renderStage();
+  clearInterval(scanTimer);
+  scanTimer=setInterval(()=>{
+    const el=(performance.now()-t0)/1000;
+    S.scan.elapsed=el;
+    let f=Math.min(1, el/DURATION);
+    // ease
+    f = 1-Math.pow(1-f,2);
+    S.revealFrac=f;
+    // recompute telemetry from revealed leaves
+    let bytes=0,files=0,dirs=0,cur='';
+    for(const n of FLAT){ if(discovered(n)){ if(n.children.length===0){ bytes+=n.own; files++; cur=n.path;} else dirs++; } }
+    S.scan.bytes=bytes; S.scan.files=files; S.scan.dirs=dirs; S.scan.cur=cur;
+    // update lightweight bits without nuking tree focus
+    const sb=document.querySelector('.scanbar'); if(sb) sb.outerHTML=scanningHTML();
+    statusbar.innerHTML=statusbarHTML();
+    renderTreeLive();
+    if(f>=1){ finishScan('completed'); }
+  },90);
+}
+function renderTreeLive(){
+  const t=document.getElementById('tree'); if(!t) return;
+  const scrollTop=t.scrollTop;
+  t.innerHTML=rowsHTML(BYID[S.variant===2?S.crumbId:ROOT.id],0,true);
+  t.scrollTop=scrollTop;
+  renderTreemap();
+  toolbar.innerHTML=toolbarHTML();
+}
+function stopScan(){ clearInterval(scanTimer); S.scan.running=false; }
+function finishScan(phase){
+  stopScan(); S.revealFrac=1; S.phase=phase; S.lastResultPhase=phase;
+  if(phase==='partial'){ S.showErrors=true; }
+  renderStage();
+}
+function cancelScan(){
+  if(S.phase!=='scanning'){ return; }
+  stopScan();
+  // keep whatever fraction was revealed
+  S.phase='cancelled'; S.lastResultPhase='cancelled'; S.incompleteOpen=true;
+  if(S.revealFrac>=1) S.revealFrac=0.62;
+  renderStage();
+  toast('Scan cancelled — partial results retained.');
+}
+
+function doOpen(){
+  const n=S.selectedId?BYID[S.selectedId]:null; if(!n||n.symlink) return;
+  toast(`Open “${n.name}” · <code>NSWorkspace.shared.open(url)</code> — read-only, no real Finder call in prototype.`);
+}
+function doReveal(){
+  const n=S.selectedId?BYID[S.selectedId]:null; if(!n) return;
+  toast(`Reveal “${n.name}” in Finder · <code>activateFileViewerSelecting([url])</code> — prototype: no real call.`);
+}
+function showErrorSummary(){
+  toast(`1 unreadable: /Library/Application Support/com.protected.vault (permission denied). Excluded (cloud, not downloaded): ${EXCLUSIONS.examples.join('; ')}.`);
+}
+
+let toastT=null;
+function toast(msg){
+  const el=document.getElementById('toast'); el.innerHTML=msg; el.classList.add('show');
+  clearTimeout(toastT); toastT=setTimeout(()=>el.classList.remove('show'),4200);
+}
+
+// ======================= dividers (resizing) =======================
+function wireDividers(){
+  document.querySelectorAll('.divider').forEach(d=>{
+    d.addEventListener('mousedown',startDrag);
+  });
+}
+function startDrag(e){
+  e.preventDefault();
+  const div=e.currentTarget;
+  const vert=div.closest('.split').classList.contains('vert');
+  const prev=div.previousElementSibling;
+  const startPos = vert? e.clientY : e.clientX;
+  const startSize = vert? prev.getBoundingClientRect().height : prev.getBoundingClientRect().width;
+  function move(ev){
+    const delta=(vert?ev.clientY:ev.clientX)-startPos;
+    const ns=Math.max(80,startSize+delta);
+    prev.style.flex=`0 0 ${ns}px`;
+    renderTreemap(); if(S.variant===2) renderPopover();
+  }
+  function up(){ document.removeEventListener('mousemove',move); document.removeEventListener('mouseup',up); }
+  document.addEventListener('mousemove',move); document.addEventListener('mouseup',up);
+}
+
+// ======================= PROTOTYPE bar =======================
+const STATES=[['empty','Empty'],['choosing','Choosing'],['scanning','Scanning'],['completed','Completed'],['cancelled','Cancelled'],['partial','Partial-fail']];
+function renderProtobar(){
+  const v=VARIANTS[S.variant];
+  document.getElementById('protobar').innerHTML=`
+    <span class="plabel">Proto</span>
+    <button class="arw" onclick="cycleVariant(-1)" title="Previous layout (←)">‹</button>
+    <div class="vname">${v.name}<small>${v.sub} · ${S.variant+1}/3</small></div>
+    <button class="arw" onclick="cycleVariant(1)" title="Next layout (→)">›</button>
+    <div class="vbar"></div>
+    <span style="font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.5)">State</span>
+    <div class="seg">${STATES.map(([k,l])=>`<button class="${S.phase===k?'on':''}" onclick="gotoState('${k}')">${l}</button>`).join('')}</div>
+    <div class="vbar"></div>
+    <button class="theme" onclick="cycleTheme()" title="Toggle appearance">◐</button>`;
+}
+function cycleVariant(dir){
+  S.variant=(S.variant+dir+VARIANTS.length)%VARIANTS.length;
+  syncURL(); renderStage(); renderProtobar();
+}
+function gotoState(k){
+  stopScan();
+  if(k==='empty'){ S.phase='empty'; S.selectedId=null; }
+  else if(k==='choosing'){ openChooser(); renderProtobar(); syncURL(); return; }
+  else if(k==='scanning'){ beginScan(); renderProtobar(); syncURL(); return; }
+  else if(k==='completed'){ S.phase='completed'; S.lastResultPhase='completed'; S.revealFrac=1; S.showErrors=false; S.incompleteOpen=false; }
+  else if(k==='cancelled'){ S.phase='cancelled'; S.lastResultPhase='cancelled'; S.revealFrac=0.62; S.incompleteOpen=true; S.showErrors=false; }
+  else if(k==='partial'){ S.phase='partial'; S.lastResultPhase='partial'; S.revealFrac=1; S.showErrors=true; S.incompleteOpen=false; }
+  syncURL(); renderStage(); renderProtobar();
+}
+let themeMode=0; // 0 system,1 light,2 dark
+function cycleTheme(){
+  themeMode=(themeMode+1)%3;
+  const r=document.documentElement;
+  if(themeMode===0) r.removeAttribute('data-theme');
+  else r.setAttribute('data-theme', themeMode===1?'light':'dark');
+  renderTreemap();
+}
+
+// URL param (shareable / reload-stable)
+function syncURL(){
+  const u=new URL(location.href);
+  u.searchParams.set('variant',VARIANTS[S.variant].key);
+  u.searchParams.set('state',S.phase);
+  history.replaceState(null,'',u);
+}
+function readURL(){
+  const u=new URL(location.href);
+  const vk=u.searchParams.get('variant'); const vi=VARIANTS.findIndex(v=>v.key===vk);
+  if(vi>=0) S.variant=vi;
+  const st=u.searchParams.get('state');
+  if(st && STATES.some(s=>s[0]===st) && st!=='choosing' && st!=='scanning'){
+    // apply non-animated states directly
+    if(st==='completed'){S.phase='completed';S.lastResultPhase='completed';S.revealFrac=1;}
+    else if(st==='cancelled'){S.phase='cancelled';S.lastResultPhase='cancelled';S.revealFrac=0.62;S.incompleteOpen=true;}
+    else if(st==='partial'){S.phase='partial';S.lastResultPhase='partial';S.revealFrac=1;S.showErrors=true;}
+    else S.phase='empty';
+  }
+}
+
+// ======================= keyboard =======================
+function visibleRows(){
+  const out=[]; (function w(n,root){ if(!discovered(n)&&!root) return; out.push(n);
+    if(S.expanded.has(n.id)) n.children.forEach(c=>w(c,false)); })(BYID[S.variant===2?S.crumbId:ROOT.id],true);
+  return out;
+}
+document.addEventListener('keydown',e=>{
+  const tag=(e.target.tagName||'').toLowerCase();
+  const typing = tag==='input'||tag==='textarea'||e.target.isContentEditable;
+  if(typing) return;
+  // variant cycling with Left/Right (skill convention)
+  if(e.key==='ArrowLeft'){ cycleVariant(-1); e.preventDefault(); return; }
+  if(e.key==='ArrowRight'){ cycleVariant(1); e.preventDefault(); return; }
+  // tree navigation Up/Down
+  if((e.key==='ArrowDown'||e.key==='ArrowUp') && !['empty','choosing','scanning'].includes(S.phase)){
+    const rows=visibleRows(); let i=rows.findIndex(n=>n.id===S.selectedId);
+    if(i<0) i = e.key==='ArrowDown'?-1:0;
+    i += e.key==='ArrowDown'?1:-1; i=Math.max(0,Math.min(rows.length-1,i));
+    selectNode(rows[i].id); e.preventDefault(); return;
+  }
+  if(S.selectedId){
+    if((e.key==='o'||e.key==='O') && (e.metaKey||!e.ctrlKey&&false)){ }
+    if(e.key==='o' && e.metaKey){ doOpen(); e.preventDefault(); }
+    if(e.key==='r' && e.metaKey){ doReveal(); e.preventDefault(); }
+    if(e.key==='Enter'){ toggleOrOpen(S.selectedId); e.preventDefault(); }
+  }
+  if(e.key==='Escape'){ document.querySelector('.sheet-scrim')?.remove(); if(S.phase==='choosing'){ S.phase= hasResults()?S.lastResultPhase:'empty'; renderStage(); } }
+});
+
+// re-layout treemap on resize
+let rz; window.addEventListener('resize',()=>{ clearTimeout(rz); rz=setTimeout(()=>{renderTreemap(); if(S.variant===2)renderPopover();},60); });
+
+// ======================= util =======================
+function escapeHtml(s){ return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+// ======================= boot =======================
+readURL();
+renderProtobar();
+renderStage();
+if(new URL(location.href).searchParams.get('state')==='completed' || S.phase==='completed'){ if(!S.selectedId){ /* leave unselected */ } }
+</script>
