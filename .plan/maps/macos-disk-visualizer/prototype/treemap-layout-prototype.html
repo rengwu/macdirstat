@@ -12,6 +12,8 @@
   │                                                                           │
   │  • ◀ / ▶ (or Left/Right arrows) cycle 3 HIERARCHY-RENDERING variants:     │
   │    classic (flat, WinDirStat-style outlines) · nested frames · headered.  │
+  │    ACCEPTED: classic flat is the default; all variants are RETAINED for   │
+  │    reference per human decision on Ticket #05 — do not strip them.        │
   │  • Keys 1–4 switch datasets: representative / dense / deep / extreme.     │
   │  • Hover = tooltip + highlight. Click = select (state panel, right).      │
   │  All geometry is deterministic: squarified, sorted bytes-desc, name-asc.  │
@@ -475,7 +477,7 @@ const DATASET_ORDER = ["representative", "dense", "deep", "extreme"];
 const DATASETS = makeDatasets();
 
 const params = new URLSearchParams(location.search);
-let variantName = VARIANT_ORDER.includes(params.get("variant")) ? params.get("variant") : "nested";
+let variantName = VARIANT_ORDER.includes(params.get("variant")) ? params.get("variant") : "classic"; // classic flat = accepted default (Ticket #05)
 let datasetName = DATASET_ORDER.includes(params.get("dataset")) ? params.get("dataset") : "representative";
 
 const stage = document.getElementById("stage");
