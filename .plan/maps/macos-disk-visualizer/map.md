@@ -10,7 +10,7 @@ Produce an implementation-ready specification for a native Swift macOS app that 
 - The implementation must support macOS 11 Big Sur and later and use native Swift/macOS frameworks.
 - The first version is read-only. Deletion, cleanup, mutation, and file-management workflows are excluded.
 - The deliverable is a locally buildable Swift app. Signing, notarization, packaging, publishing, and release infrastructure are excluded.
-- This is a planning map and follows Wayfinder's “plan, don't do” rule. When the specification is settled, create a separate implementation map at `.plan/maps/macos-disk-visualizer-impl/`.
+- This is a planning map and follows Wayfinder's “plan, don't do” rule. The specification is settled: see [`spec.md`](./spec.md), the authoritative implementation contract. The next step is a separate implementation map at `.plan/maps/macos-disk-visualizer-impl/`.
 - Prefer Apple primary documentation for platform and API facts. Record durable decisions in the ticket that resolves them rather than duplicating them here.
 
 ## Decisions so far
@@ -22,10 +22,11 @@ Produce an implementation-ready specification for a native Swift macOS app that 
 - [Specify treemap layout and visual encoding](./tickets/05-specify-treemap.md) — Recursive squarified layout in `TreemapLayout`, rendered **classic flat** (human-accepted): zero per-level insets, leaves tiling 100% of area, hierarchy shown by directory outlines overdrawn per depth. Area strictly proportional to logical bytes; deterministic child order (bytes desc, name asc); render-only culling below 2×2 pt with bytes kept in ancestor totals; zero-attributed-byte items get no rectangle; fixed extension→kind-group→hue palette with status-bar legend; labels only when ≥ 48×15 pt; hover stroke + tooltip, 2 pt accent selection; deepest-node hit testing; pure recompute on resize (no cache/animation) for snapshot-testable geometry. All three prototype variants are retained per human instruction.
 - [Settle performance, resilience, and accessibility bars](./tickets/06-settle-quality-bars.md) — Anchor algorithmic and memory verification to an M1/8 GB reference machine and a Smoke-to-Stress workload ladder; require no OOM below 8 GB, bounded error detail, exact IEC/locale formatting, and exact selectable merge buckets for sub-2×2 pt treemap content, while leaving wall-clock, latency, and quantitative accessibility thresholds explicitly unset.
 - [Design the verification strategy](./tickets/07-design-verification-strategy.md) — Layer verification across pure Swift package tests, disposable real-filesystem integration fixtures, deterministic UI/model checks, generated scale and resilience suites, and a recorded macOS 11-through-current runtime matrix; prove read-only behavior with fixture fingerprints, treat Ticket #06's exact merge buckets as authoritative, and preserve the explicit disk-image and quantitative-accessibility gaps for the final specification.
+- [Write the implementation-ready product specification](./tickets/08-write-product-specification.md) — Consolidate all seven resolved tickets into the authoritative [`spec.md`](./spec.md) contract, inventing no new product decisions: reconcile the treemap sub-2×2 pt policy in favor of Ticket #06's merge rule, record the accepted macOS 11 disk-image-root detection gap and the deferred accessibility-coverage gap, capture the subsystem interface seams, and give an implementation-ready acceptance checklist. A separate implementation map can now be charted.
 
 ## Not yet specified
 
-- **Implementation decomposition.** Concrete build tickets, sequencing, and integration boundaries depend on the settled product and technical specification. <clears-with: 08>
+<!-- Implementation decomposition (clears-with 08) is resolved: spec.md is settled. The concrete build tickets, sequencing, and integration boundaries belong to the future implementation map at .plan/maps/macos-disk-visualizer-impl/, not this planning map. -->
 
 ## Out of scope
 
