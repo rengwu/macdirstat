@@ -48,8 +48,27 @@ matrix recorded across macOS 11 through current.
   3 levels**. Status-bar counts are tree-visible, not scanner-enumerated. §§6.1, 6.2, 7.1
   and 7.3 need amending to match — the prototype is authoritative where they disagree.
 
+- [Project & package scaffold](./tickets/02-project-and-package-scaffold.md) — the
+  repository shape every later ticket builds on: `MacDirStat.xcodeproj` (app + three test
+  targets), `Packages/ScanCore` and `Packages/TreemapLayout` (Foundation-only, floor
+  pinned, the other three test targets), four shared schemes and four test plans, and
+  three self-tested guards in `Scripts/` wired into the app build. Thread Sanitizer is a
+  **second plan** (`CI-ThreadSanitizer`) on the CI scheme, so `-testPlan CI` stays the
+  documented one-command gate. **No sandbox entitlements** — deferred to 07 with the
+  chooser in hand. The scaffold was authored on a machine without Xcode, so the
+  `.xcodeproj` is structurally checked but never built; `Scripts/verify-scaffold.sh` must
+  reach exit 0 on a machine with Xcode.
+
 ## Not yet specified
 
+- **Compiler availability checking does not reject everything §4.4 assumes it does.** A
+  `Canvas` in a `some View` body is a *warning*, not an error, and would crash on Big Sur.
+  The `Scripts/check-post-bigsur-apis.sh` guard is load-bearing rather than a second
+  opinion; §4.4 and §9.3 word it as though the compiler alone suffices.
+- **The scaffold's Xcode-dependent gates are unrun.** Both package `swift test`s, the
+  `MacDirStat-CI` action and the universal Release build have never executed — the
+  authoring machine had the Command Line Tools only. First Xcode-equipped session should
+  run `Scripts/verify-scaffold.sh` and treat any project repair as finishing ticket 02.
 - **Spec text lags the prototype.** Ticket 01's answer supersedes six clauses across
   §§6.1, 6.2, 7.1 and 7.3 (merge iteration, merge-box order, outline depth cap,
   tree-visible counts, Cancelled banner → status-bar chip, empty-state and chooser

@@ -1,0 +1,37 @@
+{
+  "configurations" : [
+    {
+      "id" : "CC20DAC4-FCB3-47D1-BDC8-0356613CDD57",
+      "name" : "Default",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:MacDirStat.xcodeproj",
+      "identifier" : "AB000000000000000000A001",
+      "name" : "MacDirStat"
+    }
+  },
+  "testTargets" : [
+    {
+      "selectedTests" : [
+        "CompatibilitySmokeUITests\/test_cancelRetainsDiscoveredResults()",
+        "CompatibilitySmokeUITests\/test_folderScan()",
+        "CompatibilitySmokeUITests\/test_incrementalResults()",
+        "CompatibilitySmokeUITests\/test_launch()",
+        "CompatibilitySmokeUITests\/test_openAndRevealCallOnlyTheirSpies()",
+        "CompatibilitySmokeUITests\/test_partiallyFailedScanIsLegible()",
+        "CompatibilitySmokeUITests\/test_treemapSelectionSyncsWithTree()"
+      ],
+      "target" : {
+        "containerPath" : "container:MacDirStat.xcodeproj",
+        "identifier" : "AB000000000000000000A003",
+        "name" : "MacDirStatUITests"
+      }
+    }
+  ],
+  "version" : 1
+}
