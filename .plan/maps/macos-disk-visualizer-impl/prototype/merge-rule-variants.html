@@ -1,0 +1,804 @@
+<!--
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │  PROTOTYPE — THROWAWAY.  macOS Disk Visualizer · merge-rule geometry bench │
+  │  Impl-map Ticket 01.                                                       │
+  │                                                                            │
+  │  QUESTION: spec §6.2 says merge every child "whose individual squarified    │
+  │  rectangle would fall below 2×2 pt". You cannot know a rectangle until you  │
+  │  have squarified, and squarifying WITHOUT the tiny children repacks the     │
+  │  survivors into different shapes — so a child can flip across the           │
+  │  threshold. The spec does not say whether to iterate. It also never says    │
+  │  where the merge box sorts, though §6.1 fixes child order as bytes-desc.    │
+  │                                                                            │
+  │  This bench renders ONE fixture at ONE viewport under all three candidate   │
+  │  strategies at once, with the metrics that actually distinguish them.       │
+  │                                                                            │
+  │  ← / → cycle the focused strategy in Solo mode.  Everything else is in the  │
+  │  bar at the bottom.  Double-click to run — no server, no build.             │
+  │                                                                            │
+  │  Rendering is canvas + manual hit-testing on purpose: that is what the      │
+  │  spec commits to (custom NSView + Core Graphics draw(_:), §4.1).            │
+  └──────────────────────────────────────────────────────────────────────────┘
+-->
+<title>Merge Rule Bench</title>
+<style>
+  :root{
+    --sf:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono",Menlo,Monaco,monospace;
+    --bg:#F4F4F6; --panel:#FFFFFF; --sunken:#ECECEF;
+    --text:#1D1D1F; --text-2:#6E6E73; --text-3:#9A9AA0;
+    --sep:rgba(0,0,0,.10); --sep-strong:rgba(0,0,0,.18);
+    --accent:#007AFF; --good:#1D8A34; --bad:#D0342C; --warn:#B4740A;
+    --ctl:#FFFFFF; --ctl-2:#F0F0F3; --ctl-border:rgba(0,0,0,.16);
+    --void:#E4E4E8;
+    --hair:.5px;
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --bg:#17171A; --panel:#212124; --sunken:#1B1B1E;
+      --text:#F2F2F5; --text-2:#9C9CA3; --text-3:#6E6E73;
+      --sep:rgba(255,255,255,.11); --sep-strong:rgba(255,255,255,.18);
+      --accent:#0A84FF; --good:#4BD167; --bad:#FF6961; --warn:#FFB340;
+      --ctl:#2E2E31; --ctl-2:#252528; --ctl-border:rgba(255,255,255,.16);
+      --void:#0E0E10;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#17171A; --panel:#212124; --sunken:#1B1B1E;
+    --text:#F2F2F5; --text-2:#9C9CA3; --text-3:#6E6E73;
+    --sep:rgba(255,255,255,.11); --sep-strong:rgba(255,255,255,.18);
+    --accent:#0A84FF; --good:#4BD167; --bad:#FF6961; --warn:#FFB340;
+    --ctl:#2E2E31; --ctl-2:#252528; --ctl-border:rgba(255,255,255,.16);
+    --void:#0E0E10;
+  }
+
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; font-family:var(--sf); font-size:13px; color:var(--text);
+    background:var(--bg); -webkit-font-smoothing:antialiased;
+    display:flex; flex-direction:column; overflow:hidden; user-select:none;
+  }
+
+  /* ---------- top explainer ---------- */
+  header.top{
+    flex:0 0 auto; padding:14px 20px 12px; background:var(--panel);
+    border-bottom:var(--hair) solid var(--sep-strong);
+  }
+  header.top h1{ margin:0 0 3px; font-size:15px; font-weight:650; letter-spacing:-.01em }
+  header.top p{ margin:0; font-size:12px; color:var(--text-2); line-height:1.5; max-width:104ch }
+  header.top code{ font-family:var(--mono); font-size:11px; background:var(--ctl-2); padding:1px 4px; border-radius:4px }
+
+  /* ---------- boards ---------- */
+  main{ flex:1 1 auto; overflow:auto; padding:18px 20px 96px }
+  .boards{ display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap; justify-content:center }
+  .board{
+    background:var(--panel); border:var(--hair) solid var(--sep-strong); border-radius:12px;
+    overflow:hidden; display:flex; flex-direction:column;
+    box-shadow:0 1px 3px rgba(0,0,0,.07);
+  }
+  .board.focus{ border-color:var(--accent); box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 32%,transparent) }
+  .board h2{
+    margin:0; padding:9px 12px 8px; font-size:12.5px; font-weight:650;
+    border-bottom:var(--hair) solid var(--sep); display:flex; align-items:baseline; gap:7px;
+  }
+  .board h2 .key{
+    font:700 9px var(--sf); letter-spacing:.1em; color:#fff; background:var(--text-3);
+    border-radius:4px; padding:2px 5px; position:relative; top:-1px;
+  }
+  .board.focus h2 .key{ background:var(--accent) }
+  .board h2 .sub{ font-weight:450; color:var(--text-3); font-size:11px; margin-left:auto }
+  .canvaswrap{ position:relative; background:var(--void); }
+  canvas{ display:block; cursor:crosshair }
+
+  /* metrics */
+  .metrics{ border-top:var(--hair) solid var(--sep); padding:4px 0 6px }
+  .m{
+    display:flex; align-items:baseline; gap:8px; padding:2.5px 12px; font-size:11.5px;
+    font-variant-numeric:tabular-nums;
+  }
+  .m .lab{ color:var(--text-2); flex:1 1 auto; white-space:nowrap }
+  .m .val{ font-weight:600; white-space:nowrap }
+  .m.hero{ font-size:12.5px; padding-top:6px; padding-bottom:6px; background:var(--sunken); margin:2px 0 4px }
+  .m.hero .lab{ color:var(--text) }
+  .val.good{ color:var(--good) } .val.bad{ color:var(--bad) } .val.warn{ color:var(--warn) }
+  .mrule{ height:var(--hair); background:var(--sep); margin:4px 12px }
+
+  /* tooltip */
+  .tip{
+    position:fixed; z-index:80; pointer-events:none; opacity:0; transition:opacity .09s;
+    background:rgba(28,28,30,.97); color:#fff; border:1px solid rgba(255,255,255,.14);
+    border-radius:8px; padding:7px 10px; font-size:11.5px; line-height:1.45;
+    box-shadow:0 8px 26px rgba(0,0,0,.4); max-width:330px;
+  }
+  .tip.on{ opacity:1 }
+  .tip b{ font-weight:650 } .tip .p{ font-family:var(--mono); font-size:10px; color:#9CC9FF; word-break:break-all }
+  .tip .flag{ color:#FFD166 }
+
+  /* ---------- proto bar ---------- */
+  .protobar{
+    position:fixed; left:50%; bottom:14px; transform:translateX(-50%);
+    display:flex; align-items:center; gap:7px; z-index:60; flex-wrap:wrap;
+    max-width:calc(100vw - 20px);
+    background:rgba(24,24,27,.94); color:#fff; border:1px solid rgba(255,255,255,.15);
+    border-radius:13px; padding:7px 9px; box-shadow:0 12px 34px rgba(0,0,0,.42);
+    backdrop-filter:blur(20px); font-size:11.5px;
+  }
+  .protobar .plabel{
+    font:700 9px var(--sf); letter-spacing:.14em; text-transform:uppercase;
+    color:#FF9F3B; padding:0 3px;
+  }
+  .protobar .grp{ display:flex; align-items:center; gap:5px }
+  .protobar .gl{ font-size:9px; letter-spacing:.09em; text-transform:uppercase; color:rgba(255,255,255,.5) }
+  .protobar .seg{ display:flex; background:rgba(255,255,255,.09); border-radius:8px; padding:2px; gap:2px }
+  .protobar .seg button{
+    background:transparent; border:none; color:rgba(255,255,255,.74); font:inherit;
+    padding:3px 8px; border-radius:6px; cursor:pointer; white-space:nowrap;
+  }
+  .protobar .seg button:hover{ color:#fff; background:rgba(255,255,255,.1) }
+  .protobar .seg button.on{ background:rgba(255,255,255,.92); color:#111; font-weight:650 }
+  .protobar .vbar{ width:1px; align-self:stretch; background:rgba(255,255,255,.18); margin:0 2px }
+  .protobar .arw{
+    width:24px; height:24px; border-radius:7px; background:rgba(255,255,255,.1); border:none;
+    color:#fff; cursor:pointer; font-size:13px; line-height:1;
+  }
+  .protobar .arw:hover{ background:rgba(255,255,255,.22) }
+
+  @media (prefers-reduced-motion:reduce){ *{transition:none!important;animation:none!important} }
+</style>
+
+<header class="top">
+  <h1>Merge rule — which reading of spec §6.2 do we build?</h1>
+  <p>
+    All boards render the <b>same fixture</b> at the <b>same viewport</b>. They differ only in how
+    “would fall below 2×2 pt” is decided. Watch two numbers: <b>slivers left</b> (surviving boxes
+    thinner than 2 pt in either direction — the thing the rule exists to eliminate) and
+    <b>squarify passes</b> (what it costs, and how hard the geometry golden-tests in §9.3 get).
+    <code>Area truthful</code> should read 100.0% on every board — that is §6.2's other promise, and
+    it is the one thing none of the three candidates puts at risk.
+  </p>
+</header>
+
+<main><div class="boards" id="boards"></div></main>
+<div class="tip" id="tip"></div>
+<div class="protobar" id="protobar"></div>
+
+<script>
+/* ===================================================================
+   THROWAWAY prototype glue. Nothing here mirrors production structure.
+   =================================================================== */
+
+const KIB = 1024, MIB = 1024 * KIB, GIB = 1024 * MIB;
+const MIN_PT = 2;                 // §6.2 merge trigger
+const MAX_ROUNDS = 8;             // fixpoint safety cap
+
+/* ---------- IEC formatting (§3.2: binary units, 3 significant figures) ---------- */
+const UNITS = ["bytes", "KiB", "MiB", "GiB", "TiB"];
+function fmtIEC(b) {
+  b = Math.round(b);
+  if (b === 0) return "0 bytes";
+  if (b === 1) return "1 byte";
+  if (b < 1024) return b + " bytes";
+  let u = 0, v = b;
+  while (v >= 1024 && u < UNITS.length - 1) { v /= 1024; u++; }
+  const d = v >= 100 ? 0 : (v >= 10 ? 1 : 2);
+  return v.toFixed(d) + " " + UNITS[u];
+}
+const grp = n => Math.round(n).toLocaleString("en-US");
+function pct(x) {                                    // §3.2 percentage rules
+  if (x <= 0) return "0%";
+  if (x < 0.05) return "< 0.1%";
+  return x.toFixed(1) + "%";
+}
+
+/* ---------- kind → hue (§6.3: 11 groups + gray "other") ---------- */
+const KIND_GROUPS = [
+  ["code",      210, ["swift","m","mm","c","cc","cpp","h","hpp","js","ts","tsx","jsx","py","rb","go","rs","java","kt","sh","json","yml","yaml","xml","html","css","md","map","lock"]],
+  ["image",     150, ["png","jpg","jpeg","gif","heic","tiff","tif","bmp","webp","svg","raw","cr2","icns","ico"]],
+  ["video",     280, ["mp4","mov","mkv","avi","m4v","webm","wmv","flv"]],
+  ["audio",      20, ["mp3","aac","m4a","wav","flac","ogg","aiff","aif"]],
+  ["document",   45, ["pdf","doc","docx","rtf","txt","pages","odt","epub","numbers","key","xls","xlsx","ppt","pptx","csv"]],
+  ["archive",     0, ["zip","tar","gz","tgz","bz2","xz","rar","7z","lz4","zst"]],
+  ["app",       340, ["app","pkg","ipa"]],
+  ["diskimage", 260, ["dmg","iso","img","sparseimage","sparsebundle"]],
+  ["font",      180, ["ttf","otf","woff","woff2","ttc"]],
+  ["data",       90, ["sqlite","db","dat","bin","sav","log","core","idx","pack"]],
+  ["system",    220, ["dylib","so","a","framework","kext","plist","cache"]],
+];
+const EXT_TO_GROUP = (() => {
+  const m = new Map();
+  for (const [g, , exts] of KIND_GROUPS) for (const e of exts) m.set(e, g);
+  return m;
+})();
+function kindOf(name) {
+  const i = name.lastIndexOf(".");
+  return (i >= 0 ? EXT_TO_GROUP.get(name.slice(i + 1).toLowerCase()) : null) || "other";
+}
+function kindColor(group, dark) {
+  const g = KIND_GROUPS.find(k => k[0] === group);
+  const hue = g ? g[1] : 0, sat = g ? 55 : 0, li = dark ? 60 : 52;
+  return `hsl(${hue} ${sat}% ${li}%)`;
+}
+
+/* ---------- fixtures ---------- */
+function rng(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const file = (name, bytes) => ({ name, bytes, kind: kindOf(name) });
+const dir  = (name, children) => ({ name, children, kind: "dir" });
+
+// a run of tiny files with a log-uniform size spread — this is what makes merge buckets fire
+function tinies(prefix, ext, n, lo, hi, seed) {
+  const r = rng(seed), out = [];
+  for (let i = 0; i < n; i++) {
+    const t = r();
+    out.push(file(`${prefix}-${i}.${ext}`, Math.round(lo * Math.pow(hi / lo, t))));
+  }
+  return out;
+}
+
+const FIXTURES = {
+  home: {
+    label: "Realistic home",
+    note: "A believable Macintosh HD: heavy media and apps over a long tail of caches and node_modules.",
+    build: () => dir("Macintosh HD", [
+      dir("Applications", [
+        file("Xcode.app", 14.2 * GIB), file("Final Cut Pro.app", 3.9 * GIB),
+        file("Safari.app", 480 * MIB), file("Photos.app", 210 * MIB),
+        ...tinies("Utility", "app", 34, 8 * MIB, 120 * MIB, 11),
+      ]),
+      dir("Library", [
+        dir("Developer", [file("CoreSimulator.dat", 41 * GIB)]),
+        dir("Caches", [
+          file("com.apple.bird.cache", 6.4 * GIB), file("Google.cache", 2.1 * GIB),
+          file("Homebrew.cache", 1.3 * GIB),
+          ...tinies("frag", "cache", 240, 2 * KIB, 900 * KIB, 12),
+        ]),
+        dir("Application Support", [
+          file("MobileSync-iPhone.dat", 22 * GIB),
+          ...tinies("support", "plist", 80, 1 * KIB, 400 * KIB, 13),
+        ]),
+      ]),
+      dir("System", [file("Library-frameworks.framework", 8.6 * GIB)]),
+      dir("Users", [dir("rengwu", [
+        dir("Movies", [
+          file("project-render.mov", 6.8 * GIB),
+          file("Screen Recording 2026-08-02.mov", 4.1 * GIB),
+          file("vacation-2025.mp4", 2.2 * GIB),
+        ]),
+        dir("Pictures", [file("Photos Library.photoslibrary", 58 * GIB)]),
+        dir("Music", [file("Media.m4a", 9.3 * GIB)]),
+        dir("Downloads", [
+          file("dataset-2026.zip", 3.2 * GIB), file("big-lecture.mov", 1.6 * GIB),
+          file("report-final.pdf", 18 * MIB),
+        ]),
+        dir("Documents", [
+          dir("code", [
+            file("app-source.swift", 210 * MIB),
+            dir("node_modules", tinies("mod", "js", 1200, 512, 90 * KIB, 14)),
+          ]),
+          file("Thesis.pdf", 42 * MIB), file("budget-2026.xlsx", 8 * MIB),
+        ]),
+        dir("Desktop", [dir("screenshots", tinies("Screenshot", "png", 130, 180 * KIB, 5 * MIB, 15))]),
+      ])]),
+    ]),
+  },
+
+  skew: {
+    label: "10⁴:1 skew",
+    note: "§6.4's extreme-distribution case: one 40 GiB file beside 3,000 files from 1 KiB to 1 MiB.",
+    build: () => dir("skew", [
+      file("bigsur-master.dmg", 40 * GIB),
+      ...tinies("tiny", "dat", 3000, 1 * KIB, 1 * MIB, 21),
+    ]),
+  },
+
+  flat: {
+    label: "Flat 2,500",
+    note: "§8.1's flat-directory stress shape, scaled to something a browser can redraw live.",
+    build: () => dir("flat", tinies("entry", "bin", 2500, 4 * KIB, 240 * MIB, 31)),
+  },
+
+  deep: {
+    label: "Deep chain ×20",
+    note: "§6.4's deep-chain case. Watch the directory outlines, not the fills — this is the outline-budget question.",
+    build: () => {
+      let node = dir("level-20", [file("leaf.bin", 400 * MIB), file("note.txt", 12 * KIB)]);
+      for (let i = 19; i >= 1; i--) {
+        node = dir(`level-${i}`, [
+          file(`payload-${i}.dat`, Math.round(600 * MIB * Math.pow(0.86, i))),
+          file(`meta-${i}.plist`, 6 * KIB),
+          node,
+        ]);
+      }
+      return dir("deep", [node]);
+    },
+  },
+
+  tail: {
+    label: "40 tails",
+    note: "Every directory has its own long tail, so merge boxes multiply. Tests bucket proliferation, not size.",
+    build: () => dir("tail", Array.from({ length: 40 }, (_, i) =>
+      dir(`project-${String(i).padStart(2, "0")}`, [
+        file(`build-${i}.tar`, Math.round(120 * MIB * (1 + (i % 7)))),
+        ...tinies(`src-${i}`, "ts", 60, 700, 40 * KIB, 100 + i),
+      ]))),
+  },
+};
+
+/* ---------- rollup: attributed subtree bytes + recursive item counts ---------- */
+function rollup(n) {
+  if (!n.children) { n.sub = n.bytes; n.items = 1; return n; }
+  let s = 0, c = 1;
+  // §6.1 determinism: children enter layout bytes-desc, ties by name ascending (code-point).
+  for (const ch of n.children) { rollup(ch); s += ch.sub; c += ch.items; }
+  n.sub = s; n.items = c;
+  return n;
+}
+
+/* =====================================================================
+   SQUARIFIED TREEMAP  (Bruls / Huizing / van Wijk) — §6.1
+   Pure function of (items, rect). Unrounded points; no snapping here.
+   ===================================================================== */
+function worstRatio(row, rowSum, short, scale) {
+  if (!row.length) return Infinity;
+  const thick = (rowSum * scale) / short;
+  if (thick <= 0) return Infinity;
+  let w = 0;
+  for (const it of row) {
+    const len = (it.value * scale) / thick;
+    if (len <= 0) return Infinity;
+    w = Math.max(w, Math.max(len / thick, thick / len));
+  }
+  return w;
+}
+
+// items: [{value, ...}] already in final order. Returns [{item,x,y,w,h}]
+function squarify(items, rect) {
+  const out = [];
+  const total = items.reduce((a, i) => a + i.value, 0);
+  if (total <= 0 || rect.w <= 0 || rect.h <= 0) return out;
+  const scale = (rect.w * rect.h) / total;      // pt² per byte
+  let free = { ...rect }, i = 0;
+
+  while (i < items.length && free.w > 1e-9 && free.h > 1e-9) {
+    const short = Math.min(free.w, free.h);
+    const row = [];
+    let rowSum = 0, best = Infinity;
+
+    while (i < items.length) {
+      const cand = worstRatio(row.concat(items[i]), rowSum + items[i].value, short, scale);
+      if (row.length && cand > best) break;
+      row.push(items[i]); rowSum += items[i].value; best = cand; i++;
+    }
+
+    const thick = (rowSum * scale) / short;
+    if (free.w >= free.h) {                      // short side is h → vertical strip on the left
+      let y = free.y;
+      for (const it of row) {
+        const h = (it.value * scale) / thick;
+        out.push({ item: it, x: free.x, y, w: thick, h });
+        y += h;
+      }
+      free = { x: free.x + thick, y: free.y, w: free.w - thick, h: free.h };
+    } else {                                     // short side is w → horizontal band on top
+      let x = free.x;
+      for (const it of row) {
+        const w = (it.value * scale) / thick;
+        out.push({ item: it, x, y: free.y, w, h: thick });
+        x += w;
+      }
+      free = { x: free.x, y: free.y + thick, w: free.w, h: free.h - thick };
+    }
+  }
+  return out;
+}
+
+/* =====================================================================
+   THE THREE CANDIDATE MERGE STRATEGIES
+   ===================================================================== */
+const STRATEGIES = [
+  { key: "fixpoint", name: "Iterate to fixpoint",
+    blurb: "squarify → merge slivers → re-squarify → repeat until stable",
+    detail: "Truest to §6.2's literal wording. Merging only ever removes children, so it converges; " +
+            "the cost is that a golden-rect test asserts the result of an N-round settle." },
+  { key: "single", name: "Single pass, area from bytes",
+    blurb: "mark area &lt; 4 pt² before laying out, squarify once",
+    detail: "O(n), trivially golden-testable, never re-measures. But it reasons about area, not shape — " +
+            "a child with 10 pt² of area can still land as an unreadable 0.5 pt sliver." },
+  { key: "correct", name: "One correction pass",
+    blurb: "squarify → merge slivers → re-squarify once, accept the result",
+    detail: "Exactly two layout passes, always. Catches the common case; tolerates whatever slivers " +
+            "the second pass creates." },
+];
+
+// Build one directory's child placement under a given strategy.
+// Returns [{item,x,y,w,h}] where item is {node} or {merge:{...}}.
+function layoutChildren(kids, rect, strategy, mergeSort, stats) {
+  const nameOf = it => it.merge ? "￿￿" : it.node.name;
+  const order = (a, b) => (b.value - a.value) || (nameOf(a) < nameOf(b) ? -1 : nameOf(a) > nameOf(b) ? 1 : 0);
+
+  function pack(survivors, mergedNodes) {
+    let items = survivors.slice();
+    let mergeItem = null;
+    if (mergedNodes.length) {
+      const bytes = mergedNodes.reduce((a, m) => a + m.value, 0);
+      const items_ = mergedNodes.reduce((a, m) => a + m.node.items, 0);
+      mergeItem = { merge: { count: items_, bytes, nodes: mergedNodes.map(m => m.node) }, value: bytes };
+      if (mergeSort === "bybytes") items.push(mergeItem);
+    }
+    items.sort(order);
+    if (mergeItem && mergeSort === "last") items.push(mergeItem);
+    stats.passes++;
+    return squarify(items, rect);
+  }
+
+  const isSliver = p => !p.item.merge && (p.w < MIN_PT || p.h < MIN_PT);
+
+  if (strategy === "single") {
+    const A = rect.w * rect.h, B = kids.reduce((a, k) => a + k.value, 0);
+    const small = k => B > 0 && (A * k.value) / B < MIN_PT * MIN_PT;
+    stats.rounds = Math.max(stats.rounds, 1);
+    return pack(kids.filter(k => !small(k)), kids.filter(small));
+  }
+
+  if (strategy === "correct") {
+    let placed = pack(kids, []);
+    const bad = new Set(placed.filter(isSliver).map(p => p.item.node));
+    stats.rounds = Math.max(stats.rounds, bad.size ? 2 : 1);
+    if (!bad.size) return placed;
+    return pack(kids.filter(k => !bad.has(k.node)), kids.filter(k => bad.has(k.node)));
+  }
+
+  // fixpoint
+  let survivors = kids.slice(), merged = [], placed = null;
+  for (let r = 1; r <= MAX_ROUNDS; r++) {
+    placed = pack(survivors, merged);
+    const bad = new Set(placed.filter(isSliver).map(p => p.item.node));
+    if (!bad.size) { stats.rounds = Math.max(stats.rounds, r); return placed; }
+    merged = merged.concat(survivors.filter(k => bad.has(k.node)));
+    survivors = survivors.filter(k => !bad.has(k.node));
+    if (!survivors.length) { stats.rounds = Math.max(stats.rounds, r + 1); return pack([], merged); }
+  }
+  stats.rounds = Math.max(stats.rounds, MAX_ROUNDS);
+  stats.capped = true;
+  return placed;
+}
+
+/* Full-tree layout. Returns flat draw list + stats. */
+function computeLayout(root, W, H, strategy, mergeSort) {
+  const rects = [];
+  const stats = { passes: 0, rounds: 0, capped: false, mergeBoxes: 0, mergedItems: 0, mergedBytes: 0, leaves: 0 };
+
+  (function walk(node, rect, depth) {
+    rects.push({ node, ...rect, depth, dir: !!node.children });
+    if (!node.children || !node.children.length) { stats.leaves++; return; }
+    if (rect.w <= 0 || rect.h <= 0) return;
+
+    const kids = node.children.filter(c => c.sub > 0).map(c => ({ node: c, value: c.sub }));
+    if (!kids.length) return;
+
+    for (const p of layoutChildren(kids, rect, strategy, mergeSort, stats)) {
+      if (p.item.merge) {
+        stats.mergeBoxes++;
+        stats.mergedItems += p.item.merge.count;
+        stats.mergedBytes += p.item.merge.bytes;
+        rects.push({ merge: p.item.merge, parent: node, x: p.x, y: p.y, w: p.w, h: p.h, depth: depth + 1 });
+      } else {
+        walk(p.item.node, { x: p.x, y: p.y, w: p.w, h: p.h }, depth + 1);
+      }
+    }
+  })(root, { x: 0, y: 0, w: W, h: H }, 0);
+
+  // metrics the strategies actually differ on
+  const drawn = rects.filter(r => r.merge || !r.dir);
+  let slivers = 0, minDim = Infinity, area = 0;
+  for (const r of drawn) {
+    const d = Math.min(r.w, r.h);
+    if (!r.merge) { if (d < MIN_PT) slivers++; minDim = Math.min(minDim, d); }
+    area += r.w * r.h;
+  }
+  stats.drawn = drawn.length;
+  stats.slivers = slivers;
+  stats.minDim = minDim === Infinity ? 0 : minDim;
+  stats.areaTruth = (area / (W * H)) * 100;
+  stats.maxDepth = rects.reduce((m, r) => Math.max(m, r.depth), 0);
+  return { rects, stats };
+}
+
+/* =====================================================================
+   STATE
+   ===================================================================== */
+const S = {
+  fixture: "home",
+  mergeSort: "bybytes",     // bybytes | last
+  outlineCap: 0,            // 0 = uncapped, else max depth that gets an outline
+  mode: "compare",          // compare | solo
+  focus: 0,                 // strategy index in solo mode
+  vp: 1,                    // viewport preset
+  theme: 0,                 // 0 system | 1 light | 2 dark
+};
+const VIEWPORTS = [
+  { key: "s", label: "360×270", w: 360, h: 270 },
+  { key: "m", label: "520×390", w: 520, h: 390 },
+  { key: "l", label: "760×570", w: 760, h: 570 },
+];
+
+let TREES = {};             // fixture key → rolled-up tree
+function treeFor(key) {
+  if (!TREES[key]) TREES[key] = rollup(FIXTURES[key].build());
+  return TREES[key];
+}
+
+const isDark = () => {
+  const t = document.documentElement.getAttribute("data-theme");
+  return t ? t === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+};
+
+/* =====================================================================
+   DRAWING  — §6.1/§6.3: fills, then leaf hairlines, then directory
+   outlines as a post-pass, then labels.
+   ===================================================================== */
+let hatchCache = { dark: null, light: null };
+function hatchPattern(ctx, dark) {
+  const slot = dark ? "dark" : "light";
+  if (!hatchCache[slot]) {
+    const c = document.createElement("canvas");
+    c.width = c.height = 6;
+    const g = c.getContext("2d");
+    g.fillStyle = dark ? "#4A4A50" : "#B9B9C0";
+    g.fillRect(0, 0, 6, 6);
+    g.strokeStyle = dark ? "#7E7E88" : "#8A8A93";
+    g.lineWidth = 1.4;
+    g.beginPath();
+    g.moveTo(-1, 7); g.lineTo(7, -1);
+    g.moveTo(2, 10); g.lineTo(10, 2);
+    g.moveTo(-4, 4); g.lineTo(4, -4);
+    g.stroke();
+    hatchCache[slot] = c;
+  }
+  return ctx.createPattern(hatchCache[slot], "repeat");
+}
+
+function draw(cv, layout, W, H) {
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  cv.style.width = W + "px"; cv.style.height = H + "px";
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const dark = isDark();
+
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = dark ? "#0E0E10" : "#E4E4E8";
+  ctx.fillRect(0, 0, W, H);
+
+  const snap = v => Math.round(v * dpr) / dpr;   // §6.1: snap only at draw time
+
+  // 1 — fills
+  for (const r of layout.rects) {
+    if (r.dir) continue;
+    const x = snap(r.x), y = snap(r.y);
+    const w = Math.max(0, snap(r.x + r.w) - x), h = Math.max(0, snap(r.y + r.h) - y);
+    if (w <= 0 || h <= 0) continue;
+    ctx.fillStyle = r.merge ? hatchPattern(ctx, dark) : kindColor(r.node.kind, dark);
+    ctx.fillRect(x, y, w, h);
+  }
+
+  // 2 — 0.5 pt hairlines between sibling leaves
+  ctx.strokeStyle = dark ? "rgba(0,0,0,.55)" : "rgba(0,0,0,.20)";
+  ctx.lineWidth = 0.5;
+  for (const r of layout.rects) {
+    if (r.dir) continue;
+    if (r.w < 1.2 || r.h < 1.2) continue;
+    ctx.strokeRect(snap(r.x) + .25, snap(r.y) + .25, Math.max(0, r.w - .5), Math.max(0, r.h - .5));
+  }
+
+  // 3 — directory outlines, post-pass, 1 pt, every level below the root
+  ctx.strokeStyle = dark ? "rgba(255,255,255,.30)" : "rgba(0,0,0,.34)";
+  ctx.lineWidth = 1;
+  let outlinesDrawn = 0;
+  for (const r of layout.rects) {
+    if (!r.dir || r.depth === 0) continue;
+    if (S.outlineCap && r.depth > S.outlineCap) continue;
+    if (r.w < 2 || r.h < 2) continue;
+    ctx.strokeRect(snap(r.x) + .5, snap(r.y) + .5, Math.max(0, r.w - 1), Math.max(0, r.h - 1));
+    outlinesDrawn++;
+  }
+  layout.stats.outlines = outlinesDrawn;
+
+  // 4 — labels: leaf name at 11 pt only when the rect is ≥ 48×15 pt
+  ctx.font = '600 11px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif';
+  ctx.textBaseline = "top";
+  for (const r of layout.rects) {
+    if (r.dir || r.w < 48 || r.h < 15) continue;
+    const label = r.merge ? `${grp(r.merge.count)} items · ${fmtIEC(r.merge.bytes)}` : r.node.name;
+    const text = fitText(ctx, label, r.w - 8);
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = "rgba(0,0,0,.42)";        // contrast halo
+    ctx.strokeText(text, r.x + 4, r.y + 3);
+    ctx.fillStyle = "rgba(255,255,255,.95)";
+    ctx.fillText(text, r.x + 4, r.y + 3);
+  }
+}
+
+function fitText(ctx, s, max) {
+  if (max <= 0) return "";
+  if (ctx.measureText(s).width <= max) return s;
+  let lo = 0, hi = s.length;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (ctx.measureText(s.slice(0, mid) + "…").width <= max) lo = mid; else hi = mid - 1;
+  }
+  return lo > 0 ? s.slice(0, lo) + "…" : "";
+}
+
+/* Hit test: deepest rendered node whose frame contains the point (§6.4). */
+function hitTest(layout, x, y) {
+  let best = null;
+  for (const r of layout.rects) {
+    if (r.dir) continue;
+    if (x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) {
+      if (!best || r.depth >= best.depth) best = r;
+    }
+  }
+  return best;
+}
+
+/* =====================================================================
+   RENDER
+   ===================================================================== */
+const boardsEl = document.getElementById("boards");
+const tipEl = document.getElementById("tip");
+const LAYOUTS = {};
+
+function render() {
+  const vp = VIEWPORTS[S.vp];
+  const tree = treeFor(S.fixture);
+  const shown = S.mode === "solo" ? [STRATEGIES[S.focus]] : STRATEGIES;
+  const w = S.mode === "solo" ? Math.min(vp.w * 1.6, window.innerWidth - 80) : vp.w;
+  const h = S.mode === "solo" ? Math.min(vp.h * 1.6, window.innerHeight - 320) : vp.h;
+
+  boardsEl.innerHTML = shown.map((st, i) => {
+    const idx = STRATEGIES.indexOf(st);
+    const focused = S.mode === "solo" || idx === S.focus;
+    return `
+      <div class="board ${focused ? "focus" : ""}" data-strategy="${st.key}" style="width:${w}px">
+        <h2><span class="key">${"ABC"[idx]}</span>${st.name}<span class="sub">${st.blurb}</span></h2>
+        <div class="canvaswrap"><canvas data-strategy="${st.key}"></canvas></div>
+        <div class="metrics" data-metrics="${st.key}"></div>
+      </div>`;
+  }).join("");
+
+  for (const st of shown) {
+    const L = computeLayout(tree, w, h, st.key, S.mergeSort);
+    LAYOUTS[st.key] = { L, w, h };
+    const cv = boardsEl.querySelector(`canvas[data-strategy="${st.key}"]`);
+    draw(cv, L, w, h);
+    boardsEl.querySelector(`[data-metrics="${st.key}"]`).innerHTML = metricsHTML(L.stats, tree, st);
+    wireCanvas(cv, st.key);
+  }
+  renderProtobar();
+}
+
+function metricsHTML(s, tree, st) {
+  const sliverCls = s.slivers === 0 ? "good" : s.slivers < 12 ? "warn" : "bad";
+  const truthOK = Math.abs(s.areaTruth - 100) < 0.05;
+  const row = (lab, val, cls, hero) =>
+    `<div class="m ${hero ? "hero" : ""}"><span class="lab">${lab}</span><span class="val ${cls || ""}">${val}</span></div>`;
+  return [
+    row("Slivers left <span style='color:var(--text-3)'>(&lt; 2 pt)</span>", grp(s.slivers), sliverCls, true),
+    row("Squarify passes", grp(s.passes), s.passes > 4000 ? "warn" : "", true),
+    `<div class="mrule"></div>`,
+    row("Boxes drawn", grp(s.drawn)),
+    row("Merge boxes", grp(s.mergeBoxes)),
+    row("Items merged", `${grp(s.mergedItems)} <span style="color:var(--text-3)">of ${grp(tree.items - 1)}</span>`),
+    row("Bytes in merge boxes", `${fmtIEC(s.mergedBytes)} <span style="color:var(--text-3)">${pct(s.mergedBytes / tree.sub * 100)}</span>`),
+    `<div class="mrule"></div>`,
+    row("Smallest surviving box", s.minDim.toFixed(2) + " pt"),
+    row("Worst rounds in a dir", grp(s.rounds) + (s.capped ? " ⚠ capped" : "")),
+    row("Directory outlines", grp(s.outlines || 0)),
+    row("Area truthful", s.areaTruth.toFixed(1) + "%", truthOK ? "good" : "bad"),
+  ].join("");
+}
+
+function wireCanvas(cv, key) {
+  cv.addEventListener("mousemove", e => {
+    const { L, w, h } = LAYOUTS[key];
+    const b = cv.getBoundingClientRect();
+    const hit = hitTest(L, e.clientX - b.left, e.clientY - b.top);
+    if (!hit) { tipEl.classList.remove("on"); return; }
+    tipEl.innerHTML = hit.merge
+      ? `<b>Merge bucket</b><br>${grp(hit.merge.count)} items below individual size, combined <b>${fmtIEC(hit.merge.bytes)}</b>` +
+        `<br><span class="flag">Selectable · every item is still listed in the tree</span>` +
+        `<br><span class="p">in ${hit.parent.name}/</span>`
+      : `<b>${hit.node.name}</b><br>${fmtIEC(hit.node.sub)} · ${grp(hit.node.sub)} bytes` +
+        `<br><span style="color:#9CC9FF">${hit.node.kind}</span> · rect ${hit.w.toFixed(1)}×${hit.h.toFixed(1)} pt` +
+        (Math.min(hit.w, hit.h) < MIN_PT ? `<br><span class="flag">⚠ sliver — thinner than 2 pt</span>` : "");
+    tipEl.classList.add("on");
+    tipEl.style.left = Math.min(e.clientX + 14, window.innerWidth - 350) + "px";
+    tipEl.style.top = Math.min(e.clientY + 16, window.innerHeight - 120) + "px";
+  });
+  cv.addEventListener("mouseleave", () => tipEl.classList.remove("on"));
+  cv.addEventListener("click", () => {
+    S.focus = STRATEGIES.findIndex(s => s.key === key);
+    render();
+  });
+}
+
+/* =====================================================================
+   PROTO BAR
+   ===================================================================== */
+function renderProtobar() {
+  const seg = (items, cur, fn, key) => `<div class="seg">${items.map(it =>
+    `<button class="${it[0] === cur ? "on" : ""}" onclick="${fn}('${it[0]}')">${it[1]}</button>`).join("")}</div>`;
+
+  document.getElementById("protobar").innerHTML = `
+    <span class="plabel">Proto</span>
+    <button class="arw" onclick="cycle(-1)" title="Previous strategy (←)">‹</button>
+    <div style="min-width:132px;text-align:center;font-weight:650">
+      ${STRATEGIES[S.focus].name}
+      <div style="font-size:9px;color:rgba(255,255,255,.5);font-weight:500">${"ABC"[S.focus]} · ${S.focus + 1}/3</div>
+    </div>
+    <button class="arw" onclick="cycle(1)" title="Next strategy (→)">›</button>
+    <div class="vbar"></div>
+    <div class="grp"><span class="gl">View</span>
+      ${seg([["compare", "Compare 3"], ["solo", "Solo"]], S.mode, "setMode")}</div>
+    <div class="vbar"></div>
+    <div class="grp"><span class="gl">Fixture</span>
+      ${seg(Object.entries(FIXTURES).map(([k, v]) => [k, v.label]), S.fixture, "setFixture")}</div>
+    <div class="vbar"></div>
+    <div class="grp"><span class="gl">Viewport</span>
+      ${seg(VIEWPORTS.map((v, i) => [String(i), v.label]), String(S.vp), "setVp")}</div>
+    <div class="vbar"></div>
+    <div class="grp"><span class="gl" title="Spec gap #2: §6.1 fixes child order as bytes-desc but never says where the merge box goes">Merge box sorts</span>
+      ${seg([["bybytes", "By its bytes"], ["last", "Always last"]], S.mergeSort, "setMergeSort")}</div>
+    <div class="vbar"></div>
+    <div class="grp"><span class="gl" title="Spec gap #3: §6.1 outlines every directory below the root; on a 20-level chain that is 20 overdrawn strokes">Outline depth</span>
+      ${seg([["0", "All"], ["3", "≤3"], ["5", "≤5"]], String(S.outlineCap), "setOutlineCap")}</div>
+    <div class="vbar"></div>
+    <button class="arw" onclick="cycleTheme()" title="Toggle appearance">◐</button>`;
+}
+
+function cycle(d) { S.focus = (S.focus + d + STRATEGIES.length) % STRATEGIES.length; render(); }
+function setMode(v) { S.mode = v; render(); }
+function setFixture(v) { S.fixture = v; render(); updateNote(); }
+function setVp(v) { S.vp = +v; render(); }
+function setMergeSort(v) { S.mergeSort = v; render(); }
+function setOutlineCap(v) { S.outlineCap = +v; render(); }
+function cycleTheme() {
+  S.theme = (S.theme + 1) % 3;
+  const r = document.documentElement;
+  if (S.theme === 0) r.removeAttribute("data-theme");
+  else r.setAttribute("data-theme", S.theme === 1 ? "light" : "dark");
+  hatchCache = { dark: null, light: null };
+  render();
+}
+
+function updateNote() {
+  document.querySelector("header.top p").innerHTML = BASE_NOTE +
+    `<br><b style="color:var(--text)">${FIXTURES[S.fixture].label}:</b> ${FIXTURES[S.fixture].note}`;
+}
+const BASE_NOTE = document.querySelector("header.top p").innerHTML;
+
+document.addEventListener("keydown", e => {
+  const t = (e.target.tagName || "").toLowerCase();
+  if (t === "input" || t === "textarea" || e.target.isContentEditable) return;
+  if (e.key === "ArrowLeft") { cycle(-1); e.preventDefault(); }
+  if (e.key === "ArrowRight") { cycle(1); e.preventDefault(); }
+});
+
+let rz;
+window.addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(render, 120); });
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+  hatchCache = { dark: null, light: null }; render();
+});
+
+updateNote();
+render();
+</script>
