@@ -25,6 +25,24 @@ final class ScanPresentationModel {
 
     var onChange: (() -> Void)?
 
+    /// How often the in-progress tree is republished to the two panes.
+    ///
+    /// Every tree snapshot costs a full treemap relayout plus an outline-view
+    /// `reloadData`, and both scale with the tree — on a several-hundred-GB
+    /// volume that is expensive enough that emitting near the spec's ~4 Hz
+    /// ceiling (§5.5) spends most of the main thread relaying out a picture
+    /// that is obsolete before it finishes, and starves the scan itself. The
+    /// rectangles also reshuffle far faster than anyone can read them, so the
+    /// frequent redraws were not buying legibility either.
+    ///
+    /// Scalars stay fast — see `progressInterval` — so the window still reads
+    /// as live between tree updates.
+    static let treeInterval: TimeInterval = 10.0
+
+    /// Progress scalars are a handful of numbers and a path label: no layout,
+    /// no reload, so this stays responsive.
+    static let progressInterval: TimeInterval = 0.1
+
     init(scanner: any Scanning = Scanner()) {
         self.scanner = scanner
     }
@@ -48,8 +66,8 @@ final class ScanPresentationModel {
             mode: mode,
             probe: FileManagerDirectoryProbe(),
             options: ScanOptions(
-                progressCadence: .minimumInterval(0.1),
-                treeCadence: .minimumInterval(0.25)
+                progressCadence: .minimumInterval(Self.progressInterval),
+                treeCadence: .minimumInterval(Self.treeInterval)
             )
         )
 
