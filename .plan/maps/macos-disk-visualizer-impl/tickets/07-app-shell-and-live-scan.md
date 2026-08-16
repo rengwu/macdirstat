@@ -2,6 +2,8 @@
 type: task
 blocked_by: [01, 03, 05]
 undermined_by: []
+claimed_by: s005ce3cb933a
+claimed_at: 2026-08-16T12:44:36Z
 ---
 
 # App shell + tree + chooser + live scan (+ formatting)
@@ -61,3 +63,55 @@ cancelled/error-state legibility and the treemap/inspector/selection are later t
   100% producing one decimal and `< 0.1%` rather than `0.0%`.
 - Empty, choosing, scanning, and completed states match the ticket-01 prototype; no
   mutation affordance exists anywhere in the shell.
+
+## Answer
+
+Built the first complete on-screen tracer bullet in the AppKit app target. The single
+programmatic window now contains a source-list `NSOutlineView`, a growable center pane,
+and a collapsible 260–360 pt inspector in `NSSplitViewController`, with a unified toolbar
+and a one/two-row bottom status bar. The tree is fed only when ScanCore supplies a new
+frozen tree snapshot (4 Hz), while scalar progress refreshes at 10 Hz and the path line is
+separately held to 4 Hz. Its settled columns are `Name │ Size │ % │ Items`, default Size
+descending, with an inline percent bar; package descendants remain collapsed initially.
+Terminal totals use tree-visible file/folder counts, so packages count once while their
+measured descendant bytes remain in the total.
+
+Added the production scan presentation model and real `FileManagerDirectoryProbe` flow.
+Folder choices go through `NSOpenPanel(canChooseDirectories: true)`; mounted local disks
+come from `mountedVolumeURLs`; scanning remains off-main, incrementally populates the
+tree behind an indeterminate/determinate progress card, reports the settled telemetry and
+`About N% of used space` copy, and Cancel calls ScanCore while continuing to consume the
+partial terminal result. Completed status includes IEC total, visible counts,
+volume-capacity/free facts, error/exclusion counts, and the kind legend once bytes exist.
+
+The chooser follows ticket 01 where the stale question disagrees: ineligible network,
+cloud, and modeled disk-image candidates retain explicit, tested classifications and
+reasons, but are filtered from the sheet rather than displayed disabled. Likewise the
+empty state is the accepted minimal icon/headline/one-line/button version, with no
+read-only/scope disclosures. Escape dismisses the source sheet. The app remains
+unsandboxed: distribution is out of scope and enabling the sandbox would conflict with
+whole-volume enumeration; security-scoped access remains balanced by ScanCore but is not
+treated as eligibility.
+
+Added a custom locale-aware IEC formatter with exactly three significant figures and no
+`ByteCountFormatter`, exact grouped byte/count formatting, singular byte handling, and
+the settled percentage floor/rounding. Unit coverage fixes `en_US` and `de_DE` across
+0/1/1023/1024 and every boundary through TiB, rounding carry, exact 0.05%, ordinary and
+100% shares. Presentation tests cover source policy, Escape, shell hierarchy, tree setup,
+a suspended scanner/main-actor responsiveness, and a real temporary-folder total. UI
+tests exercise the mounted-source sheet and select a disposable folder end-to-end through
+the real open panel. Ticket-07 compatibility rows for launch and folder scan now run;
+cross-host incremental-fixture activation remains ticket 11, while the live UI boundary
+is covered headlessly here.
+
+`Scripts/verify-scaffold.sh` now compiles app/package imports through Xcode for both
+architectures (a bare `swiftc` cannot resolve local Xcode package products), and its
+integrity self-test copies package manifests rather than gigabytes of ignored `.build`
+artifacts. The final one-command gate exits 0: 130 ScanCore tests, 71 TreemapLayout tests,
+10 app presentation tests, the CI and Thread Sanitizer plans, universal Release build,
+Performance plan, Compatibility plan, all guards, and both floor-pinned architecture
+compiles pass.
+
+Deliberately omitted ticket 08's real treemap drawing/selection and inspector content,
+and ticket 09's full cancelled/error presentation plus Open/Reveal actions. Their panes
+remain explicit placeholders; no mutation affordance was introduced.

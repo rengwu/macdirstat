@@ -18,6 +18,10 @@
 		AB000000000000000000B009 /* MacDirStatPerformanceScaffoldTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F00A /* MacDirStatPerformanceScaffoldTests.swift */; };
 		AB000000000000000000B00A /* ScanCore in Frameworks */ = {isa = PBXBuildFile; productRef = AB000000000000000000EB01 /* ScanCore */; };
 		AB000000000000000000B00B /* TreemapLayout in Frameworks */ = {isa = PBXBuildFile; productRef = AB000000000000000000EB02 /* TreemapLayout */; };
+		AB000000000000000000B00C /* DisplayFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F011 /* DisplayFormatting.swift */; };
+		AB000000000000000000B00D /* SourceChooser.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F012 /* SourceChooser.swift */; };
+		AB000000000000000000B00E /* ScanPresentationModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F013 /* ScanPresentationModel.swift */; };
+		AB000000000000000000B00F /* WorkspaceViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F014 /* WorkspaceViewController.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -61,6 +65,10 @@
 		AB000000000000000000F00E /* CompatibilitySmoke.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = text; path = CompatibilitySmoke.xctestplan; sourceTree = "<group>"; };
 		AB000000000000000000F00F /* check-post-bigsur-apis.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = "check-post-bigsur-apis.sh"; sourceTree = "<group>"; };
 		AB000000000000000000F010 /* check-package-purity.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = "check-package-purity.sh"; sourceTree = "<group>"; };
+		AB000000000000000000F011 /* DisplayFormatting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayFormatting.swift; sourceTree = "<group>"; };
+		AB000000000000000000F012 /* SourceChooser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceChooser.swift; sourceTree = "<group>"; };
+		AB000000000000000000F013 /* ScanPresentationModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanPresentationModel.swift; sourceTree = "<group>"; };
+		AB000000000000000000F014 /* WorkspaceViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceViewController.swift; sourceTree = "<group>"; };
 		AB000000000000000000FA01 /* MacDirStat.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MacDirStat.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AB000000000000000000FA02 /* MacDirStatTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MacDirStatTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		AB000000000000000000FA03 /* MacDirStatUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MacDirStatUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -141,6 +149,10 @@
 				AB000000000000000000F003 /* MainWindowController.swift */,
 				AB000000000000000000F004 /* MainMenu.swift */,
 				AB000000000000000000F005 /* SwiftUIInterop.swift */,
+				AB000000000000000000F011 /* DisplayFormatting.swift */,
+				AB000000000000000000F012 /* SourceChooser.swift */,
+				AB000000000000000000F013 /* ScanPresentationModel.swift */,
+				AB000000000000000000F014 /* WorkspaceViewController.swift */,
 				AB000000000000000000F006 /* Info.plist */,
 			);
 			path = MacDirStat;
@@ -366,6 +378,10 @@
 				AB000000000000000000B004 /* MainMenu.swift in Sources */,
 				AB000000000000000000B003 /* MainWindowController.swift in Sources */,
 				AB000000000000000000B005 /* SwiftUIInterop.swift in Sources */,
+				AB000000000000000000B00C /* DisplayFormatting.swift in Sources */,
+				AB000000000000000000B00D /* SourceChooser.swift in Sources */,
+				AB000000000000000000B00E /* ScanPresentationModel.swift in Sources */,
+				AB000000000000000000B00F /* WorkspaceViewController.swift in Sources */,
 				AB000000000000000000B001 /* main.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

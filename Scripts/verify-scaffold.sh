@@ -81,8 +81,19 @@ run_other_test_plans() {
 typecheck_app_sources() {
 	local status=0 arch
 	for arch in arm64 x86_64; do
-		printf 'typechecking App/MacDirStat for %s at the 11.0 floor...\n' "$arch"
-		swiftc -target "$arch-apple-macos11.0" -typecheck App/MacDirStat/*.swift || status=1
+		if have_xcode; then
+			printf 'compiling App/MacDirStat and local-package imports for %s at the 11.0 floor...\n' "$arch"
+			xcodebuild build -quiet -project MacDirStat.xcodeproj -scheme MacDirStat \
+				-configuration Debug -destination 'generic/platform=macOS' \
+				ARCHS="$arch" ONLY_ACTIVE_ARCH=YES MACOSX_DEPLOYMENT_TARGET=11.0 \
+				CODE_SIGNING_ALLOWED=NO || status=1
+		else
+			# A bare swiftc invocation cannot resolve Xcode's local-package
+			# products. Parsing still catches syntax errors; the Xcode steps are
+			# reported skipped below, so this never overstates a green gate.
+			printf 'parsing App/MacDirStat for %s (Xcode package resolution unavailable)...\n' "$arch"
+			swiftc -target "$arch-apple-macos11.0" -parse App/MacDirStat/*.swift || status=1
+		fi
 	done
 	return $status
 }
@@ -116,7 +127,7 @@ else
 		"XCTest is unavailable — install Xcode and run 'sudo xcode-select -s /Applications/Xcode.app'"
 fi
 
-run_step "App sources typecheck, both architectures, floor 11.0" typecheck_app_sources
+run_step "App sources compile, both architectures, floor 11.0" typecheck_app_sources
 
 if have_xcode; then
 	run_step "xcodebuild test -scheme MacDirStat-CI -testPlan CI" \

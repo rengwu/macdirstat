@@ -18,9 +18,14 @@ failures=0
 # One pristine copy; each case re-copies from it.
 pristine="$work/pristine"
 mkdir -p "$pristine"
-for item in MacDirStat.xcodeproj TestPlans App Packages Scripts; do
+for item in MacDirStat.xcodeproj TestPlans App Scripts; do
 	cp -R "$repo_root/$item" "$pristine/"
 done
+# The checker reads only package manifests. Copying SwiftPM's ignored `.build`
+# trees made every mutation case duplicate gigabytes of irrelevant artifacts.
+mkdir -p "$pristine/Packages/ScanCore" "$pristine/Packages/TreemapLayout"
+cp "$repo_root/Packages/ScanCore/Package.swift" "$pristine/Packages/ScanCore/"
+cp "$repo_root/Packages/TreemapLayout/Package.swift" "$pristine/Packages/TreemapLayout/"
 
 expect() {
 	local expected_status="$1" name="$2" breakage="$3"

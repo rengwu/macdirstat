@@ -102,21 +102,28 @@ matrix recorded across macOS 11 through current.
   direction; and the vanished-file/vanished-directory asymmetry is now demonstrated on
   real files rather than argued about.
 
+- [TreemapLayout: geometry, merge rule & palette](./tickets/06-treemap-layout-geometry.md) —
+  the Foundation-only layout engine is complete: iterative squarification plus the
+  pinned-last merge bucket to fixpoint, half-open hit testing, backing-scale snapping,
+  three-level outline metadata, package drill-in inputs, and the settled 11-hue palette.
+  Its 71 tests prove deterministic golden rectangles, zero surviving sub-2 pt slivers,
+  and 100% positive-byte area at the prototype fixtures and five viewport sizes.
+
+- [App shell + tree + chooser + live scan (+ formatting)](./tickets/07-app-shell-and-live-scan.md) —
+  the first on-screen tracer bullet is complete: programmatic three-pane AppKit shell,
+  unified toolbar/status bar, filtered mounted-source sheet plus real `NSOpenPanel`,
+  frozen-snapshot source-list tree, 10 Hz scalars / 4 Hz tree and path, Cancel, completed
+  totals/legend, and exact locale-aware three-significant-figure IEC formatting. The app
+  deliberately remains unsandboxed for whole-volume enumeration; security-scoped access
+  is balance-only, never eligibility. The full one-command gate exits 0, including CI,
+  Thread Sanitizer, universal Release, Performance and Compatibility plans.
+
 ## Not yet specified
 
 - **Compiler availability checking does not reject everything §4.4 assumes it does.** A
   `Canvas` in a `some View` body is a *warning*, not an error, and would crash on Big Sur.
   The `Scripts/check-post-bigsur-apis.sh` guard is load-bearing rather than a second
   opinion; §4.4 and §9.3 word it as though the compiler alone suffices.
-- **A security scope's verdict is environment-dependent, and never an eligibility one.**
-  Ticket 03 recorded `startAccessingSecurityScopedResource()` returning `false` for an
-  ordinary non-security-scoped local URL; ticket 05 measured `true` for every ordinary
-  local URL in an unsandboxed test process on macOS 27. Both readings kill the research
-  asset's rule (§2.1: refuse the root on `false`) — one because it would reject most real
-  roots, the other because it would accept everything. The adapter reports only whether a
-  *stop* is owed, and an unreadable root fails through the probe instead. What a
-  **sandboxed** app answers, for a URL from the panel and for one that never was, is still
-  unmeasured. <clears-with: 07>
 - **Deep trees have a teardown ceiling, not a traversal one.** Releasing a `ScanNode` chain
   is a recursive ARC teardown, so it is bounded by the releasing thread's stack — past
   ~1,000 levels on a 512 KB cooperative-pool thread. That is 15× the depth-64 stress shape
