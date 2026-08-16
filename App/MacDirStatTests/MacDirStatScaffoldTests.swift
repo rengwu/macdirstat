@@ -99,8 +99,8 @@ final class AppShellTests: XCTestCase {
         let workspace = controller.workspaceViewController
         XCTAssertEqual(workspace.splitViewItems.count, 3)
         XCTAssertTrue(workspace.splitViewItems[0].viewController is DirectoryTreeViewController)
-        XCTAssertTrue(workspace.splitViewItems[1].viewController is TreemapPlaceholderViewController)
-        XCTAssertTrue(workspace.splitViewItems[2].viewController is InspectorPlaceholderViewController)
+        XCTAssertTrue(workspace.splitViewItems[1].viewController is TreemapPaneViewController)
+        XCTAssertTrue(workspace.splitViewItems[2].viewController is InspectorViewController)
         XCTAssertFalse(workspace.splitViewItems[1].canCollapse)
         XCTAssertTrue(workspace.splitViewItems[2].canCollapse)
         XCTAssertEqual(workspace.splitViewItems[2].preferredThicknessFraction, 300.0 / 1_100.0, accuracy: 0.0001)

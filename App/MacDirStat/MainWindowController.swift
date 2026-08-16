@@ -81,13 +81,21 @@ final class MainWindowController: NSWindowController {
 
 extension MainWindowController: NSToolbarDelegate {
     private static let chooseIdentifier = NSToolbarItem.Identifier("ChooseSource")
+    static let openIdentifier = NSToolbarItem.Identifier("OpenSelection")
+    static let revealIdentifier = NSToolbarItem.Identifier("RevealSelection")
+
+    /// The toolbar's whole vocabulary: choose a source, and the two read-only
+    /// actions (§7.1). There is nothing else to add here.
+    private static var itemIdentifiers: [NSToolbarItem.Identifier] {
+        [chooseIdentifier, .flexibleSpace, openIdentifier, revealIdentifier]
+    }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.chooseIdentifier, .flexibleSpace]
+        Self.itemIdentifiers
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.chooseIdentifier, .flexibleSpace]
+        Self.itemIdentifiers
     }
 
     func toolbar(
@@ -95,14 +103,53 @@ extension MainWindowController: NSToolbarDelegate {
         itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
         willBeInsertedIntoToolbar flag: Bool
     ) -> NSToolbarItem? {
-        guard itemIdentifier == Self.chooseIdentifier else { return nil }
-        let item = NSToolbarItem(itemIdentifier: itemIdentifier)
-        item.label = "Choose…"
-        item.paletteLabel = "Choose Source"
-        item.toolTip = "Choose a folder or disk to scan"
-        item.image = NSImage(named: NSImage.folderName)
-        item.target = self
-        item.action = #selector(showChooser)
+        switch itemIdentifier {
+        case Self.chooseIdentifier:
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            item.label = "Choose…"
+            item.paletteLabel = "Choose Source"
+            item.toolTip = "Choose a folder or disk to scan"
+            item.image = NSImage(named: NSImage.folderName)
+            item.target = self
+            item.action = #selector(showChooser)
+            return item
+        case Self.openIdentifier:
+            return actionItem(
+                identifier: itemIdentifier,
+                label: FileActionMenu.openTitle,
+                toolTip: "Open the selected item (⌘O)",
+                imageName: NSImage.quickLookTemplateName,
+                action: #selector(FileActionResponding.openSelectedItem(_:))
+            )
+        case Self.revealIdentifier:
+            return actionItem(
+                identifier: itemIdentifier,
+                label: FileActionMenu.revealTitle,
+                toolTip: "Reveal the selected item in Finder (⌘R)",
+                imageName: NSImage.revealFreestandingTemplateName,
+                action: #selector(FileActionResponding.revealSelectedItem(_:))
+            )
+        default:
+            return nil
+        }
+    }
+
+    private func actionItem(
+        identifier: NSToolbarItem.Identifier,
+        label: String,
+        toolTip: String,
+        imageName: NSImage.Name,
+        action: Selector
+    ) -> NSToolbarItem {
+        let item = NSToolbarItem(itemIdentifier: identifier)
+        item.label = label
+        item.paletteLabel = label
+        item.toolTip = toolTip
+        item.image = NSImage(named: imageName)
+        // Target nil sends it down the responder chain to the workspace, which
+        // is also what validates it against the current selection.
+        item.target = nil
+        item.action = action
         return item
     }
 }

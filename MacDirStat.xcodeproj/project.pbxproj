@@ -22,6 +22,16 @@
 		AB000000000000000000B00D /* SourceChooser.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F012 /* SourceChooser.swift */; };
 		AB000000000000000000B00E /* ScanPresentationModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F013 /* ScanPresentationModel.swift */; };
 		AB000000000000000000B00F /* WorkspaceViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F014 /* WorkspaceViewController.swift */; };
+		AB000000000000000000B010 /* SelectionModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F015 /* SelectionModel.swift */; };
+		AB000000000000000000B011 /* WorkspaceActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F016 /* WorkspaceActions.swift */; };
+		AB000000000000000000B012 /* TreemapPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F017 /* TreemapPresentation.swift */; };
+		AB000000000000000000B013 /* TreemapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F018 /* TreemapView.swift */; };
+		AB000000000000000000B014 /* InspectorContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F019 /* InspectorContent.swift */; };
+		AB000000000000000000B015 /* InspectorViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F01A /* InspectorViewController.swift */; };
+		AB000000000000000000B016 /* WorkspaceTestHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F01B /* WorkspaceTestHarness.swift */; };
+		AB000000000000000000B017 /* InspectorContentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F01C /* InspectorContentTests.swift */; };
+		AB000000000000000000B018 /* SelectionAndActionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F01D /* SelectionAndActionTests.swift */; };
+		AB000000000000000000B019 /* TreemapViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F01E /* TreemapViewTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -73,6 +83,16 @@
 		AB000000000000000000FA02 /* MacDirStatTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MacDirStatTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		AB000000000000000000FA03 /* MacDirStatUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MacDirStatUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		AB000000000000000000FA04 /* MacDirStatPerformanceTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MacDirStatPerformanceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		AB000000000000000000F015 /* SelectionModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectionModel.swift; sourceTree = "<group>"; };
+		AB000000000000000000F016 /* WorkspaceActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceActions.swift; sourceTree = "<group>"; };
+		AB000000000000000000F017 /* TreemapPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TreemapPresentation.swift; sourceTree = "<group>"; };
+		AB000000000000000000F018 /* TreemapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TreemapView.swift; sourceTree = "<group>"; };
+		AB000000000000000000F019 /* InspectorContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorContent.swift; sourceTree = "<group>"; };
+		AB000000000000000000F01A /* InspectorViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorViewController.swift; sourceTree = "<group>"; };
+		AB000000000000000000F01B /* WorkspaceTestHarness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceTestHarness.swift; sourceTree = "<group>"; };
+		AB000000000000000000F01C /* InspectorContentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorContentTests.swift; sourceTree = "<group>"; };
+		AB000000000000000000F01D /* SelectionAndActionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectionAndActionTests.swift; sourceTree = "<group>"; };
+		AB000000000000000000F01E /* TreemapViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TreemapViewTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -153,6 +173,12 @@
 				AB000000000000000000F012 /* SourceChooser.swift */,
 				AB000000000000000000F013 /* ScanPresentationModel.swift */,
 				AB000000000000000000F014 /* WorkspaceViewController.swift */,
+				AB000000000000000000F015 /* SelectionModel.swift */,
+				AB000000000000000000F016 /* WorkspaceActions.swift */,
+				AB000000000000000000F017 /* TreemapPresentation.swift */,
+				AB000000000000000000F018 /* TreemapView.swift */,
+				AB000000000000000000F019 /* InspectorContent.swift */,
+				AB000000000000000000F01A /* InspectorViewController.swift */,
 				AB000000000000000000F006 /* Info.plist */,
 			);
 			path = MacDirStat;
@@ -161,6 +187,10 @@
 		AB0000000000000000000006 /* MacDirStatTests */ = {
 			isa = PBXGroup;
 			children = (
+				AB000000000000000000F01B /* WorkspaceTestHarness.swift */,
+				AB000000000000000000F01C /* InspectorContentTests.swift */,
+				AB000000000000000000F01D /* SelectionAndActionTests.swift */,
+				AB000000000000000000F01E /* TreemapViewTests.swift */,
 				AB000000000000000000F007 /* MacDirStatScaffoldTests.swift */,
 			);
 			path = MacDirStatTests;
@@ -382,6 +412,12 @@
 				AB000000000000000000B00D /* SourceChooser.swift in Sources */,
 				AB000000000000000000B00E /* ScanPresentationModel.swift in Sources */,
 				AB000000000000000000B00F /* WorkspaceViewController.swift in Sources */,
+				AB000000000000000000B010 /* SelectionModel.swift in Sources */,
+				AB000000000000000000B011 /* WorkspaceActions.swift in Sources */,
+				AB000000000000000000B012 /* TreemapPresentation.swift in Sources */,
+				AB000000000000000000B013 /* TreemapView.swift in Sources */,
+				AB000000000000000000B014 /* InspectorContent.swift in Sources */,
+				AB000000000000000000B015 /* InspectorViewController.swift in Sources */,
 				AB000000000000000000B001 /* main.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -390,6 +426,10 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AB000000000000000000B016 /* WorkspaceTestHarness.swift in Sources */,
+				AB000000000000000000B017 /* InspectorContentTests.swift in Sources */,
+				AB000000000000000000B018 /* SelectionAndActionTests.swift in Sources */,
+				AB000000000000000000B019 /* TreemapViewTests.swift in Sources */,
 				AB000000000000000000B006 /* MacDirStatScaffoldTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

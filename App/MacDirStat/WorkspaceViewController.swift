@@ -1,5 +1,6 @@
 import AppKit
 import ScanCore
+import TreemapLayout
 
 enum TreeColumn: String {
     case name
@@ -17,13 +18,55 @@ enum TreeColumn: String {
     }
 }
 
+/// The `NSOutlineView` the tree pane uses, with the two behaviours a stock one
+/// does not have: Return activates the row (expand, or open a file), and a
+/// right-click selects the row it points at before showing the read-only menu
+/// (§7.2; ticket 01, decision 3).
+@MainActor
+final class WorkspaceOutlineView: NSOutlineView {
+    var onReturn: (() -> Void)?
+    var onContextMenuRow: ((Int) -> Void)?
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let point = convert(event.locationInWindow, from: nil)
+        let clickedRow = row(at: point)
+        guard clickedRow >= 0 else { return nil }
+        onContextMenuRow?(clickedRow)
+        return FileActionMenu.make()
+    }
+
+    override func keyDown(with event: NSEvent) {
+        let isReturn = event.keyCode == 36 || event.keyCode == 76
+        if isReturn, !event.modifierFlags.contains(.command) {
+            onReturn?()
+            return
+        }
+        super.keyDown(with: event)
+    }
+}
+
 @MainActor
 final class DirectoryTreeViewController: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate {
-    let outlineView = NSOutlineView()
+    let outlineView = WorkspaceOutlineView()
     private let formatter: DisplayFormatter
     private var root: ScanNode?
     private var sortColumn: TreeColumn = .size
     private var sortAscending = false
+    private var isApplyingSharedSelection = false
+
+    /// The one shared selection (spec §7.2). The tree writes it when a row is
+    /// picked and follows it — expanding ancestors and scrolling — when another
+    /// pane writes it.
+    var selectionModel: SelectionModel? {
+        didSet { observeSelection() }
+    }
+
+    /// Told when a **package** row expands or collapses, because that is the
+    /// one tree state the treemap shares: drilling into a package subdivides
+    /// its box (ticket 01, decision 2). Ordinary folders always subdivide, so
+    /// their disclosure triangles change nothing in the map.
+    var onPackageExpansionChange: ((ScanNode, Bool) -> Void)?
+    var onRowActivated: ((ScanNode) -> Void)?
 
     init(formatter: DisplayFormatter) {
         self.formatter = formatter
@@ -57,12 +100,101 @@ final class DirectoryTreeViewController: NSViewController, NSOutlineViewDataSour
         scrollView.borderType = .noBorder
         scrollView.documentView = outlineView
         view = scrollView
+
+        outlineView.onReturn = { [weak self] in self?.activateSelectedRow() }
+        outlineView.onContextMenuRow = { [weak self] row in self?.selectRow(row) }
     }
 
     func setRoot(_ root: ScanNode?) {
         self.root = root
         outlineView.reloadData()
         if root != nil { outlineView.expandItem(root) }
+        reapplySharedSelection()
+    }
+
+    // MARK: - Shared selection
+
+    private func observeSelection() {
+        selectionModel?.addObserver { [weak self] change in
+            guard let self, change.source != .tree else { return }
+            self.apply(change.selection)
+        }
+    }
+
+    private func reapplySharedSelection() {
+        apply(selectionModel?.selection)
+    }
+
+    /// Follows a selection written by another pane: a node scrolls its row into
+    /// view, an aggregate leaves the tree with no row selected, because §7.2
+    /// forbids inventing an individual node to stand for the bucket.
+    private func apply(_ selection: WorkspaceSelection?) {
+        guard isViewLoaded else { return }
+        isApplyingSharedSelection = true
+        defer { isApplyingSharedSelection = false }
+
+        guard let node = selection?.node else {
+            outlineView.deselectAll(nil)
+            return
+        }
+        expandAncestors(of: node)
+        let row = outlineView.row(forItem: node)
+        guard row >= 0 else {
+            outlineView.deselectAll(nil)
+            return
+        }
+        outlineView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        outlineView.scrollRowToVisible(row)
+    }
+
+    private func expandAncestors(of node: ScanNode) {
+        var chain: [ScanNode] = []
+        var ancestor = node.parent
+        while let current = ancestor {
+            chain.append(current)
+            ancestor = current.parent
+        }
+        for item in chain.reversed() {
+            outlineView.expandItem(item)
+        }
+    }
+
+    func outlineViewSelectionDidChange(_ notification: Notification) {
+        guard !isApplyingSharedSelection else { return }
+        let row = outlineView.selectedRow
+        guard row >= 0, let node = outlineView.item(atRow: row) as? ScanNode else { return }
+        selectionModel?.select(.node(node), source: .tree)
+    }
+
+    private func selectRow(_ row: Int) {
+        guard row >= 0, row < outlineView.numberOfRows else { return }
+        outlineView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+    }
+
+    /// Return = expand/open (§7.2): a directory-like row toggles its disclosure
+    /// triangle, anything else is opened.
+    func activateSelectedRow() {
+        let row = outlineView.selectedRow
+        guard row >= 0, let node = outlineView.item(atRow: row) as? ScanNode else { return }
+        if node.isDirectoryLike, !node.children.isEmpty {
+            if outlineView.isItemExpanded(node) {
+                outlineView.collapseItem(node)
+            } else {
+                outlineView.expandItem(node)
+            }
+            return
+        }
+        onRowActivated?(node)
+    }
+
+    func outlineViewItemDidExpand(_ notification: Notification) {
+        guard let node = notification.userInfo?["NSObject"] as? ScanNode, node.kind == .package else { return }
+        onPackageExpansionChange?(node, true)
+    }
+
+    func outlineViewItemDidCollapse(_ notification: Notification) {
+        guard let node = notification.userInfo?["NSObject"] as? ScanNode, node.kind == .package else { return }
+        onPackageExpansionChange?(node, false)
     }
 
     private func addColumn(_ column: TreeColumn, width: CGFloat, minWidth: CGFloat) {
@@ -281,27 +413,42 @@ enum VisibleTreeCounts {
     }
 }
 
+/// The center pane: the treemap itself, with the lifecycle overlays (empty
+/// state, progress card) floating over it.
+///
+/// The map stays in the hierarchy while a scan runs — it is fed the incremental
+/// tree behind the card, which is what "tree and treemap populate incrementally
+/// behind it" means in §7.1.
 @MainActor
-final class TreemapPlaceholderViewController: NSViewController {
+final class TreemapPaneViewController: NSViewController {
     let emptyState = EmptyStateView()
     let scanCard = ScanProgressCardView()
-    private let placeholder = NSTextField(labelWithString: "Treemap")
+    let treemapView = TreemapView(frame: NSRect(x: 0, y: 0, width: 520, height: 390))
+    /// Shown when the selected entry has zero attributed bytes: it has no
+    /// rectangle by design, and saying so is better than an empty map (§6.2).
+    private let noRectangleNote = NSTextField(labelWithString: "")
     private var presentedPhase: ScanPhase = .empty
 
     override func loadView() {
-        let root = NSView()
-        root.wantsLayer = true
-        root.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-        placeholder.textColor = .tertiaryLabelColor
-        placeholder.font = .systemFont(ofSize: 18, weight: .medium)
+        let root = BackgroundView(color: .windowBackgroundColor)
 
-        [placeholder, emptyState, scanCard].forEach {
+        noRectangleNote.font = .systemFont(ofSize: 11)
+        noRectangleNote.textColor = .secondaryLabelColor
+        noRectangleNote.lineBreakMode = .byTruncatingTail
+        noRectangleNote.isHidden = true
+
+        [treemapView, noRectangleNote, emptyState, scanCard].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview($0)
         }
         NSLayoutConstraint.activate([
-            placeholder.centerXAnchor.constraint(equalTo: root.centerXAnchor),
-            placeholder.centerYAnchor.constraint(equalTo: root.centerYAnchor),
+            treemapView.topAnchor.constraint(equalTo: root.topAnchor),
+            treemapView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            treemapView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            treemapView.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            noRectangleNote.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 10),
+            noRectangleNote.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -10),
+            noRectangleNote.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -8),
             emptyState.centerXAnchor.constraint(equalTo: root.centerXAnchor),
             emptyState.centerYAnchor.constraint(equalTo: root.centerYAnchor),
             emptyState.widthAnchor.constraint(lessThanOrEqualTo: root.widthAnchor, multiplier: 0.85),
@@ -323,8 +470,18 @@ final class TreemapPlaceholderViewController: NSViewController {
         presentedPhase = phase
         emptyState.isHidden = phase != .empty && phase != .failed
         scanCard.isHidden = phase != .scanning
-        placeholder.isHidden = phase == .empty || phase == .failed
+        treemapView.isHidden = phase == .empty || phase == .failed
         if phase == .scanning { scanCard.update(progress: progress, formatter: formatter) }
+    }
+
+    func showNoRectangleNote(for selection: WorkspaceSelection?) {
+        guard let node = selection?.node, node.subtreeBytes == 0 else {
+            noRectangleNote.isHidden = true
+            return
+        }
+        noRectangleNote.stringValue =
+            "“\(node.name)” has no rectangle — 0 attributed bytes. It stays listed and selectable in the tree."
+        noRectangleNote.isHidden = false
     }
 }
 
@@ -470,26 +627,6 @@ final class ScanProgressCardView: NSVisualEffectView {
 }
 
 @MainActor
-final class InspectorPlaceholderViewController: NSViewController {
-    override func loadView() {
-        let root = NSView()
-        root.wantsLayer = true
-        root.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
-        let label = NSTextField(wrappingLabelWithString: "Select an item to see its details.")
-        label.alignment = .center
-        label.textColor = .tertiaryLabelColor
-        label.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(label)
-        NSLayoutConstraint.activate([
-            label.centerXAnchor.constraint(equalTo: root.centerXAnchor),
-            label.centerYAnchor.constraint(equalTo: root.centerYAnchor),
-            label.widthAnchor.constraint(lessThanOrEqualTo: root.widthAnchor, constant: -50),
-        ])
-        view = root
-    }
-}
-
-@MainActor
 final class StatusBarViewController: NSViewController {
     private let formatter: DisplayFormatter
     private let summary = NSTextField(labelWithString: "Ready")
@@ -504,23 +641,20 @@ final class StatusBarViewController: NSViewController {
     required init?(coder: NSCoder) { nil }
 
     override func loadView() {
-        let root = NSView()
-        root.wantsLayer = true
-        root.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        let root = BackgroundView(color: .windowBackgroundColor)
         summary.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         summary.translatesAutoresizingMaskIntoConstraints = false
 
         legend.orientation = .horizontal
         legend.alignment = .centerY
         legend.spacing = 8
-        let entries: [(String, NSColor)] = [
-            ("Media", .systemRed), ("Archives", .systemOrange), ("Apps", .systemYellow),
-            ("Fonts", .systemGreen), ("Documents", .systemTeal),
-            ("Data", NSColor(calibratedHue: 0.5, saturation: 0.55, brightness: 0.72, alpha: 1)),
-            ("Code", .systemBlue), ("System", .systemIndigo), ("Images", .systemPurple),
-            ("Audio", .systemPink), ("Video", .systemBrown), ("Other", .systemGray),
-            ("Merged", .tertiaryLabelColor),
-        ]
+        // The settled palette itself, so the swatch and the rectangle it
+        // explains can never be two different colours (§6.3). Twelve kind
+        // groups plus the merge bucket (ticket 01, decision 6).
+        var entries: [(String, NSColor)] = TreemapKindGroup.allCases.map {
+            ($0.displayName, TreemapChrome.legendColor(for: $0))
+        }
+        entries.append(("Merged", TreemapChrome.legendMergedColor))
         entries.forEach { legend.addArrangedSubview(legendItem(name: $0.0, color: $0.1)) }
         legend.translatesAutoresizingMaskIntoConstraints = false
         legend.isHidden = true
@@ -577,10 +711,7 @@ final class StatusBarViewController: NSViewController {
     }
 
     private func legendItem(name: String, color: NSColor) -> NSView {
-        let swatch = NSView()
-        swatch.wantsLayer = true
-        swatch.layer?.backgroundColor = color.cgColor
-        swatch.layer?.cornerRadius = 2
+        let swatch = BackgroundView(color: color, cornerRadius: 2)
         swatch.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             swatch.widthAnchor.constraint(equalToConstant: 9),
@@ -596,13 +727,56 @@ final class StatusBarViewController: NSViewController {
     }
 }
 
+/// A view that paints one colour, following the appearance.
+///
+/// Layer-backed on purpose. `layer.backgroundColor` takes a *resolved*
+/// `CGColor`, so setting it once freezes a dynamic `NSColor` to whichever
+/// appearance was current at the time — a light window under a dark system
+/// paints a dark bar behind light text. Resolving it in ``updateLayer()``
+/// instead re-resolves on every appearance change.
+///
+/// It must **not** do this by overriding `draw(_:)`: a custom-drawing
+/// background view in this window's content hierarchy stops the whole split
+/// view from painting — the panes lay out correctly and answer accessibility
+/// queries, and the window renders empty. Measured, reproducible, and the
+/// reason this is a layer and not a fill.
 @MainActor
-final class WorkspaceSplitViewController: NSSplitViewController {
+final class BackgroundView: NSView {
+    private let color: NSColor
+    private let cornerRadius: CGFloat
+
+    init(color: NSColor, cornerRadius: CGFloat = 0) {
+        self.color = color
+        self.cornerRadius = cornerRadius
+        super.init(frame: .zero)
+        wantsLayer = true
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        layer?.backgroundColor = color.cgColor
+        layer?.cornerRadius = cornerRadius
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+}
+
+@MainActor
+final class WorkspaceSplitViewController: NSSplitViewController, FileActionResponding, NSMenuItemValidation {
     let treeViewController: DirectoryTreeViewController
-    let treemapViewController = TreemapPlaceholderViewController()
-    let inspectorViewController = InspectorPlaceholderViewController()
+    let treemapViewController = TreemapPaneViewController()
+    let inspectorViewController = InspectorViewController()
     let model: ScanPresentationModel
     let formatter: DisplayFormatter
+    let selectionModel = SelectionModel()
+    let workspaceActions: WorkspaceActing
+    private let contentBuilder: InspectorContentBuilder
     var onModelChange: (() -> Void)?
     var onChooseRequest: (() -> Void)?
     private var displayedRoot: ScanNode?
@@ -611,12 +785,37 @@ final class WorkspaceSplitViewController: NSSplitViewController {
         self.init(model: ScanPresentationModel(), formatter: formatter)
     }
 
-    init(model: ScanPresentationModel, formatter: DisplayFormatter) {
+    /// The two seams default to the real thing, constructed here rather than in
+    /// a default argument: a default argument is evaluated outside the actor,
+    /// and both of these are `@MainActor`.
+    init(
+        model: ScanPresentationModel,
+        formatter: DisplayFormatter,
+        workspaceActions: WorkspaceActing? = nil,
+        announcer: AccessibilityAnnouncing? = nil
+    ) {
+        let announcer = announcer ?? SystemAccessibilityAnnouncer()
         self.model = model
         self.formatter = formatter
+        self.workspaceActions = workspaceActions ?? SystemWorkspaceActions()
+        contentBuilder = InspectorContentBuilder(formatter: formatter)
         treeViewController = DirectoryTreeViewController(formatter: formatter)
         super.init(nibName: nil, bundle: nil)
         splitView.isVertical = true
+
+        treemapViewController.treemapView.selectionModel = selectionModel
+        treemapViewController.treemapView.contentBuilder = contentBuilder
+        treemapViewController.treemapView.announcer = announcer
+        treeViewController.selectionModel = selectionModel
+        treeViewController.onPackageExpansionChange = { [weak self] node, expanded in
+            self?.treemapViewController.treemapView.setPackage(node, expanded: expanded)
+        }
+        treeViewController.onRowActivated = { [weak self] _ in self?.openSelection() }
+        inspectorViewController.onOpen = { [weak self] in self?.openSelection() }
+        inspectorViewController.onReveal = { [weak self] in self?.revealSelection() }
+        selectionModel.addObserver { [weak self] change in
+            self?.selectionDidChange(change)
+        }
 
         let left = NSSplitViewItem(sidebarWithViewController: treeViewController)
         left.minimumThickness = 240
@@ -648,7 +847,69 @@ final class WorkspaceSplitViewController: NSSplitViewController {
     required init?(coder: NSCoder) { nil }
 
     func start(root: URL, mode: ScanMode) {
+        // A new scan invalidates every node identity the selection could name.
+        selectionModel.clear()
+        treemapViewController.treemapView.resetPackageExpansion()
         model.start(root: root, mode: mode)
+    }
+
+    /// The facts a selection is described against. `nil` until a scan has a
+    /// root, which is exactly when nothing is selectable.
+    var selectionContext: SelectionContext? {
+        guard let rootURL = model.rootURL, let rootNode = model.root else { return nil }
+        return SelectionContext(
+            rootURL: rootURL,
+            rootNode: rootNode,
+            volumeCapacity: model.volumeCapacity,
+            isVolumeScan: model.mode == .volumeRoot
+        )
+    }
+
+    /// The absolute URL for the current selection, rebuilt from the node's
+    /// parent chain on demand (spec §5.2, §10). An aggregate has no URL: it is
+    /// not a file.
+    var selectedURL: URL? {
+        guard let node = selectionModel.selection?.node, let rootURL = model.rootURL else { return nil }
+        return node.url(root: rootURL)
+    }
+
+    func openSelection() {
+        guard let url = selectedURL else { return }
+        workspaceActions.open(url)
+    }
+
+    func revealSelection() {
+        guard let url = selectedURL else { return }
+        workspaceActions.reveal(url)
+    }
+
+    @objc func openSelectedItem(_ sender: Any?) { openSelection() }
+
+    @objc func revealSelectedItem(_ sender: Any?) { revealSelection() }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        switch menuItem.action {
+        case #selector(openSelectedItem(_:)), #selector(revealSelectedItem(_:)):
+            // Nothing to act on is the only reason either is ever disabled;
+            // there is no state in which a third command becomes available.
+            return selectedURL != nil
+        default:
+            return true
+        }
+    }
+
+    private func selectionDidChange(_ change: SelectionChange) {
+        refreshInspector()
+        treemapViewController.showNoRectangleNote(for: change.selection)
+        onModelChange?()
+    }
+
+    private func refreshInspector() {
+        guard let selection = selectionModel.selection, let context = selectionContext else {
+            inspectorViewController.content = nil
+            return
+        }
+        inspectorViewController.content = contentBuilder.content(for: selection, in: context)
     }
 
     private func refresh() {
@@ -661,7 +922,12 @@ final class WorkspaceSplitViewController: NSSplitViewController {
             displayedRoot = nil
             treeViewController.setRoot(nil)
         }
+        // The treemap is fed the same frozen snapshot the tree is, so the two
+        // panes are never describing different trees.
+        treemapViewController.treemapView.context = selectionContext
+        treemapViewController.treemapView.setRoot(model.root)
         treemapViewController.show(model.phase, progress: model.progress, formatter: formatter)
+        refreshInspector()
         onModelChange?()
     }
 }

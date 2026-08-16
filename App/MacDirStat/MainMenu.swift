@@ -28,8 +28,31 @@ enum MainMenu {
         let appMenuItem = NSMenuItem()
         appMenuItem.submenu = appMenu
 
+        // The File menu carries the two read-only actions and nothing else
+        // (§7.1): no Delete, no Move, no Clean — there is no mutation
+        // affordance anywhere in this app, and a menu is the easiest place to
+        // acquire one by accident.
+        let fileMenu = NSMenu(title: "File")
+        let open = NSMenuItem(
+            title: FileActionMenu.openTitle,
+            action: #selector(FileActionResponding.openSelectedItem(_:)),
+            keyEquivalent: "o"
+        )
+        let reveal = NSMenuItem(
+            title: FileActionMenu.revealTitle,
+            action: #selector(FileActionResponding.revealSelectedItem(_:)),
+            keyEquivalent: "r"
+        )
+        fileMenu.addItem(open)
+        fileMenu.addItem(reveal)
+
+        let fileMenuItem = NSMenuItem()
+        fileMenuItem.title = "File"
+        fileMenuItem.submenu = fileMenu
+
         let mainMenu = NSMenu()
         mainMenu.addItem(appMenuItem)
+        mainMenu.addItem(fileMenuItem)
         return mainMenu
     }
 }
