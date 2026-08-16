@@ -68,13 +68,26 @@ run_other_test_plans() {
 	local status=0 pair
 	set -- \
 		"MacDirStat-CI:CI-ThreadSanitizer" \
-		"MacDirStat-Performance:Performance" \
 		"MacDirStat-CompatibilitySmoke:CompatibilitySmoke"
 	for pair in "$@"; do
 		printf '\n-- scheme %s, plan %s\n' "${pair%%:*}" "${pair##*:}"
 		xcodebuild test -project MacDirStat.xcodeproj -scheme "${pair%%:*}" \
 			-testPlan "${pair##*:}" -destination 'platform=macOS' || status=1
 	done
+
+	# The performance plan carries two configurations (ticket 10). The default
+	# one runs Smoke and the cheap stress shapes in a few seconds, which is what
+	# this gate wants: proof the plan is readable and the suite compiles and
+	# passes. `Release, all rungs` is the opt-in pre-release-candidate gate — it
+	# climbs to two million entries and writes its record into `.plan/`, so
+	# running it here would dirty the working tree on every local check. Name
+	# the light configuration explicitly, because xcodebuild runs *all* of a
+	# plan's configurations when told none.
+	printf '\n-- scheme MacDirStat-Performance, plan Performance (light configuration)\n'
+	xcodebuild test -project MacDirStat.xcodeproj -scheme MacDirStat-Performance \
+		-testPlan Performance -only-test-configuration 'Release, no sanitizer' \
+		-destination 'platform=macOS' || status=1
+
 	return $status
 }
 

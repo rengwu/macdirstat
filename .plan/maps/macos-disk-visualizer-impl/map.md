@@ -118,17 +118,34 @@ matrix recorded across macOS 11 through current.
   is balance-only, never eligibility. The full one-command gate exits 0, including CI,
   Thread Sanitizer, universal Release, Performance and Compatibility plans.
 
+- [Performance & scale suite](./tickets/10-performance-and-scale-suite.md) — the opt-in
+  pre-release-candidate gate: 48 tests over a lazy scale generator with the exact §9.2
+  rungs, a counting probe, a peak-footprint sampler, treemap-at-scale, an opt-in
+  real-filesystem builder, and a committed record. Every rung finishes below 0.33 GiB
+  against the 8 GiB ceiling; Large holds two million nodes at 88 bytes each and lays out
+  into 137,056 visible boxes against a bound of 1,024,000. It found the 28 GB the field
+  report could not explain: **`FileManagerDirectoryProbe.list` had no autorelease pool**,
+  so a traversal that never suspends held every listing it ever made — 13,615 bytes of
+  footprint per entry, now 158. The suite adds one bar §8.4 does not state (under 2 KiB
+  per entry on a real-filesystem scan), because the 8 GiB ceiling alone could only have
+  failed on the machine of the person already suffering. Deep-tree teardown is confirmed
+  clear: depth 64 is 15× under the ~1,000-level recursive-ARC bound and its deepest path
+  already nearly fills `PATH_MAX`, so no real filesystem can reach further.
+
 ## Not yet specified
 
 - **Compiler availability checking does not reject everything §4.4 assumes it does.** A
   `Canvas` in a `some View` body is a *warning*, not an error, and would crash on Big Sur.
   The `Scripts/check-post-bigsur-apis.sh` guard is load-bearing rather than a second
   opinion; §4.4 and §9.3 word it as though the compiler alone suffices.
-- **Deep trees have a teardown ceiling, not a traversal one.** Releasing a `ScanNode` chain
-  is a recursive ARC teardown, so it is bounded by the releasing thread's stack — past
-  ~1,000 levels on a 512 KB cooperative-pool thread. That is 15× the depth-64 stress shape
-  and deeper than `PATH_MAX` permits, so it is a recorded bound rather than a fix; the
-  scale suite should confirm the stress rung stays clear of it. <clears-with: 10>
+- **The 10 s tree throttle contradicts a settled decision, and the reason is relayout cost,
+  not memory.** Ticket 01 fixed "10 Hz scalars / **4 Hz tree**"; commit `cc212c8` quietly
+  raised the tree interval to 10 s. Ticket 10 measured why: a full treemap relayout at the
+  Large rung takes **2.27 s** at 2,560×1,600, because `PreparedTree` rebuilds every
+  positive-byte node on every layout. The scan's autorelease fix does not move that
+  number, so 4 Hz is unaffordable at two million nodes for an independent reason. The
+  options — keep the throttle, prune sub-pixel nodes before layout, or cache the draw list
+  — are a decision, not a measurement.
 - **Spec text lags the prototype.** Ticket 01's answer supersedes six clauses across
   §§6.1, 6.2, 7.1 and 7.3 (merge iteration, merge-box order, outline depth cap,
   tree-visible counts, Cancelled banner → status-bar chip, empty-state and chooser
@@ -138,6 +155,11 @@ matrix recorded across macOS 11 through current.
   consequence a human accepted knowingly when the empty-state disclosures and the
   chooser's disabled ineligible rows were cut. Worth one look before 09 ships: a user
   whose network volume is simply absent from the chooser gets no reason for it.
+- **Every performance number on record was taken on the wrong machine.** §8.1 fixes the
+  reference machine at M1 / 8 GB / NVMe; ticket 10's run was on an M1 Pro with 16 GB, and
+  the record says so. The margin is wide — 0.32 GiB peak at the Large rung against an
+  8 GiB ceiling — but a host with twice the memory swaps later, so the ladder has to be
+  climbed once on the reference machine before an RC is declared.
 
 ## Out of scope
 

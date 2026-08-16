@@ -52,12 +52,26 @@ public struct FileManagerDirectoryProbe: DirectoryProbe {
         // No `.skipsHiddenFiles`: hidden entries are included, deliberately
         // (spec §3.4). No `.skipsPackageDescendants` either — a package is
         // measured *through* and only presented collapsed (spec §3.4).
-        let children = try FileManager.default.contentsOfDirectory(
-            at: url,
-            includingPropertiesForKeys: Self.entryKeys,
-            options: []
-        )
-        return children.map(Self.entryMeta(of:))
+        //
+        // **The pool is the memory ceiling.** `contentsOfDirectory` returns one
+        // `URL` per entry, each carrying the ten prefetched resource values as
+        // Foundation objects, and every one of them is autoreleased. The
+        // traversal is a single long synchronous run inside a detached task
+        // with no suspension point in it, so it is one job on the cooperative
+        // pool and the thread's pool is not drained until that job ends — which
+        // is when the whole scan ends. Without this pool the process holds
+        // every listing it has ever made: `MacDirStatPerformanceTests` measured
+        // **13,615 bytes of resident footprint per entry** on a real 65,536-entry
+        // tree, against **158** with it, and the field report that prompted the
+        // measurement saw 28 GB on a 2.4-million-file volume (spec §8.4).
+        return try autoreleasepool {
+            let children = try FileManager.default.contentsOfDirectory(
+                at: url,
+                includingPropertiesForKeys: Self.entryKeys,
+                options: []
+            )
+            return children.map(Self.entryMeta(of:))
+        }
     }
 
     public func metadata(of url: URL) throws -> EntryMeta {

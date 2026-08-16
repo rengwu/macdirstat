@@ -11,3 +11,7 @@ build/
 xcuserdata/
 *.xccheckout
 *.moved-aside
+
+# The opt-in real-filesystem soak's staging directory (ticket 10).
+# Create it empty to enable the soak; the builder refuses a non-empty one.
+.performance-fixture/
