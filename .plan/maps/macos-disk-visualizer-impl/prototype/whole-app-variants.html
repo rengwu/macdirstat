@@ -15,11 +15,41 @@
   │    · Package  — expanding a package in the tree subdivides its treemap box, │
   │                 exactly like a folder. The outer rect never changes area.   │
   │    · Legend   — a second status-bar row carrying all 12 kind swatches plus  │
-  │                 "Merged", always visible, never behind an interaction.      │
+  │                 "Merged", never behind an interaction. Revised: it appears  │
+  │                 only once a scan has produced colour (not Empty/Choosing).  │
   │  Still switchable: the six lifecycle states, and light/dark.                │
   │                                                                            │
-  │  STILL OPEN — the merge rule (see merge-rule-variants.html). Fixed here to  │
-  │  fixpoint + merge-box-last; swap MERGE_STRATEGY / MERGE_SORT below.         │
+  │  DISTILL PASS — clutter cut, chosen by the human from live reaction.        │
+  │  Empty state is now icon + headline + one line + button, nothing else;      │
+  │  chooser subtitle, scan-% explanation and the inspector's API footnote      │
+  │  removed; the Cancelled / Completed-with-errors banners demoted into the    │
+  │  status bar; the chooser lists eligible sources only.                       │
+  │                                                                            │
+  │  THIS FILE OVERRIDES THE SPEC where the two disagree. Three §7 clauses are  │
+  │  superseded and spec.md must be amended to match — they are not open        │
+  │  questions and must not be "resolved" back toward the old text:             │
+  │    · §7.3 "unmistakable banner" on Cancelled → status-bar chip (bold,       │
+  │      amber, dot), backed by the tree's per-row Incomplete badges.           │
+  │    · §7.1 empty state states read-only + hidden-files-included + drive      │
+  │      eligibility "up front" → states none of them.                          │
+  │    · §7.1 chooser shows ineligible sources disabled-with-reason, "not       │
+  │      hidden" → they are filtered out entirely.                              │
+  │  Consequence to carry forward, not to reverse: the scope rule and the       │
+  │  read-only guarantee are now stated nowhere in the UI.                      │
+  │                                                                            │
+  │  ALSO DECIDED — nothing on this file is open any more:                     │
+  │    · Merge rule — iterate to FIXPOINT (squarify → merge → re-squarify until │
+  │      stable). Zero slivers on all four bench fixtures; ≤81 passes, <5 ms.   │
+  │      Evidence: merge-rule-variants.html. §6.2 must say "iterate".           │
+  │    · Merge box — pinned LAST in child order, not sorted by its bytes.       │
+  │      Settles in 2 rounds vs 5. §6.1 is silent on the aggregate; fills that. │
+  │    · Outlines — capped at 3 levels below the root (OUTLINE_MAX_DEPTH).      │
+  │      §6.1 says "every directory below the root"; amend it.                  │
+  │    · Status-bar counts — what the TREE SHOWS (a package is one item), not   │
+  │      what the scanner enumerated. Byte totals still include package         │
+  │      internals per §3.4, so the two deliberately differ.                    │
+  │    · Context menu — right-click on a tree row or a treemap box offers Open  │
+  │      and Reveal, and only ever those two.                                   │
   │                                                                            │
   │  Everything traces to spec.md: §3 measurement, §6 treemap, §7 workspace.    │
   └──────────────────────────────────────────────────────────────────────────┘
@@ -193,7 +223,6 @@
   .ins-actions{ display:flex; gap:7px; margin-top:15px }
   .ins-actions .btn{ flex:1 1 auto; justify-content:center }
   .ins-foot{ margin-top:12px; font-size:10.5px; color:var(--text-3); line-height:1.5 }
-  .ins-foot code{ font-family:var(--mono) }
 
   /* ---------- legend ---------- */
   .lg{ display:flex; align-items:center; gap:5px; font-size:11px; color:var(--text-2); white-space:nowrap }
@@ -209,26 +238,21 @@
   .sbrow + .sbrow{ border-top:var(--hair) solid var(--sep); height:24px }
   .sbrow .s{ display:flex; align-items:center; gap:5px; white-space:nowrap }
   .sbrow .s b{ color:var(--text); font-weight:650 }
-  .sbrow .s.err{ color:var(--danger) } .sbrow .s.exc{ color:var(--cloud) }
+  .sbrow .s.err{ color:var(--danger) }
+  /* --cloud is a swatch hue, not a text colour: it fails 4.5:1 on the light status bar. */
+  .sbrow .s.exc{ color:var(--text-2) } .sbrow .s.exc i.sdot{ background:var(--cloud) }
+  .sbrow .s.warn{ color:var(--warning) }
+  .sbrow .s.warn b, .sbrow .s.err b{ color:inherit }
+  .sbrow .s i.sdot{ width:7px; height:7px; border-radius:50%; background:currentColor; flex:0 0 7px }
+  .sbrow .lnk{ color:var(--accent); cursor:pointer; margin-left:auto; white-space:nowrap }
+  .sbrow .lnk:hover{ text-decoration:underline }
   .legendrow{ display:flex; gap:11px; overflow:hidden; flex-wrap:nowrap }
-
-  /* ---------- banner ---------- */
-  .banner{
-    flex:0 0 auto; display:flex; align-items:center; gap:8px; padding:7px 13px; font-size:12px;
-    border-bottom:var(--hair) solid var(--sep);
-  }
-  .banner.warn{ background:color-mix(in srgb,var(--warning) 17%,var(--win-bg)); color:var(--warning) }
-  .banner.err{ background:color-mix(in srgb,var(--danger) 13%,var(--win-bg)); color:var(--danger) }
-  .banner .dot{ width:8px; height:8px; border-radius:50%; background:currentColor; flex:0 0 8px }
-  .banner b{ color:var(--text); font-weight:650 }
-  .banner .lnk{ color:var(--accent); cursor:pointer; font-weight:500; margin-left:auto; white-space:nowrap }
 
   /* ---------- empty / scanning ---------- */
   .empty{ position:absolute; inset:0; display:grid; place-items:center; text-align:center; padding:30px }
   .empty .in{ max-width:430px; display:flex; flex-direction:column; align-items:center; gap:5px }
   .empty h1{ font-size:21px; font-weight:650; margin:8px 0 0 }
   .empty p{ color:var(--text-2); margin:2px 0 13px; line-height:1.5 }
-  .empty .fine{ margin-top:15px; font-size:11.5px; color:var(--text-3); line-height:1.75 }
 
   .scancard{
     position:absolute; left:50%; top:44%; transform:translate(-50%,-50%); width:min(560px,84%);
@@ -253,19 +277,15 @@
   .sheet{ width:min(560px,92%); background:var(--win-bg); border-radius:0 0 12px 12px; box-shadow:var(--shadow); overflow:hidden; animation:drop .2s cubic-bezier(.2,.9,.3,1) }
   @keyframes drop{ from{transform:translateY(-14px);opacity:.4} to{transform:none;opacity:1} }
   .sheet header{ padding:15px 19px 3px } .sheet header h2{ margin:0; font-size:14.5px; font-weight:650 }
-  .sheet header p{ margin:3px 0 0; font-size:11.5px; color:var(--text-2) }
   .sheet .list{ padding:8px 11px 4px; max-height:330px; overflow:auto }
   .vrow{ display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:8px; cursor:default }
-  .vrow:hover:not(.dis){ background:color-mix(in srgb,var(--accent) 13%,transparent) }
+  .vrow:hover{ background:color-mix(in srgb,var(--accent) 13%,transparent) }
   .vrow.sel{ background:var(--sel-bg) } .vrow.sel *{ color:#fff!important }
-  .vrow.dis{ opacity:.5 }
   .vrow .ic{ width:26px; flex:0 0 26px; display:grid; place-items:center; color:var(--accent) }
-  .vrow.dis .ic{ color:var(--text-3) }
   .vrow .ic svg{ width:22px; height:22px }
   .vrow .meta{ flex:1 1 auto; min-width:0 }
   .vrow .n{ font-weight:650; font-size:12.5px } .vrow .d{ font-size:11px; color:var(--text-2) }
   .vrow .cap{ font-size:11px; color:var(--text-3); text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums }
-  .vrow .why{ font-size:10.5px; color:var(--danger); text-align:right; max-width:170px; line-height:1.3 }
   .sheet footer{ display:flex; align-items:center; gap:8px; padding:11px 19px; border-top:var(--hair) solid var(--sep) }
   .sheet footer .fine{ font-size:11px; color:var(--text-2); display:flex; align-items:center; gap:6px }
   .sheet footer .fine code{ font-family:var(--mono); font-size:10px }
@@ -292,6 +312,21 @@
   .tip .flag{ color:#FFD166 }
 
   /* ---------- toast ---------- */
+  /* ---------- context menu (§7.1 read-only actions only) ---------- */
+  .ctxmenu{
+    position:fixed; z-index:95; display:none; min-width:186px; padding:4px;
+    background:var(--panel-bg); border:var(--hair) solid var(--sep-strong); border-radius:7px;
+    box-shadow:var(--shadow); font-size:12.5px;
+  }
+  .ctxmenu.on{ display:block }
+  .ctxmenu button{
+    display:flex; align-items:center; gap:16px; width:100%; padding:4px 9px; border:none;
+    border-radius:4px; background:transparent; color:var(--text); font:inherit; text-align:left; cursor:default;
+  }
+  .ctxmenu button:hover{ background:var(--sel-bg); color:#fff }
+  .ctxmenu .eq{ margin-left:auto; color:var(--text-3); font-variant-numeric:tabular-nums }
+  .ctxmenu button:hover .eq{ color:rgba(255,255,255,.8) }
+
   .toast{
     position:fixed; left:50%; bottom:76px; transform:translateX(-50%) translateY(8px);
     background:rgba(24,24,27,.96); color:#fff; padding:9px 15px; border-radius:10px; font-size:12px;
@@ -303,7 +338,8 @@
 
   /* ---------- PROTO bar (deliberately not macOS) ---------- */
   .protobar{
-    position:fixed; left:50%; bottom:12px; transform:translateX(-50%);
+    /* clears the status bar: the lifecycle state now lives there, not in a banner */
+    position:fixed; left:50%; bottom:62px; transform:translateX(-50%);
     display:flex; align-items:center; gap:6px; z-index:90; flex-wrap:wrap; justify-content:center;
     max-width:calc(100vw - 16px);
     background:rgba(24,24,27,.94); color:#fff; border:1px solid rgba(255,255,255,.15);
@@ -331,6 +367,10 @@
 </div>
 <div class="tip" id="tip"></div>
 <div class="toast" id="toast"></div>
+<div class="ctxmenu" id="ctxmenu" role="menu">
+  <button role="menuitem" onclick="menuPick('open')">Open<span class="eq">⌘O</span></button>
+  <button role="menuitem" onclick="menuPick('reveal')">Reveal in Finder<span class="eq">⌘R</span></button>
+</div>
 <div class="protobar" id="protobar"></div>
 
 <script>
@@ -340,8 +380,18 @@
 
 const KIB = 1024, MIB = 1024 * KIB, GIB = 1024 * MIB;
 const MIN_PT = 2;
-const MERGE_STRATEGY = "fixpoint";   // see merge-rule-variants.html — still open
+/* DECIDED (see header). Iterate to fixpoint: squarify → merge slivers → re-squarify,
+   until no rect falls below MIN_PT in either direction. The only reading of §6.2 that
+   ends with zero slivers on every fixture; ≤81 passes, <5 ms. */
+const MERGE_STRATEGY = "fixpoint";
+/* DECIDED. The aggregate is pinned last in child order rather than sorted by its
+   combined bytes — the packing settles in 2 rounds instead of 5. §6.1 fixes child
+   order for real children only and is silent on the aggregate; this fills that gap. */
 const MERGE_SORT     = "last";
+/* DECIDED. §6.1 outlines "every directory below the root"; capped at 3 levels because
+   deeper strokes are invisible (fills already carry the boundary) and overdraw thin
+   strips. 20 outlines → 3 on the ×20 chain with no visible difference. */
+const OUTLINE_MAX_DEPTH = 3;
 
 /* ---------- §3.2 formatting: IEC, 3 sig figs, no ByteCountFormatter ---------- */
 const UNITS = ["bytes", "KiB", "MiB", "GiB", "TiB"];
@@ -361,19 +411,25 @@ function pct(x) {                                  // 1 decimal, "< 0.1%" floor,
   return x.toFixed(1) + "%";
 }
 
-/* ---------- §6.3 kind → hue: 11 groups + gray "other" ---------- */
+/* ---------- §6.3 kind → hue: 11 groups + gray "other" ----------
+   DECIDED: these hues, sat 55%, lightness 52% light / 60% dark. §6.3 calls the hues
+   "tunable, not load-bearing", so this table is the default, not a contract.
+   Respaced on the way in. "system" was 220, ten degrees off "code" at 210 — the two
+   swatches were indistinguishable in the legend and in the map. It moved to 310, and
+   audio/document/diskimage/app shifted 5–15° to even out the rest. Closest pair was
+   10°, is now 25°: 0 · 25 · 50 · 90 · 150 · 180 · 210 · 245 · 280 · 310 · 335. */
 const KIND_GROUPS = [
   ["code",      210, ["swift","m","c","cpp","h","js","ts","tsx","py","rb","go","rs","java","kt","sh","json","yml","yaml","xml","html","css","md","lock"]],
   ["image",     150, ["png","jpg","jpeg","gif","heic","tiff","bmp","webp","svg","raw","icns","photoslibrary"]],
   ["video",     280, ["mp4","mov","mkv","avi","m4v","webm"]],
-  ["audio",      20, ["mp3","aac","m4a","wav","flac","ogg","aiff"]],
-  ["document",   45, ["pdf","doc","docx","rtf","txt","pages","epub","numbers","key","xls","xlsx","ppt","pptx","csv"]],
+  ["audio",      25, ["mp3","aac","m4a","wav","flac","ogg","aiff"]],
+  ["document",   50, ["pdf","doc","docx","rtf","txt","pages","epub","numbers","key","xls","xlsx","ppt","pptx","csv"]],
   ["archive",     0, ["zip","tar","gz","tgz","bz2","xz","rar","7z","zst"]],
-  ["app",       340, ["app","pkg","ipa"]],
-  ["diskimage", 260, ["dmg","iso","img","sparseimage","sparsebundle"]],
+  ["app",       335, ["app","pkg","ipa"]],
+  ["diskimage", 245, ["dmg","iso","img","sparseimage","sparsebundle"]],
   ["font",      180, ["ttf","otf","woff","woff2","ttc"]],
   ["data",       90, ["sqlite","db","dat","bin","log","idx","pack"]],
-  ["system",    220, ["dylib","so","a","framework","kext","plist","cache"]],
+  ["system",    310, ["dylib","so","a","framework","kext","plist","cache"]],
 ];
 const KIND_LABEL = {
   code:"Code", image:"Image", video:"Video", audio:"Audio", document:"Document",
@@ -514,6 +570,24 @@ function rollup(n) {
   return n;
 }
 rollup(ROOT);
+
+/* DECIDED. §7.1 says only "file + folder counts". The status bar reports what the tree
+   SHOWS, not what the scanner enumerated: a package counts as one file and contributes
+   no folders, matching what the user can click. Deliberately NOT expansion-dependent —
+   twirling a disclosure triangle must not change the totals in the status bar.
+   Bytes still include package internals (§3.4, not reopened), so the tally and the byte
+   total measure different things by design. The inspector's per-node "Contains" row
+   keeps the scanner's numbers, which is the question that row is actually asking. */
+function shownCounts(n) {
+  if (!n.children || n.pkg) return { f: 1, d: 0 };   // a package is one item, always
+  let f = 0, d = 0;
+  for (const c of n.children) {
+    const v = shownCounts(c);
+    f += v.f; d += v.d + (c.children && !c.pkg ? 1 : 0);
+  }
+  return { f, d };
+}
+const SHOWN = shownCounts(ROOT);
 
 let ORDER = 0;
 function seqOrder() { ORDER = 0; (function w(n) { n.seq = ++ORDER; (n.children || []).forEach(w); })(ROOT); }
@@ -772,7 +846,7 @@ function rowsHTML(n, depth, isRoot) {
     return `<div class="tc num" style="flex:0 0 ${c.w}px"><div class="pctcell">${pct(share)}<span class="pbar"><i style="width:${Math.min(100, share).toFixed(1)}%"></i></span></div></div>`;
   }).join("");
 
-  let out = `<div class="trow ${open ? "open" : ""} ${sel ? "sel" : ""}" onclick="selectNode(${n.id})" ondblclick="rowActivate(${n.id})">${cells}</div>`;
+  let out = `<div class="trow ${open ? "open" : ""} ${sel ? "sel" : ""}" onclick="selectNode(${n.id})" ondblclick="rowActivate(${n.id})" oncontextmenu="onRowContext(event,${n.id})">${cells}</div>`;
   if (open && kids) for (const c of sortedChildren(n)) out += rowsHTML(c, depth + 1, false);
   return out;
 }
@@ -849,10 +923,10 @@ function drawTreemap() {
     if (r.dir || r.w < 1.2 || r.h < 1.2) continue;
     ctx.strokeRect(snap(r.x) + .25, snap(r.y) + .25, Math.max(0, r.w - .5), Math.max(0, r.h - .5));
   }
-  // 3 directory outlines (post-pass, 1 pt, every level below root)
+  // 3 directory outlines (post-pass, 1 pt, depth 1..OUTLINE_MAX_DEPTH below root)
   ctx.strokeStyle = dark ? "rgba(255,255,255,.30)" : "rgba(0,0,0,.34)"; ctx.lineWidth = 1;
   for (const r of LAYOUT.rects) {
-    if (!r.dir || r.depth === 0 || r.w < 2 || r.h < 2) continue;
+    if (!r.dir || r.depth === 0 || r.depth > OUTLINE_MAX_DEPTH || r.w < 2 || r.h < 2) continue;
     ctx.strokeRect(snap(r.x) + .5, snap(r.y) + .5, Math.max(0, r.w - 1), Math.max(0, r.h - 1));
   }
   // 3b incomplete → red diagonal hatch overlay (§6.3)
@@ -994,8 +1068,7 @@ function nodeInspectorHTML(n) {
     <div class="ins-actions">
       <button class="btn" onclick="doOpen()">${svg(I.open)} Open</button>
       <button class="btn primary" onclick="doReveal()">${svg(I.reveal)} Reveal</button>
-    </div>
-    <div class="ins-foot">Read-only. Open uses <code>NSWorkspace.open</code>, Reveal uses <code>activateFileViewerSelecting</code>. No other file action exists anywhere in this app.</div>`;
+    </div>`;
 }
 const note = (cls, glyph, html) => `<div class="note ${cls}"><span class="gl">${glyph}</span><div>${html}</div></div>`;
 
@@ -1009,18 +1082,27 @@ function statsHTML() {
     return `<div class="s"><b>Scanning…</b></div><div class="s">${fmtIEC(S.scan.bytes)}</div><div class="s">${grp(S.scan.files)} files · ${grp(S.scan.dirs)} folders</div>`;
   const frac = S.phase === "cancelled" ? S.revealFrac : 1;
   let h = `<div class="s"><b>${fmtIEC(TOTAL * frac)}</b> scanned</div>
-           <div class="s">${grp(Math.round(ROOT.files * frac))} files · ${grp(Math.round(ROOT.dirs * frac))} folders</div>`;
+           <div class="s">${grp(Math.round(SHOWN.f * frac))} files · ${grp(Math.round(SHOWN.d * frac))} folders</div>`;
   if (ROOT.volume) h += `<div class="s">Capacity ${fmtIEC(ROOT.capacity)} · Free ${fmtIEC(ROOT.free)}</div>`;
-  if (S.phase === "partial") h += `<div class="s err">${grp(ERRORS.length)} unreadable</div><div class="s exc">${grp(EXCLUSIONS.length)} excluded</div>`;
-  if (S.phase === "cancelled") h += `<div class="s" style="color:var(--warning)">Incomplete</div>`;
+  if (S.phase === "partial")
+    h += `<div class="s err"><i class="sdot"></i><b>${grp(ERRORS.length)} unreadable</b></div>
+          <div class="s exc"><i class="sdot"></i>${grp(EXCLUSIONS.length)} excluded</div>
+          <span class="lnk" onclick="openErrors()">Error summary…</span>`;
+  if (S.phase === "cancelled")
+    h += `<div class="s warn"><i class="sdot"></i><b>Incomplete — cancelled</b></div>
+          <span class="lnk" onclick="openChooser()">Start a fresh scan…</span>`;
   return h;
 }
 function statusbarHTML() {
   const dark = isDark();
-  const legend = `<div class="legendrow">${legendItems().map(([g, l]) =>
-      `<span class="lg"><i style="background:${kindColor(g, dark)}"></i>${l}</span>`).join("")}
-      <span class="lg"><i class="hatch"></i>Merged</span></div>`;
-  return `<div class="sbrow">${statsHTML()}</div><div class="sbrow">${legend}</div>`;
+  /* Legend is meaningful only once the treemap carries colour: never before a scan. */
+  const showLegend = S.phase === "scanning" || hasResults() || (S.phase === "choosing" && !!S.lastResult);
+  const legend = showLegend
+    ? `<div class="sbrow"><div class="legendrow">${legendItems().map(([g, l]) =>
+        `<span class="lg"><i style="background:${kindColor(g, dark)}"></i>${l}</span>`).join("")}
+        <span class="lg"><i class="hatch"></i>Merged</span></div></div>`
+    : "";
+  return `<div class="sbrow">${statsHTML()}</div>${legend}`;
 }
 
 /* =====================================================================
@@ -1031,10 +1113,8 @@ function emptyHTML() {
     <svg style="width:82px;height:82px;opacity:.85" viewBox="0 0 16 16" fill="none" stroke="var(--text-3)" stroke-width=".7">
       <rect x="1.5" y="3" width="13" height="10" rx="1.6"/><circle cx="8" cy="8" r="3"/><circle cx="8" cy="8" r=".7" fill="var(--text-3)"/></svg>
     <h1>Visualize a disk</h1>
-    <p>Choose a folder or a locally attached drive to scan.<br>You'll see where every gigabyte lives — as a tree and a treemap.</p>
+    <p>Choose a folder or drive to scan.</p>
     <button class="btn primary" style="font-size:14px;padding:8px 17px" onclick="openChooser()">${svg(I.folder)} Choose Folder or Drive…</button>
-    <div class="fine">Read-only — nothing is moved, deleted, or downloaded · hidden files included<br>
-      Internal and directly-attached drives only — network volumes, disk images, and cloud roots aren't scanned</div>
   </div></div>`;
 }
 
@@ -1046,9 +1126,7 @@ function scanningHTML() {
     <h2>Scanning ${esc(ROOT.name)}…</h2>
     <div class="cur">${esc(s.cur || "Enumerating…")}</div>
     <div class="track ${vol ? "det" : ""}"><i style="${vol ? `width:${(frac * 100).toFixed(0)}%` : ""}"></i></div>
-    <div class="approx">${vol
-      ? `About ${(frac * 100).toFixed(0)}% of used space — approximate, based on what the volume reports as used`
-      : `Total unknown until traversal finishes`}</div>
+    ${vol ? `<div class="approx">About ${(frac * 100).toFixed(0)}% of used space</div>` : ""}
     <div class="telem">
       <div class="t"><div class="lab">Measured</div><div class="val">${fmtIEC(s.bytes)}</div></div>
       <div class="t"><div class="lab">Files</div><div class="val">${grp(s.files)}</div></div>
@@ -1059,34 +1137,24 @@ function scanningHTML() {
   </div>`;
 }
 
-function bannerHTML() {
-  if (S.phase === "cancelled") return `<div class="banner warn"><span class="dot"></span>
-    <span><b>Incomplete — scan cancelled.</b> Everything already discovered is kept and fully browsable.</span>
-    <span class="lnk" onclick="openChooser()">Start a fresh scan →</span></div>`;
-  if (S.phase === "partial") return `<div class="banner err"><span class="dot"></span>
-    <span><b>Completed with errors.</b> ${grp(ERRORS.length)} folder unreadable · ${grp(EXCLUSIONS.length)} cloud items excluded. Affected totals are lower bounds.</span>
-    <span class="lnk" onclick="openErrors()">Error summary…</span></div>`;
-  return "";
-}
-
+/* Eligible sources only. Ineligible ones — network volumes, mounted disk images,
+   cloud-provider roots — are FILTERED OUT of the chooser. This supersedes §7.1's
+   "shown disabled with the reason inline, not hidden"; amend the spec, do not
+   restore the disabled rows. The scanner still refuses all three. */
 const VOLUMES = [
-  { n: "Macintosh HD", d: "Internal · APFS", cap: "994 GiB · 210 GiB free", ok: true, ic: "disk" },
-  { n: "Home — rengwu", d: "Folder in Macintosh HD", cap: "", ok: true, ic: "folder" },
-  { n: "Samsung T7", d: "USB-C · directly attached SSD", cap: "2 TiB · 1.1 TiB free", ok: true, ic: "disk" },
-  { n: "TimeMachine", d: "Network volume (SMB)", ok: false, why: "Network volumes are out of scope", ic: "disk" },
-  { n: "Ubuntu-24.iso", d: "Mounted disk image", ok: false, why: "Disk images aren't scanned", ic: "disk" },
-  { n: "iCloud Drive", d: "Cloud provider root", ok: false, why: "Cloud roots aren't scanned", ic: "folder" },
+  { n: "Macintosh HD", d: "Internal · APFS", cap: "994 GiB · 210 GiB free", ic: "disk" },
+  { n: "Home — rengwu", d: "Folder in Macintosh HD", cap: "", ic: "folder" },
+  { n: "Samsung T7", d: "USB-C · directly attached SSD", cap: "2 TiB · 1.1 TiB free", ic: "disk" },
 ];
 let chooserSel = 0;
 function chooserHTML() {
   return `<div class="scrim" onclick="closeChooser()"><div class="sheet" onclick="event.stopPropagation()">
-    <header><h2>Choose a folder or drive to scan</h2>
-      <p>Only internal or directly-attached drives are eligible. Read-only — nothing is modified.</p></header>
+    <header><h2>Choose a folder or drive to scan</h2></header>
     <div class="list">${VOLUMES.map((v, i) => `
-      <div class="vrow ${v.ok ? "" : "dis"} ${v.ok && i === chooserSel ? "sel" : ""}" ${v.ok ? `onclick="chooserSel=${i};beginScan()"` : ""}>
+      <div class="vrow ${i === chooserSel ? "sel" : ""}" onclick="chooserSel=${i};beginScan()">
         <div class="ic">${svg(I[v.ic])}</div>
         <div class="meta"><div class="n">${esc(v.n)}</div><div class="d">${esc(v.d)}</div></div>
-        ${v.ok ? `<div class="cap">${esc(v.cap || "")}</div>` : `<div class="why">${esc(v.why)}</div>`}
+        <div class="cap">${esc(v.cap || "")}</div>
       </div>`).join("")}</div>
     <footer><span class="fine">${svg(I.folder)} <code>NSOpenPanel · canChooseDirectories</code></span>
       <span class="spring"></span>
@@ -1121,7 +1189,7 @@ function render() {
 
   if (S.phase === "empty") { stage.innerHTML = emptyHTML(); afterRender(); return; }
 
-  stage.innerHTML = `${bannerHTML()}
+  stage.innerHTML = `
     <div class="split">
       ${treeHTML()}
       <div class="divider" data-target="tree"></div>
@@ -1145,6 +1213,7 @@ function afterRender() {
     cv.addEventListener("mouseleave", () => tipEl.classList.remove("on"));
     cv.addEventListener("mousedown", onTmClick);
     cv.addEventListener("dblclick", onTmDbl);
+    cv.addEventListener("contextmenu", onTmContext);
   }
 }
 
@@ -1180,6 +1249,32 @@ function onTmClick(e) {
   if (hit.merge) { S.sel = { merge: hit.merge, parent: hit.parent }; render(); return; }
   selectNode(hit.node.id, true);
 }
+/* DECIDED — right-click offers the two read-only actions and nothing else.
+   §7.1's "no mutation affordance anywhere" governs this menu too: it never gains a
+   third item. Right-clicking selects first, so the menu always acts on what it points
+   at. An aggregate box is not a file, so it gets no menu (matching the inspector). */
+function onTmContext(e) {
+  setFocusTree(false);
+  const b = e.currentTarget.getBoundingClientRect();
+  const hit = hitTest(e.clientX - b.left, e.clientY - b.top);
+  e.preventDefault();
+  if (!hit || hit.merge) { closeMenu(); return; }
+  selectNode(hit.node.id, true);
+  openMenu(e.clientX, e.clientY);
+}
+function onRowContext(e, id) {
+  e.preventDefault();
+  setFocusTree(true); selectNode(id);
+  openMenu(e.clientX, e.clientY);
+}
+function openMenu(x, y) {
+  const el = document.getElementById("ctxmenu");
+  el.classList.add("on");
+  el.style.left = Math.min(x, innerWidth - el.offsetWidth - 8) + "px";
+  el.style.top = Math.min(y, innerHeight - el.offsetHeight - 8) + "px";
+}
+function closeMenu() { document.getElementById("ctxmenu").classList.remove("on"); }
+function menuPick(fn) { closeMenu(); fn === "open" ? doOpen() : doReveal(); }
 function onTmDbl(e) {
   const b = e.currentTarget.getBoundingClientRect();
   const hit = hitTest(e.clientX - b.left, e.clientY - b.top);
@@ -1226,6 +1321,7 @@ function beginScan() {
   S.phase = "scanning"; S.sel = null; S.revealFrac = 0; S.showErrors = false; S.incompleteOpen = false;
   S.scan = { bytes: 0, files: 0, dirs: 0, elapsed: 0, cur: "" };
   const DUR = 3.4, t0 = performance.now();
+  let lastStruct = -1;
   render();
   clearInterval(timer);
   timer = setInterval(() => {
@@ -1238,15 +1334,25 @@ function beginScan() {
       if (!discovered(n)) return;
       if (n.children && !n.pkg) { dirs++; n.children.forEach(w); } else { files++; bytes += n.own; cur = n.path; }
     })(ROOT);
+    /* DECIDED — the user-facing half of §5.5's ≤15 Hz scalars / ≤4 Hz tree budget.
+       Scalars (bytes, files, folders, elapsed, %) refresh at 10 Hz: fast enough to read
+       as live, slow enough that the digits stay readable rather than strobing.
+       The current-path line, the tree and the treemap all refresh at 4 Hz — a path
+       line at 10 Hz is an unreadable blur, and repainting the treemap faster than the
+       eye resolves buys nothing. Terminal state repaints exactly once, immediately. */
+    const structural = el - lastStruct >= .25 || f >= 1;
+    if (structural) lastStruct = el; else cur = S.scan.cur;
     S.scan = { bytes, files, dirs, elapsed: el, cur };
     const card = document.querySelector(".scancard");
     if (card) card.outerHTML = scanningHTML();
     document.getElementById("statusbar").innerHTML = statusbarHTML();
-    const t = document.getElementById("tree");
-    if (t) { const sc = t.scrollTop; t.innerHTML = rowsHTML(ROOT, 0, true); t.scrollTop = sc; }
-    drawTreemap();
+    if (structural) {
+      const t = document.getElementById("tree");
+      if (t) { const sc = t.scrollTop; t.innerHTML = rowsHTML(ROOT, 0, true); t.scrollTop = sc; }
+      drawTreemap();
+    }
     if (f >= 1) finish("completed");
-  }, 90);
+  }, 100);
 }
 function stopScan() { clearInterval(timer); }
 function finish(phase) {
@@ -1360,10 +1466,16 @@ function gotoStateSilently(k) {
 }
 
 /* ---------- keyboard (§7.2) ---------- */
+document.addEventListener("mousedown", e => {
+  if (!e.target.closest || !e.target.closest("#ctxmenu")) closeMenu();
+}, true);
 document.addEventListener("keydown", e => {
   const t = (e.target.tagName || "").toLowerCase();
   if (t === "input" || t === "textarea" || e.target.isContentEditable) return;
-  if (e.key === "Escape") { if (S.errOpen) { closeErrors(); return; } if (S.phase === "choosing") { closeChooser(); return; } return; }
+  if (e.key === "Escape") {
+    if (document.getElementById("ctxmenu").classList.contains("on")) { closeMenu(); return; }
+    if (S.errOpen) { closeErrors(); return; } if (S.phase === "choosing") { closeChooser(); return; } return;
+  }
   if (!hasResults()) return;
   if (e.key === "ArrowDown" || e.key === "ArrowUp") {
     const rows = visibleRows();

@@ -37,13 +37,28 @@ matrix recorded across macOS 11 through current.
 
 ## Decisions so far
 
-<!-- No implementation tickets resolved yet. Resolved tickets are recorded here, newest
-work linked with a one-line gist, per the tracker convention. -->
+- [Whole-app gold-standard prototype](./tickets/01-whole-app-gold-standard-prototype.md) —
+  `prototype/whole-app-variants.html` is the authoritative visual/behavioral reference for
+  06–09. Settles the deferred-within-v1 details (tree columns `Name │ Size │ % │ Items`
+  default Size ▼ with an inline bar in the % cell; package drill-in subdivides without
+  changing outer area; inspector field set plus a right-click Open/Reveal menu; 10 Hz
+  scalars / 4 Hz tree with "About N% of used space"; 11 respaced kind hues; legend only
+  once a scan has color) and closes the three spec gaps blocking 06: **merge rule
+  iterates to fixpoint**, **merge box pinned last** in child order, **outlines capped at
+  3 levels**. Status-bar counts are tree-visible, not scanner-enumerated. §§6.1, 6.2, 7.1
+  and 7.3 need amending to match — the prototype is authoritative where they disagree.
 
 ## Not yet specified
 
-<!-- The whole build is decomposed into tickets 01–11 below; no unowned patches remain.
-New fog discovered during implementation is added here with a <clears-with: NN> marker. -->
+- **Spec text lags the prototype.** Ticket 01's answer supersedes six clauses across
+  §§6.1, 6.2, 7.1 and 7.3 (merge iteration, merge-box order, outline depth cap,
+  tree-visible counts, Cancelled banner → status-bar chip, empty-state and chooser
+  disclosures removed). `spec.md` still carries the old wording. These are settled
+  decisions, not open questions — the patch is the edit to `spec.md`, not a re-decision.
+- **The read-only guarantee and the scan-scope rule are stated nowhere in the UI.** A
+  consequence a human accepted knowingly when the empty-state disclosures and the
+  chooser's disabled ineligible rows were cut. Worth one look before 09 ships: a user
+  whose network volume is simply absent from the chooser gets no reason for it.
 
 ## Out of scope
 
