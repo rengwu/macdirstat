@@ -86,29 +86,42 @@ matrix recorded across macOS 11 through current.
   item with zero bytes**; and cloud gating applies to directories too, so a dataless folder
   is never listed. 26 new tests, 67 in `ScanCoreTests`.
 
+- [Production `FileManager` probe + real-filesystem proof](./tickets/05-production-filesystem-probe.md) —
+  the engine now runs on a real disk and is proven read-only there.
+  `FileManagerDirectoryProbe` (one batched `contentsOfDirectory` prefetch per directory,
+  hidden entries included, `lstat` fallback that leaves identity `nil` rather than risk
+  double-counting a hard link), `TemporaryFileSystemFixture` (sentinel-owned, four-part
+  refusal guard, permission restore), `FilesystemFingerprint`, and the §9.2 fixture —
+  sparse hidden file, three symlinks including an ancestor loop, `link(2)` pair plus an
+  out-of-scope third name, a real package, a 64-directory chain, a `chmod 000` directory,
+  and a `clonefile` clone where the host allows. **61 tests in `ScanCoreFileSystemTests`.**
+  The fingerprint has a positive control, so the read-only proof cannot pass vacuously.
+  Two findings: `startAccessingSecurityScopedResource()` answers **`true`** for every
+  ordinary local URL in an unsandboxed process here — the opposite of ticket 03's
+  observation, and why the return value cannot be an eligibility verdict in either
+  direction; and the vanished-file/vanished-directory asymmetry is now demonstrated on
+  real files rather than argued about.
+
 ## Not yet specified
 
 - **Compiler availability checking does not reject everything §4.4 assumes it does.** A
   `Canvas` in a `some View` body is a *warning*, not an error, and would crash on Big Sur.
   The `Scripts/check-post-bigsur-apis.sh` guard is load-bearing rather than a second
   opinion; §4.4 and §9.3 word it as though the compiler alone suffices.
-- **A refused security scope no longer fails pre-flight.** `startAccessingSecurityScopedResource()`
-  returns `false` for an ordinary non-security-scoped local URL, so the research asset's
-  rule (§2.1: refuse the root) would reject most real roots. Ticket 03's adapter reports
-  only whether a *stop* is owed, and an unreadable root fails through the probe instead.
-  Confirm this holds once entitlements are decided with the chooser in hand. <clears-with: 07>
+- **A security scope's verdict is environment-dependent, and never an eligibility one.**
+  Ticket 03 recorded `startAccessingSecurityScopedResource()` returning `false` for an
+  ordinary non-security-scoped local URL; ticket 05 measured `true` for every ordinary
+  local URL in an unsandboxed test process on macOS 27. Both readings kill the research
+  asset's rule (§2.1: refuse the root on `false`) — one because it would reject most real
+  roots, the other because it would accept everything. The adapter reports only whether a
+  *stop* is owed, and an unreadable root fails through the probe instead. What a
+  **sandboxed** app answers, for a URL from the panel and for one that never was, is still
+  unmeasured. <clears-with: 07>
 - **Deep trees have a teardown ceiling, not a traversal one.** Releasing a `ScanNode` chain
   is a recursive ARC teardown, so it is bounded by the releasing thread's stack — past
   ~1,000 levels on a 512 KB cooperative-pool thread. That is 15× the depth-64 stress shape
   and deeper than `PATH_MAX` permits, so it is a recorded bound rather than a fix; the
   scale suite should confirm the stress rung stays clear of it. <clears-with: 10>
-- **Only a vanished *directory* is detected as a disappearance.** An entry is described
-  entirely by its parent's listing and is never read a second time (§8.2), so a file that
-  disappears after that listing is still counted at the size the listing reported; only a
-  directory, whose listing is a second call, can fail with "no such file" and be recorded
-  as `.disappeared`. §3.5 already calls live change best-effort, so this is the honest
-  reading rather than a defect — but the real-filesystem suite is where it should be seen
-  happening rather than argued about. <clears-with: 05>
 - **Spec text lags the prototype.** Ticket 01's answer supersedes six clauses across
   §§6.1, 6.2, 7.1 and 7.3 (merge iteration, merge-box order, outline depth cap,
   tree-visible counts, Cancelled banner → status-bar chip, empty-state and chooser
