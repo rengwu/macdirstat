@@ -2,9 +2,9 @@ import XCTest
 @testable import ScanCore
 import ScanCoreTestSupport
 
-/// Entry-type semantics from spec §3.4 that ticket 03 owns: hidden entries are
-/// included, symlinks are visible, weightless and never followed. Hard links,
-/// clones and cloud placeholders are ticket 04's.
+/// Entry-type semantics from spec §3.4: hidden entries are included, symlinks
+/// are visible, weightless and never followed. Hard links, clones, packages and
+/// cloud placeholders live in `IdentityTests` and `ExclusionTests`.
 final class EntrySemanticsTests: XCTestCase {
     private let volumeA = FileSystemIdentity("volume-A")
 

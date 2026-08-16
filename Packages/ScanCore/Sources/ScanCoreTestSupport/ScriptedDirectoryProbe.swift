@@ -24,6 +24,8 @@ public struct ScriptedEntry {
         volume: FileSystemIdentity? = nil,
         isPackage: Bool = false,
         listFailure: Error? = nil,
+        isUbiquitousItem: Bool = false,
+        cloudStatus: CloudDownloadingStatus? = nil,
         children: [ScriptedEntry] = []
     ) -> ScriptedEntry {
         ScriptedEntry(
@@ -31,19 +33,31 @@ public struct ScriptedEntry {
                 name: name,
                 isDirectory: true,
                 isPackage: isPackage,
-                volumeIdentifier: volume
+                volumeIdentifier: volume,
+                isUbiquitousItem: isUbiquitousItem,
+                cloudDownloadingStatus: cloudStatus
             ),
             children: children,
             listFailure: listFailure
         )
     }
 
+    /// - Parameters:
+    ///   - linkCount/identity: the two facts hard-link dedup reads (spec §3.4).
+    ///     Scripting them is the only way to stage an inode reached by two
+    ///     names, a link count of 1 on colliding identities, or two clones that
+    ///     must *not* collide.
+    ///   - cloudStatus: `nil` models both an ordinary local file and the
+    ///     third-party provider whose materialization state cannot be read —
+    ///     the case that must degrade to "count what is there".
     public static func file(
         _ name: String,
         bytes: Int64?,
         volume: FileSystemIdentity? = nil,
         linkCount: Int? = nil,
-        identity: FileSystemIdentity? = nil
+        identity: FileSystemIdentity? = nil,
+        isUbiquitousItem: Bool = false,
+        cloudStatus: CloudDownloadingStatus? = nil
     ) -> ScriptedEntry {
         ScriptedEntry(meta: EntryMeta(
             name: name,
@@ -51,7 +65,9 @@ public struct ScriptedEntry {
             fileSize: bytes,
             linkCount: linkCount,
             fileIdentity: identity,
-            volumeIdentifier: volume
+            volumeIdentifier: volume,
+            isUbiquitousItem: isUbiquitousItem,
+            cloudDownloadingStatus: cloudStatus
         ))
     }
 

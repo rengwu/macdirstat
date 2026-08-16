@@ -73,6 +73,19 @@ matrix recorded across macOS 11 through current.
   `.bufferingNewest(1)` would drop `.started`. Cancellation is terminal but does not force
   Incomplete when the walk had in fact finished.
 
+- [ScanCore: identity, resilience & exclusion semantics](./tickets/04-scancore-semantics.md) —
+  the engine's measurement honesty, finished: `HardLinkIndex` (its own type, so the "only
+  multiply-linked inodes are indexed" memory claim is testable directly), `ScanDiagnostics`
+  with the capped `ErrorSummary`/`ExclusionSummary`, cloud-materialization gating, and
+  `ScanNode.initiallyPresentedChildren` — how "a package is measured through but presents
+  as one box" is expressed without putting UI policy in the engine. **Errors and exclusions
+  are different things**: an exclusion (boundary, remote-only placeholder) leaves ancestors
+  Complete and the result Exact, because nothing went wrong. Three judgment calls: an entry
+  whose size cannot be read **never enters the identity index** (owning an inode of unknown
+  length would zero out a later readable name); a deduplicated name still counts as **one
+  item with zero bytes**; and cloud gating applies to directories too, so a dataless folder
+  is never listed. 26 new tests, 67 in `ScanCoreTests`.
+
 ## Not yet specified
 
 - **Compiler availability checking does not reject everything §4.4 assumes it does.** A
@@ -89,6 +102,13 @@ matrix recorded across macOS 11 through current.
   ~1,000 levels on a 512 KB cooperative-pool thread. That is 15× the depth-64 stress shape
   and deeper than `PATH_MAX` permits, so it is a recorded bound rather than a fix; the
   scale suite should confirm the stress rung stays clear of it. <clears-with: 10>
+- **Only a vanished *directory* is detected as a disappearance.** An entry is described
+  entirely by its parent's listing and is never read a second time (§8.2), so a file that
+  disappears after that listing is still counted at the size the listing reported; only a
+  directory, whose listing is a second call, can fail with "no such file" and be recorded
+  as `.disappeared`. §3.5 already calls live change best-effort, so this is the honest
+  reading rather than a defect — but the real-filesystem suite is where it should be seen
+  happening rather than argued about. <clears-with: 05>
 - **Spec text lags the prototype.** Ticket 01's answer supersedes six clauses across
   §§6.1, 6.2, 7.1 and 7.3 (merge iteration, merge-box order, outline depth cap,
   tree-visible counts, Cancelled banner → status-bar chip, empty-state and chooser

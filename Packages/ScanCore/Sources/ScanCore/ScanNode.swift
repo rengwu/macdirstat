@@ -12,13 +12,19 @@ public enum NodeKind: Sendable, Equatable {
 
 /// How a node's bytes are attributed (spec §3.4).
 ///
-/// Ticket 03 attributes everything it measures as `.owned`; the hard-link and
-/// cloud cases are ticket 04's.
+/// There is no case for a remote-only cloud placeholder: those are **omitted**
+/// from the tree entirely and counted as exclusions instead, so no node ever
+/// carries that state (spec §3.4).
 public enum Attribution: Sendable, Equatable {
     /// This node owns the bytes it reports.
     case owned
     /// The same inode was already counted at another in-scope path. Zero
-    /// attributed bytes, still visible. Ticket 04.
+    /// attributed bytes, still visible, with the owning path so the UI can say
+    /// where the bytes went.
+    ///
+    /// `owner` is optional because the spec promises the owning path only
+    /// *when available*; this engine always has it, because the owner is a node
+    /// it is still holding.
     case hardLinkElsewhere(owner: [String]?)
 }
 
@@ -114,6 +120,18 @@ public final class ScanNode: @unchecked Sendable {
         kind == .directory || kind == .package
     }
 
+    /// The children a view shows before the user drills in.
+    ///
+    /// A package is **measured through** during the scan — its real children
+    /// are right here and its aggregate is already exact — but it presents as
+    /// one collapsed item and one treemap box until the user expands it
+    /// (spec §3.4). Materializing that hierarchy later is a presentation
+    /// change; because the bytes were counted at scan time, it cannot move the
+    /// aggregate.
+    public var initiallyPresentedChildren: [ScanNode] {
+        kind == .package ? [] : children
+    }
+
     // MARK: - Mutation (scan-side only, always on an open node)
 
     func appendChild(_ child: ScanNode) {
@@ -132,6 +150,12 @@ public final class ScanNode: @unchecked Sendable {
     func accumulate(bytes: Int64, files: Int64) {
         subtreeBytes += bytes
         fileCount += files
+    }
+
+    /// Records that this name's bytes were already counted at `owner`. The node
+    /// keeps its place in the tree and its zero attributed bytes (spec §3.4).
+    func markHardLinkElsewhere(owner: [String]?) {
+        attribution = .hardLinkElsewhere(owner: owner)
     }
 
     func markUnreadable() {

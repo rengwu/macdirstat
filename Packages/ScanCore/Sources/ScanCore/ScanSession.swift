@@ -35,9 +35,12 @@ final class ScanSession {
     private var rootVolume: FileSystemIdentity?
     private var volumeCapacity: VolumeCapacity?
 
+    /// Populated at pre-flight, once the volume's hard-link support is known.
+    private var hardLinks = HardLinkIndex(isEnabled: false)
+    private var diagnostics: ScanDiagnostics
+
     private var filesSeen: Int64 = 0
     private var directoriesSeen: Int64 = 0
-    private var unreadableEntries: Int = 0
     private var currentPathTail: String = ""
 
     private var startedAt: TimeInterval = 0
@@ -61,6 +64,7 @@ final class ScanSession {
         self.probe = request.probe
         self.clock = request.options.clock
         self.batchSize = request.options.cancellationBatchSize
+        self.diagnostics = ScanDiagnostics(detailLimit: request.options.maxDetailedErrors)
         self.root = ScanNode(name: request.root.lastPathComponent, kind: .directory, parent: nil)
     }
 
@@ -104,6 +108,8 @@ final class ScanSession {
             reason: (stoppedEarly || isCancellationRequested) ? .cancelled : .completed,
             root: root,
             completeness: completeness(stoppedEarly: stoppedEarly),
+            errors: diagnostics.errors,
+            exclusions: diagnostics.exclusions,
             volumeCapacity: volumeCapacity,
             elapsed: max(0, clock.now - startedAt)
         )))
@@ -128,18 +134,18 @@ final class ScanSession {
         }
 
         rootVolume = meta.volumeIdentifier
+        // Capacity and free space are volume facts carried alongside the tree,
+        // never folded into an attributed byte count (spec §3.5).
         volumeCapacity = request.mode == .volumeRoot ? info.capacity : nil
+        // Where the volume cannot hold a hard link, the identity index and its
+        // per-entry bookkeeping are skipped entirely (spec §3.4).
+        hardLinks = HardLinkIndex(isEnabled: info.supportsHardLinks)
         directoriesSeen = 1
     }
 
     private static func preflightFailure(for error: Error, url: URL) -> ScanFailure {
         if let failure = error as? ScanFailure { return failure }
-        let nsError = error as NSError
-        let missing =
-            (nsError.domain == NSCocoaErrorDomain
-                && (nsError.code == NSFileNoSuchFileError || nsError.code == NSFileReadNoSuchFileError))
-            || (nsError.domain == NSPOSIXErrorDomain && nsError.code == Int(ENOENT))
-        return missing ? .rootMissing(url) : .rootAccessDenied(url)
+        return isMissing(error) ? .rootMissing(url) : .rootAccessDenied(url)
     }
 
     // MARK: - Traversal
@@ -171,8 +177,15 @@ final class ScanSession {
                     emitIfDue()
                 } catch {
                     // A directory we cannot read is a recoverable problem, not
-                    // a failed scan: mark it, mark its ancestors, carry on.
-                    recordUnreadable(stack[top].node)
+                    // a failed scan: mark it, mark its ancestors, carry on. An
+                    // entry that was listed with its parent and is gone by the
+                    // time we descend is live change, not a permission
+                    // problem — the two are counted apart (spec §3.5).
+                    recordUnreadable(
+                        stack[top].node,
+                        category: Self.isMissing(error) ? .disappeared : .unreadableDirectory,
+                        error: error
+                    )
                     stack[top].node.freeze()
                     stack.removeLast()
                     treeDirty = true
@@ -186,6 +199,19 @@ final class ScanSession {
                 let meta = stack[top].entries[stack[top].cursor]
                 stack[top].cursor += 1
                 entriesSinceCancellationCheck += 1
+
+                if meta.cloudDownloadingStatus == .notDownloaded {
+                    // A remote-only placeholder: omitted from the tree, counted
+                    // as an exclusion, and never touched again — reading or
+                    // listing it is what would start a download (spec §3.4).
+                    diagnostics.exclude(.remoteOnlyCloud)
+                    if batchCheckpointRequestsStop() {
+                        stopAtCancellation(stack)
+                        return true
+                    }
+                    throttledEmit()
+                    continue
+                }
 
                 let kind = Self.kind(of: meta)
                 let node = ScanNode(name: meta.name, kind: kind, parent: stack[top].node)
@@ -206,20 +232,18 @@ final class ScanSession {
                         break
                     }
                     // A different volume: the entry stays visible, but nothing
-                    // beneath it is ever listed (spec §3.3, §5.4).
+                    // beneath it is ever listed (spec §3.3, §5.4). Nothing went
+                    // wrong — a policy skipped it — so it is an exclusion, not
+                    // an error, and its ancestors stay Complete.
+                    diagnostics.exclude(.crossedVolumeBoundary)
                     node.freeze()
                 } else {
                     attribute(node, meta)
                 }
 
-                // Checkpoint B — after every batch of entries, so one enormous
-                // directory is no less cancellable than a deep one.
-                if entriesSinceCancellationCheck >= batchSize {
-                    entriesSinceCancellationCheck = 0
-                    if isCancellationRequested {
-                        stopAtCancellation(stack)
-                        return true
-                    }
+                if batchCheckpointRequestsStop() {
+                    stopAtCancellation(stack)
+                    return true
                 }
                 throttledEmit()
             }
@@ -255,9 +279,20 @@ final class ScanSession {
         if isRegularFile {
             if let size = meta.fileSize {
                 bytes = max(0, size)
+                if case .duplicate(let owner) = hardLinks.claim(meta, for: node) {
+                    // Another in-scope name reached this inode first and
+                    // already counted its bytes. This name stays visible and
+                    // weightless, with the owner's path so the UI can say
+                    // where the bytes went (spec §3.4).
+                    bytes = 0
+                    node.markHardLinkElsewhere(owner: owner.pathComponents())
+                }
             } else {
-                // A size we could not read is never guessed (spec §3.5).
-                recordUnreadable(node)
+                // A size we could not read is never guessed (spec §3.5) — and
+                // an entry with no size never enters the identity index, since
+                // owning an inode whose length is unknown would zero out a
+                // later name that *could* be read.
+                recordUnreadable(node, category: .unreadableEntry, error: nil)
             }
         }
 
@@ -266,7 +301,8 @@ final class ScanSession {
 
         guard bytes > 0 || isRegularFile else { return }
         // Roll up to every ancestor, so each open directory's total is live at
-        // every instant (spec §3.1).
+        // every instant (spec §3.1). A deduplicated name rolls up zero bytes —
+        // it is still one entry, just not a second copy of the bytes.
         var ancestor = node.parent
         while let current = ancestor {
             current.accumulate(bytes: bytes, files: isRegularFile ? 1 : 0)
@@ -274,14 +310,32 @@ final class ScanSession {
         }
     }
 
-    private func recordUnreadable(_ node: ScanNode) {
+    private func recordUnreadable(_ node: ScanNode, category: ErrorCategory, error: Error?) {
         node.markUnreadable()
-        unreadableEntries += 1
+        diagnostics.recordError(category, at: node, message: Self.message(for: category, error: error))
         var ancestor = node.parent
         while let current = ancestor {
             current.markIncomplete()
             ancestor = current.parent
         }
+    }
+
+    private static func message(for category: ErrorCategory, error: Error?) -> String {
+        if let error = error { return (error as NSError).localizedDescription }
+        switch category {
+        case .unreadableDirectory: return "The contents of this folder could not be read."
+        case .unreadableEntry: return "The size of this item could not be read."
+        case .disappeared: return "This item was no longer there when the scan reached it."
+        }
+    }
+
+    /// Whether an error means "it is not there", as opposed to "it cannot be
+    /// read" — the difference between live change and a permission problem.
+    private static func isMissing(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        return (nsError.domain == NSCocoaErrorDomain
+                && (nsError.code == NSFileNoSuchFileError || nsError.code == NSFileReadNoSuchFileError))
+            || (nsError.domain == NSPOSIXErrorDomain && nsError.code == Int(ENOENT))
     }
 
     private static func kind(of meta: EntryMeta) -> NodeKind {
@@ -305,6 +359,14 @@ final class ScanSession {
 
     private var isCancellationRequested: Bool {
         token.isCancelled || Task.isCancelled
+    }
+
+    /// Checkpoint B — reached after every batch of entries, so one enormous
+    /// directory is no less cancellable than a deep one (spec §5.6).
+    private func batchCheckpointRequestsStop() -> Bool {
+        guard entriesSinceCancellationCheck >= batchSize else { return false }
+        entriesSinceCancellationCheck = 0
+        return isCancellationRequested
     }
 
     private var emitsOnEveryChange: Bool {
@@ -387,9 +449,13 @@ final class ScanSession {
         )
     }
 
+    /// Exclusions deliberately do not appear here: nothing went wrong, so a
+    /// tree that skipped a boundary or a remote-only placeholder is still
+    /// Exact (spec §3.5).
     private func completeness(stoppedEarly: Bool) -> Completeness {
-        if stoppedEarly || unreadableEntries > 0 {
-            return .incomplete(cancelled: stoppedEarly, unreadableEntries: unreadableEntries)
+        let unreadable = diagnostics.unreadableEntries
+        if stoppedEarly || unreadable > 0 {
+            return .incomplete(cancelled: stoppedEarly, unreadableEntries: unreadable)
         }
         return .exact
     }

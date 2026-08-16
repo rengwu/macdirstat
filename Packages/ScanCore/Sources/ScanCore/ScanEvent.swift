@@ -89,6 +89,11 @@ public struct ScanResult: Sendable {
     /// reason (spec §3.5).
     public let root: ScanNode
     public let completeness: Completeness
+    /// What could not be read: exact totals, bounded detail (spec §5.7).
+    public let errors: ErrorSummary
+    /// What was skipped on purpose, counted by reason (spec §3.4, §3.5). Not
+    /// errors — the tree is still Exact.
+    public let exclusions: ExclusionSummary
     /// Volume scans only, reported separately from any attributed byte count.
     public let volumeCapacity: VolumeCapacity?
     public let elapsed: TimeInterval
@@ -97,12 +102,16 @@ public struct ScanResult: Sendable {
         reason: Reason,
         root: ScanNode,
         completeness: Completeness,
+        errors: ErrorSummary = .empty,
+        exclusions: ExclusionSummary = .empty,
         volumeCapacity: VolumeCapacity?,
         elapsed: TimeInterval
     ) {
         self.reason = reason
         self.root = root
         self.completeness = completeness
+        self.errors = errors
+        self.exclusions = exclusions
         self.volumeCapacity = volumeCapacity
         self.elapsed = elapsed
     }

@@ -51,17 +51,23 @@ public struct ScanOptions: Sendable {
     /// inside one directory — a worst-case operation bound independent of tree
     /// size, not a millisecond SLA (spec §5.6).
     public var cancellationBatchSize: Int
+    /// How many per-entry error records to retain before keeping only the exact
+    /// running total (spec §5.7). The category counts stay exact either way —
+    /// this bounds memory, not honesty.
+    public var maxDetailedErrors: Int
     public var clock: ScanClock
 
     public init(
         progressCadence: EmissionCadence = .progressDefault,
         treeCadence: EmissionCadence = .treeDefault,
         cancellationBatchSize: Int = 256,
+        maxDetailedErrors: Int = 1_000,
         clock: ScanClock = MonotonicClock()
     ) {
         self.progressCadence = progressCadence
         self.treeCadence = treeCadence
         self.cancellationBatchSize = max(1, cancellationBatchSize)
+        self.maxDetailedErrors = max(0, maxDetailedErrors)
         self.clock = clock
     }
 }

@@ -36,9 +36,10 @@ public struct FileSystemIdentity: Hashable, @unchecked Sendable {
 /// The materialization state of a cloud / file-provider item
 /// (`URLResourceKey.ubiquitousItemDownloadingStatusKey`).
 ///
-/// Ticket 03 carries the field so the probe seam mirrors the full prefetch key
-/// set; the attribution rules that read it (omit remote-only items, count them
-/// as exclusions, never trigger a download) land in ticket 04.
+/// The engine counts an item only when it is already materialized locally.
+/// A `.notDownloaded` placeholder is omitted from the tree and counted as an
+/// exclusion, and nothing about it is ever read again — reading is what would
+/// start a download (spec §3.4).
 public enum CloudDownloadingStatus: Sendable, Equatable {
     case notDownloaded
     case downloaded
@@ -67,15 +68,15 @@ public struct EntryMeta: Sendable, Equatable {
     /// `fileSizeKey` — the logical content length, the engine's one measure.
     /// `nil` means unreadable; it is never replaced with an estimate.
     public var fileSize: Int64?
-    /// `linkCountKey`. Read by ticket 04's hard-link dedup; `1` cannot be a
-    /// hard link.
+    /// `linkCountKey`. Only `> 1` enters the hard-link identity index; `1`
+    /// cannot be a hard link (spec §3.4).
     public var linkCount: Int?
-    /// `fileResourceIdentifierKey`. Read by ticket 04's hard-link dedup.
+    /// `fileResourceIdentifierKey` — the hard-link identity (spec §3.4).
     public var fileIdentity: FileSystemIdentity?
     /// `volumeIdentifierKey` — the device-boundary check (spec §3.3, §5.4).
     public var volumeIdentifier: FileSystemIdentity?
     public var isUbiquitousItem: Bool
-    /// Read by ticket 04's cloud-materialization rule.
+    /// The cloud-materialization gate (spec §3.4).
     public var cloudDownloadingStatus: CloudDownloadingStatus?
 
     public init(
@@ -110,8 +111,8 @@ public struct VolumeInfo: Sendable, Equatable {
     /// `volumeIsLocalKey`. `false` means network-mounted, which is an
     /// ineligible root (spec §3.3).
     public var isLocal: Bool
-    /// `volumeSupportsHardLinksKey`. When `false`, ticket 04 skips the
-    /// hard-link identity index entirely.
+    /// `volumeSupportsHardLinksKey`. When `false`, the hard-link identity
+    /// index is skipped entirely — no dedup is possible (spec §3.4).
     public var supportsHardLinks: Bool
     /// Capacity/free for a whole-volume scan. Reported **separately** and
     /// never turned into an attributed node byte count (spec §3.5).
