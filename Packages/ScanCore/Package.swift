@@ -16,11 +16,17 @@ let package = Package(
         // import list.
         .target(name: "ScanCore"),
 
+        // The scripted probe, the virtual clock and the security-scope spy
+        // (spec §9.2). A target rather than test-target sources, so every
+        // suite shares one set of doubles and the shipping library carries
+        // none of them. No product: nothing outside this package links it.
+        .target(name: "ScanCoreTestSupport", dependencies: ["ScanCore"]),
+
         // Pure scanner: fake DirectoryProbe, virtual clock, event/state,
         // aggregation, errors, cancellation (spec §9.1).
-        .testTarget(name: "ScanCoreTests", dependencies: ["ScanCore"]),
+        .testTarget(name: "ScanCoreTests", dependencies: ["ScanCore", "ScanCoreTestSupport"]),
 
         // Production FileManager probe against a small temporary tree (spec §9.1).
-        .testTarget(name: "ScanCoreFileSystemTests", dependencies: ["ScanCore"]),
+        .testTarget(name: "ScanCoreFileSystemTests", dependencies: ["ScanCore", "ScanCoreTestSupport"]),
     ]
 )

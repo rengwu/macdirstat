@@ -55,9 +55,23 @@ matrix recorded across macOS 11 through current.
   three self-tested guards in `Scripts/` wired into the app build. Thread Sanitizer is a
   **second plan** (`CI-ThreadSanitizer`) on the CI scheme, so `-testPlan CI` stays the
   documented one-command gate. **No sandbox entitlements** — deferred to 07 with the
-  chooser in hand. The scaffold was authored on a machine without Xcode, so the
-  `.xcodeproj` is structurally checked but never built; `Scripts/verify-scaffold.sh` must
-  reach exit 0 on a machine with Xcode.
+  chooser in hand. Closed on Xcode 26.6: all four documented commands run green and
+  `Scripts/verify-scaffold.sh` exits 0, after fixing a `Performance.xctestplan`
+  `loggingType` value Xcode rejects and adding a twelfth step that runs the other three
+  plans.
+
+- [ScanCore: core traversal + event/state + cancellation](./tickets/03-scancore-core-traversal.md) —
+  the headless heart: the `DirectoryProbe` seam (three read-only requirements, held that
+  way by a test over its own source), `ScriptedDirectoryProbe`/`VirtualClock`/access spy in
+  a new `ScanCoreTestSupport` target, and `actor Scanner` over a serial iterative DFS with
+  frozen structurally-shared snapshots. Four deliberate departures from the research asset:
+  the within-directory sort is **locale-independent** (a localized one is not
+  deterministic across machines — **ticket 04's hard-link owner depends on this**);
+  `elapsed` is `TimeInterval` and `ScanClock` is ours, because `Duration`/`Clock` are macOS
+  13+; a refused security scope is no longer an eligibility verdict; and buffering-newest
+  lives in the sink as per-kind slots over `AsyncStream(unfolding:)`, because
+  `.bufferingNewest(1)` would drop `.started`. Cancellation is terminal but does not force
+  Incomplete when the walk had in fact finished.
 
 ## Not yet specified
 
@@ -65,10 +79,16 @@ matrix recorded across macOS 11 through current.
   `Canvas` in a `some View` body is a *warning*, not an error, and would crash on Big Sur.
   The `Scripts/check-post-bigsur-apis.sh` guard is load-bearing rather than a second
   opinion; §4.4 and §9.3 word it as though the compiler alone suffices.
-- **The scaffold's Xcode-dependent gates are unrun.** Both package `swift test`s, the
-  `MacDirStat-CI` action and the universal Release build have never executed — the
-  authoring machine had the Command Line Tools only. First Xcode-equipped session should
-  run `Scripts/verify-scaffold.sh` and treat any project repair as finishing ticket 02.
+- **A refused security scope no longer fails pre-flight.** `startAccessingSecurityScopedResource()`
+  returns `false` for an ordinary non-security-scoped local URL, so the research asset's
+  rule (§2.1: refuse the root) would reject most real roots. Ticket 03's adapter reports
+  only whether a *stop* is owed, and an unreadable root fails through the probe instead.
+  Confirm this holds once entitlements are decided with the chooser in hand. <clears-with: 07>
+- **Deep trees have a teardown ceiling, not a traversal one.** Releasing a `ScanNode` chain
+  is a recursive ARC teardown, so it is bounded by the releasing thread's stack — past
+  ~1,000 levels on a 512 KB cooperative-pool thread. That is 15× the depth-64 stress shape
+  and deeper than `PATH_MAX` permits, so it is a recorded bound rather than a fix; the
+  scale suite should confirm the stress rung stays clear of it. <clears-with: 10>
 - **Spec text lags the prototype.** Ticket 01's answer supersedes six clauses across
   §§6.1, 6.2, 7.1 and 7.3 (merge iteration, merge-box order, outline depth cap,
   tree-visible counts, Cancelled banner → status-bar chip, empty-state and chooser
