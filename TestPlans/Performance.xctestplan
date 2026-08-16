@@ -14,9 +14,6 @@
     },
     "mainThreadCheckerEnabled" : false,
     "mallocScribbleEnabled" : false,
-    "mallocStackLoggingOptions" : {
-      "loggingType" : "none"
-    },
     "nsZombieEnabled" : false,
     "targetForVariableExpansion" : {
       "containerPath" : "container:MacDirStat.xcodeproj",

@@ -59,6 +59,25 @@ parse_test_sources() {
 	swiftc -target "$(uname -m)-apple-macos11.0" -module-name ParseCheck -parse "${sources[@]}"
 }
 
+run_other_test_plans() {
+	# The documented gate names one plan, CI. The other three are just as
+	# hand-authored, and a plan Xcode cannot read fails at the *scheme*, not in
+	# any check that reads the file as JSON — `Performance` shipped from ticket
+	# 02 with a `loggingType` Xcode rejects and no local step noticed. So run
+	# each of them once too.
+	local status=0 pair
+	set -- \
+		"MacDirStat-CI:CI-ThreadSanitizer" \
+		"MacDirStat-Performance:Performance" \
+		"MacDirStat-CompatibilitySmoke:CompatibilitySmoke"
+	for pair in "$@"; do
+		printf '\n-- scheme %s, plan %s\n' "${pair%%:*}" "${pair##*:}"
+		xcodebuild test -project MacDirStat.xcodeproj -scheme "${pair%%:*}" \
+			-testPlan "${pair##*:}" -destination 'platform=macOS' || status=1
+	done
+	return $status
+}
+
 typecheck_app_sources() {
 	local status=0 arch
 	for arch in arm64 x86_64; do
@@ -107,10 +126,13 @@ if have_xcode; then
 		xcodebuild build -project MacDirStat.xcodeproj -scheme MacDirStat \
 		-configuration Release -destination 'generic/platform=macOS' \
 		ARCHS='arm64 x86_64' ONLY_ACTIVE_ARCH=NO MACOSX_DEPLOYMENT_TARGET=11.0
+	run_step "The other three test plans run" run_other_test_plans
 else
 	skip_step "xcodebuild test -scheme MacDirStat-CI -testPlan CI" \
 		"no xcodebuild — this machine has the Command Line Tools only"
 	skip_step "xcodebuild build -scheme MacDirStat -configuration Release (universal)" \
+		"no xcodebuild — this machine has the Command Line Tools only"
+	skip_step "The other three test plans run" \
 		"no xcodebuild — this machine has the Command Line Tools only"
 fi
 

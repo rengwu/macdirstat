@@ -53,8 +53,8 @@ Build:
 The skeleton is standing: `MacDirStat.xcodeproj` with the app target and three test
 targets, `Packages/ScanCore` and `Packages/TreemapLayout` with the other three, four
 shared schemes, four test plans, and three build-time guards that all have self-tests.
-Everything this machine can run passes; three of the four documented commands could not
-run here at all, which is the one thing a human has to close.
+All four documented commands run green on Xcode 26.6, and `Scripts/verify-scaffold.sh`
+exits 0 — see "Closed on a machine with Xcode" below for the one defect that surfaced.
 
 **What was built**
 
@@ -86,18 +86,32 @@ run here at all, which is the one thing a human has to close.
   `Scripts/tests/` — 9, 7 and 18 cases — so a guard that stops guarding fails loudly.
   `Scripts/verify-scaffold.sh` runs the lot and exits 2, not 0, when a step is skipped.
 
-**What could not be verified here, and why**
+**Closed on a machine with Xcode (Xcode 26.6, 2026-08-16)**
 
-This machine has the Command Line Tools only — no Xcode. That means no `xcodebuild` and
-no XCTest framework, so **three of the four documented commands never ran**: both package
-`swift test`s, the `MacDirStat-CI` test action, and the universal Release build. The
-`.xcodeproj` was therefore hand-authored and is unproven as a *build*: `plutil` accepts
-it, every object reference and file path resolves, and the integrity self-tests confirm
-the checker catches dangling references, a raised floor, a single-architecture setting,
-Mac Catalyst, a storyboard lifecycle, a source dropped from the compile phase, a scheme
-pointing at a missing target, and every test-plan drift — but only Xcode can prove it
-compiles. **The next person with Xcode should run `Scripts/verify-scaffold.sh` and expect
-exit 0; treat any pbxproj repair as finishing this ticket, not as new work.**
+The ticket originally shipped from a machine with the Command Line Tools only, so three of
+the four documented commands had never run and the hand-authored `.xcodeproj` was unproven
+as a *build*. All of it has now been run. `Scripts/verify-scaffold.sh` exits **0**: both
+package `swift test`s, `MacDirStat-CI -testPlan CI`, and the universal Release build all
+pass, and the Release binary carries both slices at `minos 11.0`. **The pbxproj needed no
+repair** — it built first try, which is the part that was most at risk.
+
+One real defect surfaced, in the one place the gate was not looking. `Performance.xctestplan`
+set `mallocStackLoggingOptions.loggingType` to `"none"`; that is not a value Xcode accepts
+(the enum is `all` / `liveAllocationsOnly`, and *off* is the key's absence). Xcode rejects
+the whole plan — `the test plan "Performance" could not be read` — so the entire
+performance scheme was dead on arrival. Every existing check passed anyway, because the
+file is valid JSON with the right targets and the right sanitizer flags; only Xcode reading
+it for real can catch a bad enum value. Fixed by dropping the key, which is how Xcode itself
+encodes "off", preserving the plan's intent.
+
+The gate had a matching hole: it ran the `CI` plan and no other, so the three remaining
+plans were never proven to so much as parse. `verify-scaffold.sh` now has a twelfth step
+that runs `CI-ThreadSanitizer`, `Performance` and `CompatibilitySmoke` once each. Verified
+as a guard, not just as a step: with the bad `loggingType` reinstated the new step FAILs and
+the script exits 1 while all eleven older steps still report PASS.
+
+All four schemes and all four plans are now green (the compatibility-smoke plan runs its
+launch check and skips its six pending ones, per tickets 07–09).
 
 What *was* proven about the app itself, without Xcode: the sources typecheck for `arm64`
 and `x86_64` at the 11.0 floor; hand-linked into a universal bundle from the same sources
