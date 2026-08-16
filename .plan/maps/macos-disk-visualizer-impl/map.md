@@ -34,6 +34,12 @@ matrix recorded across macOS 11 through current.
   (fixture fingerprint, no-write-method, action spies).
 - Prefer Apple primary documentation for platform and API facts, consistent with the
   spec's cited findings.
+- **Tickets 12–15 come from the first real whole-volume run** (2026-08-17, `/` on an M1 Pro,
+  a Debug build). Four defects the suites could not have caught, because every fixture and
+  every rung is a tree the tests built themselves: a scan of `/` counts the disk twice, the
+  logical measure is indefensible on sparse VM images, the treemap's layout pre-pass blocks
+  the main thread, and the directory sort normalizes Unicode on every comparison. Run the
+  app against a real volume before claiming a scale ticket is done.
 
 ## Decisions so far
 
@@ -145,7 +151,27 @@ matrix recorded across macOS 11 through current.
   positive-byte node on every layout. The scan's autorelease fix does not move that
   number, so 4 Hz is unaffordable at two million nodes for an independent reason. The
   options — keep the throttle, prune sub-pixel nodes before layout, or cache the draw list
-  — are a decision, not a measurement.
+  — are a decision, not a measurement. The field run showed the throttle only changes how
+  often the app freezes, not whether it does: the pre-pass runs on the main thread.
+  <clears-with: 14>
+- **A scan of `/` counts the whole disk twice, and nothing in the suite could have caught
+  it.** macOS reports one device identity for the system and data volumes, so the
+  volume-boundary check descends into `/System/Volumes/Data` and re-walks every firmlinked
+  directory. Totals, node counts, wall-clock and footprint all double. Every fixture and
+  every performance rung is a tree the tests built, so none of them contains a graft.
+  <clears-with: 12>
+- **The single logical measure is indefensible on sparse files, and the progress fraction
+  is dimensionally wrong.** A 1 TiB `Docker.raw` occupying 34.6 GiB is the normal case on a
+  developer's machine. Whether the engine carries logical bytes, allocated bytes or both is
+  a product decision that reaches back into ticket 04's semantics and into `spec.md`; the
+  "About N% of used space" bar divides logical bytes by real used space and pegs at 100%
+  long before a scan ends. <clears-with: 13>
+- **The within-directory sort orders by Unicode canonical equivalence.** `String <`
+  normalizes both operands on every comparison, paid `k log k` times across ~1.4 M
+  directories. `PreparedTree.precedes` already avoids it deliberately and says why; the
+  scanner did not. The order decides hard-link ownership, so a cheaper comparator has to
+  keep ticket 03's cross-machine determinism — and the cost should be measured before it is
+  changed. <clears-with: 15>
 - **Spec text lags the prototype.** Ticket 01's answer supersedes six clauses across
   §§6.1, 6.2, 7.1 and 7.3 (merge iteration, merge-box order, outline depth cap,
   tree-visible counts, Cancelled banner → status-bar chip, empty-state and chooser
