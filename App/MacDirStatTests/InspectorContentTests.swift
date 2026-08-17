@@ -162,6 +162,70 @@ final class InspectorContentTests: XCTestCase {
         XCTAssertEqual(builder.content(for: .node(hidden), in: context(fixture)).subtitle, "Code · Hidden")
     }
 
+    // MARK: - The scan itself
+
+    func test_theScanSummaryNamesTheFoldersThatCouldNotBeRead() async throws {
+        let fixture = try await ScannedFixture.make(in: self) { root in
+            let locked = try makeDirectory("locked", in: root)
+            try writeFile("hidden.bin", bytes: 64, in: locked)
+            try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: locked.path)
+        }
+        let result = try XCTUnwrap(fixture.model.result)
+        try XCTSkipIf(result.errors.isEmpty, "this host let the scan read a chmod-000 directory")
+
+        let summary = try XCTUnwrap(builder.scanSummary(result: result, in: context(fixture)))
+
+        XCTAssertEqual(summary.subtitle, "Completed with errors")
+        XCTAssertTrue(summary.rows.contains(.init(label: "Folders not readable", value: "1")))
+        XCTAssertTrue(
+            summary.sampleNames.contains { $0.hasSuffix("/locked") },
+            "the path is the point: a count says how wrong the total might be, a path says whether it matters"
+        )
+        XCTAssertTrue(summary.notes.contains { $0.severity == .error })
+        XCTAssertFalse(summary.showsActions, "the scan is not a file")
+    }
+
+    func test_aScanThatReadEverythingSaysNothing() async throws {
+        let fixture = try await ScannedFixture.make(in: self) { root in
+            try writeFile("plain.bin", bytes: 100, in: root)
+        }
+        let result = try XCTUnwrap(fixture.model.result)
+
+        XCTAssertNil(
+            builder.scanSummary(result: result, in: context(fixture)),
+            "an all-clear nobody asked for would push the placeholder off the pane for nothing"
+        )
+    }
+
+    func test_theInspectorShowsTheScanSummaryWhileNothingIsSelected() async throws {
+        let fixture = try await ScannedFixture.make(in: self) { root in
+            let locked = try makeDirectory("locked", in: root)
+            try writeFile("hidden.bin", bytes: 64, in: locked)
+            try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: locked.path)
+        }
+        try XCTSkipIf(
+            fixture.model.result?.errors.isEmpty != false,
+            "this host let the scan read a chmod-000 directory"
+        )
+        let (workspace, _, _) = fixture.makeWorkspace()
+        // The harness builds the workspace from an already-finished scan, so
+        // the terminal event that drives the panes in the app has to be
+        // replayed here. `onChange` is the controller's own, set in its init.
+        fixture.model.onChange?()
+
+        XCTAssertEqual(
+            workspace.inspectorViewController.content?.subtitle,
+            "Completed with errors",
+            "the state a window is in the moment a scan finishes"
+        )
+
+        workspace.selectionModel.select(.node(try fixture.node(named: "locked")), source: .tree)
+        XCTAssertEqual(workspace.inspectorViewController.content?.title, "locked")
+
+        workspace.selectionModel.clear()
+        XCTAssertEqual(workspace.inspectorViewController.content?.subtitle, "Completed with errors")
+    }
+
     // MARK: - The aggregate
 
     func test_anAggregateDescribesTheBucketAndOffersNoFileActions() async throws {

@@ -206,6 +206,114 @@ struct InspectorContentBuilder {
         )
     }
 
+    // MARK: - The scan itself
+
+    /// What the finished scan could not read, and what it skipped on purpose —
+    /// shown in the inspector while nothing is selected, which is the state the
+    /// window is in the moment a scan finishes.
+    ///
+    /// The status bar already carries the counts. This is where they get names:
+    /// a user who reads "261 errors" and cannot find out *which* folders has
+    /// been told the total is a lower bound and given no way to judge by how
+    /// much.
+    ///
+    /// `nil` when there is nothing to report — a completed scan that read
+    /// everything leaves the pane's "select an item" placeholder alone rather
+    /// than pushing an all-clear nobody asked for.
+    func scanSummary(result: ScanResult, in context: SelectionContext) -> InspectorContent? {
+        let wasCancelled = result.reason == .cancelled
+        guard wasCancelled || !result.errors.isEmpty || !result.exclusions.isEmpty else { return nil }
+
+        var rows: [InspectorContent.Row] = []
+        for category in ErrorCategory.allCases {
+            guard let count = result.errors.byCategory[category], count > 0 else { continue }
+            rows.append(.init(label: Self.label(for: category), value: formatter.count(Int64(count))))
+        }
+        for reason in ExclusionReason.allCases {
+            guard let count = result.exclusions.byReason[reason], count > 0 else { continue }
+            rows.append(.init(label: Self.label(for: reason), value: formatter.count(Int64(count))))
+        }
+
+        var notes: [InspectorContent.Note] = []
+        if wasCancelled {
+            notes.append(
+                .init(
+                    severity: .warning,
+                    glyph: "◼",
+                    title: "Scan cancelled.",
+                    detail: """
+                        Everything found before you stopped it is here and browsable. Every \
+                        total is a lower bound.
+                        """
+                )
+            )
+        }
+        if !result.errors.isEmpty {
+            notes.append(
+                .init(
+                    severity: .error,
+                    glyph: "⚠",
+                    title: "\(formatter.count(Int64(result.errors.total))) could not be read.",
+                    detail: """
+                        Their sizes are never guessed, and every folder above them is marked \
+                        Incomplete — so those totals are lower bounds, not figures.
+                        """
+                )
+            )
+        }
+        if !result.exclusions.isEmpty {
+            notes.append(
+                .init(
+                    severity: .info,
+                    glyph: "◇",
+                    title: "\(formatter.count(Int64(result.exclusions.total))) skipped on purpose.",
+                    detail: """
+                        Nothing went wrong: these were left uncounted by policy, so they do not \
+                        make any total a lower bound.
+                        """
+                )
+            )
+        }
+
+        // The paths, which are the whole point: a count says how wrong the
+        // total might be, a path says whether it matters to you.
+        let samples = result.errors.details.prefix(5).map { absolutePath(components: $0.path, in: context) }
+
+        return InspectorContent(
+            swatch: .directory,
+            title: context.rootNode.name,
+            subtitle: wasCancelled ? "Cancelled scan" : (result.errors.isEmpty ? "Completed scan" : "Completed with errors"),
+            sizeText: formatter.bytes(context.rootNode.subtreeDiskBytes),
+            sizeCaption: wasCancelled || !result.errors.isEmpty ? "counted so far" : "total on disk",
+            exactBytesText: formatter.exactBytes(context.rootNode.subtreeDiskBytes),
+            rows: rows,
+            path: nil,
+            notes: notes,
+            sampleNames: samples,
+            additionalSampleCount: max(0, result.errors.total - samples.count),
+            showsActions: false,
+            footnote: result.errors.isEmpty
+                ? nil
+                : "Select any folder marked Incomplete to see what is missing beneath it."
+        )
+    }
+
+    private static func label(for category: ErrorCategory) -> String {
+        switch category {
+        case .unreadableDirectory: return "Folders not readable"
+        case .unreadableEntry: return "Items not readable"
+        case .disappeared: return "Vanished during the scan"
+        }
+    }
+
+    private static func label(for reason: ExclusionReason) -> String {
+        switch reason {
+        case .remoteOnlyCloud: return "Cloud-only, not downloaded"
+        case .crossedVolumeBoundary: return "On another volume"
+        case .repeatedDirectory: return "Already counted elsewhere"
+        }
+    }
+
     // MARK: - Tooltip (spec §6.3)
 
     /// Name, IEC size **and** exact grouped bytes, full path, the ticket-01

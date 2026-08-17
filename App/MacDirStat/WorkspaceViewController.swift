@@ -948,8 +948,17 @@ final class WorkspaceSplitViewController: NSSplitViewController, FileActionRespo
     }
 
     private func refreshInspector() {
-        guard let selection = selectionModel.selection, let context = selectionContext else {
+        guard let context = selectionContext else {
             inspectorViewController.content = nil
+            return
+        }
+        guard let selection = selectionModel.selection else {
+            // Nothing selected — the state the window is in the moment a scan
+            // finishes. If that scan left anything unread or skipped, this is
+            // where the status bar's counts get their names.
+            inspectorViewController.content = model.result.flatMap {
+                contentBuilder.scanSummary(result: $0, in: context)
+            }
             return
         }
         inspectorViewController.content = contentBuilder.content(for: selection, in: context)
