@@ -78,6 +78,20 @@ public final class ScanNode: @unchecked Sendable {
     public private(set) var subtreeBytes: Int64
     /// Regular files in this subtree, `1` for a regular file itself.
     public private(set) var fileCount: Int64
+    /// This entry and every descendant whose subtree carries attributed bytes.
+    ///
+    /// Rolled up on the same walk as `subtreeBytes`, for one reason: it is the
+    /// count a treemap aggregate reports as *"N items below individual size"*,
+    /// and a layout that has pruned a subtree by area must be able to say how
+    /// many entries it folded **without walking it**. Computing it at draw time
+    /// is what made the whole-tree pre-pass O(total nodes) (ticket 14).
+    ///
+    /// Zero-attributed entries — empty files, symlinks, hard-link non-owners,
+    /// re-entered directories, anything of unknowable size — are *not* counted:
+    /// they have no rectangle to lose, so folding them changes nothing (spec
+    /// §6.2). A directory counts itself exactly when its subtree carries bytes,
+    /// which is exactly when it has an attributed descendant.
+    public private(set) var attributedNodeCount: Int
 
     public private(set) var attribution: Attribution
     public private(set) var readState: ReadState
@@ -92,6 +106,7 @@ public final class ScanNode: @unchecked Sendable {
         self.ownBytes = 0
         self.subtreeBytes = 0
         self.fileCount = 0
+        self.attributedNodeCount = 0
         self.attribution = .owned
         self.readState = .complete
         self.isFrozen = false
@@ -148,14 +163,28 @@ public final class ScanNode: @unchecked Sendable {
         ownBytes = bytes
         subtreeBytes = bytes
         fileCount = isRegularFile ? 1 : 0
+        attributedNodeCount = bytes > 0 ? 1 : 0
     }
 
     /// Adds a leaf's contribution to this ancestor. The roll-up walks the
     /// whole parent chain, which is what keeps every open directory's total
     /// live (spec §3.1).
-    func accumulate(bytes: Int64, files: Int64) {
+    ///
+    /// `attributedNodes` is how many entries *below* this one newly became
+    /// attributed. The return value says whether this directory itself just
+    /// did — it is attributed exactly when its subtree first carries bytes — so
+    /// the caller can add it to everything further up the chain. That is the
+    /// whole of the count's maintenance: no second walk, and no per-node state
+    /// beyond the counter itself.
+    @discardableResult
+    func accumulate(bytes: Int64, files: Int64, attributedNodes: Int = 0) -> Bool {
+        let wasAttributed = subtreeBytes > 0
         subtreeBytes += bytes
         fileCount += files
+        attributedNodeCount += attributedNodes
+        guard !wasAttributed, subtreeBytes > 0 else { return false }
+        attributedNodeCount += 1
+        return true
     }
 
     /// Records that this name's bytes were already counted at `owner`. The node
@@ -200,6 +229,7 @@ public final class ScanNode: @unchecked Sendable {
         copy.ownBytes = ownBytes
         copy.subtreeBytes = subtreeBytes
         copy.fileCount = fileCount
+        copy.attributedNodeCount = attributedNodeCount
         copy.attribution = attribution
         copy.readState = readState
         copy.children = children.map { $0.frozenSnapshot(parent: copy) }

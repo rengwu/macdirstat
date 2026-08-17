@@ -20,6 +20,14 @@ import Foundation
 /// 3. **Zero bytes, no rectangle.** Empty files, symlinks, hard-link
 ///    non-owners and unreadable entries of unknowable size have no area to
 ///    draw, so they get no box. They stay listed in the tree.
+///
+/// **The walk reads only what it draws.** A directory is asked for its children
+/// at the moment it is about to be subdivided, and never otherwise: everything
+/// that folded into an aggregate, and everything beneath it, is left unread.
+/// That is what makes the cost proportional to the boxes on screen rather than
+/// to the tree's size — the property §6.2 promised and the engine did not
+/// have until ticket 14, when a whole-tree pre-pass was found blocking the main
+/// thread for seconds on a real volume.
 public enum TreemapLayout {
     /// The deployment floor this package is built against (spec §4.2).
     public static let minimumSupportedMacOS = "11.0"
@@ -38,19 +46,20 @@ public enum TreemapLayout {
             return TreemapLayoutResult(viewport: viewport, boxes: [], statistics: statistics)
         }
 
-        let prepared = PreparedTree(root: tree)
-        statistics.placedNodeCount = prepared.root.itemCount
+        // The one number the layout takes on the seam's word rather than by
+        // walking: how many entries have a rectangle to lose. A conformer that
+        // maintains it costs nothing here; the protocol's default walks.
+        statistics.placedNodeCount = tree.treemapPresentedItemCount
 
         let viewportRect = TreemapRect(origin: TreemapPoint(x: 0, y: 0), size: viewport)
         var boxes: [TreemapBox<Node>] = []
-        boxes.reserveCapacity(prepared.nodeCount)
         boxes.append(
             TreemapBox(
-                content: .node(prepared.root.node),
+                content: .node(tree),
                 frame: viewportRect,
                 depth: 0,
                 parentIndex: nil,
-                bytes: prepared.root.bytes,
+                bytes: tree.treemapAttributedBytes,
                 isSubdivided: false
             )
         )
@@ -58,12 +67,17 @@ public enum TreemapLayout {
         // Explicit stack rather than recursion: depth is the tree's, and the
         // deep-chain rung of the workload ladder is exactly the shape that
         // would otherwise put the layout on the releasing thread's stack budget.
-        var stack: [Frame<Node>] = [Frame(node: prepared.root, rect: viewportRect, depth: 0, boxIndex: 0)]
+        var stack: [Frame<Node>] = [Frame(node: tree, rect: viewportRect, depth: 0, boxIndex: 0)]
 
         while let frame = stack.popLast() {
-            guard !frame.node.children.isEmpty, frame.rect.width > 0, frame.rect.height > 0 else { continue }
+            guard frame.rect.width > 0, frame.rect.height > 0 else { continue }
 
-            let placements = placeChildren(frame.node.children, in: frame.rect, statistics: &statistics)
+            let children = PreparedTree.children(of: frame.node)
+            statistics.preparedChildCount += children.count
+            guard !children.isEmpty else { continue }
+            statistics.visitedDirectoryCount += 1
+
+            let placements = placeChildren(children, in: frame.rect, statistics: &statistics)
             guard !placements.isEmpty else { continue }
 
             boxes[frame.boxIndex].isSubdivided = true
@@ -72,7 +86,8 @@ public enum TreemapLayout {
             descend.reserveCapacity(placements.count)
             for placement in placements {
                 switch placement {
-                case .child(let child, let rect):
+                case .child(let childIndex, let rect):
+                    let child = children[childIndex]
                     let index = boxes.count
                     boxes.append(
                         TreemapBox(
@@ -84,7 +99,7 @@ public enum TreemapLayout {
                             isSubdivided: false
                         )
                     )
-                    descend.append(Frame(node: child, rect: rect, depth: frame.depth + 1, boxIndex: index))
+                    descend.append(Frame(node: child.node, rect: rect, depth: frame.depth + 1, boxIndex: index))
                 case .aggregate(let merged, let bytes, let itemCount, let rect):
                     statistics.aggregateBoxCount += 1
                     statistics.mergedItemCount += itemCount
@@ -93,7 +108,7 @@ public enum TreemapLayout {
                         TreemapBox(
                             content: .aggregate(
                                 TreemapAggregate(
-                                    mergedRoots: merged.map { $0.node },
+                                    mergedRoots: merged.map { children[$0].node },
                                     bytes: bytes,
                                     itemCount: itemCount
                                 )
@@ -126,9 +141,13 @@ public enum TreemapLayout {
 
     // MARK: - The merge fixpoint (spec §6.2)
 
+    /// Placements name their children by **index** into the directory's own
+    /// prepared array. The fixpoint has to track which children survived a
+    /// round, and an index does that without the class instance the engine used
+    /// to allocate per node just to have an `ObjectIdentifier` to put in a set.
     private enum Placement<Node: TreemapInputNode> {
-        case child(PreparedNode<Node>, TreemapRect)
-        case aggregate(merged: [PreparedNode<Node>], bytes: Int64, itemCount: Int, rect: TreemapRect)
+        case child(Int, TreemapRect)
+        case aggregate(merged: [Int], bytes: Int64, itemCount: Int, rect: TreemapRect)
     }
 
     /// Squarify → merge slivers → re-squarify, until nothing is a sliver.
@@ -138,24 +157,35 @@ public enum TreemapLayout {
     /// not converge either — ticket 01 measured 25 slivers left on the flat
     /// 2,500-item fixture. Iterating does, because merging only ever removes
     /// children, and the survivors it repacks are strictly fewer each round.
+    ///
+    /// The merged children's bytes and item counts accumulate as they fold, so
+    /// each folded child is asked for its item count exactly once across all
+    /// the rounds — which matters, because for a conformer without a maintained
+    /// count that question is a subtree walk.
     private static func placeChildren<Node: TreemapInputNode>(
-        _ children: [PreparedNode<Node>],
+        _ children: [PreparedChild<Node>],
         in rect: TreemapRect,
         statistics: inout TreemapLayoutStatistics
     ) -> [Placement<Node>] {
-        var survivors = children
-        var merged: [PreparedNode<Node>] = []
+        var survivors = Array(children.indices)
+        var merged: [Int] = []
+        var mergedBytes: Int64 = 0
+        var mergedItems = 0
         var placements: [Placement<Node>] = []
 
         for round in 1...TreemapMetrics.mergeRoundCap {
-            placements = pack(survivors: survivors, merged: merged, in: rect, statistics: &statistics)
+            placements = pack(
+                children, survivors: survivors, merged: merged,
+                mergedBytes: mergedBytes, mergedItems: mergedItems,
+                in: rect, statistics: &statistics
+            )
 
-            var slivers = Set<ObjectIdentifier>()
+            var slivers: [Int] = []
             for placement in placements {
-                guard case .child(let child, let frame) = placement else { continue }
+                guard case .child(let childIndex, let frame) = placement else { continue }
                 if frame.width < TreemapMetrics.mergeThresholdPoints
                     || frame.height < TreemapMetrics.mergeThresholdPoints {
-                    slivers.insert(ObjectIdentifier(child))
+                    slivers.append(childIndex)
                 }
             }
 
@@ -169,15 +199,24 @@ public enum TreemapLayout {
                 return placements
             }
 
-            merged.append(contentsOf: survivors.filter { slivers.contains(ObjectIdentifier($0)) })
-            survivors.removeAll { slivers.contains(ObjectIdentifier($0)) }
+            let folding = Set(slivers)
+            for childIndex in survivors where folding.contains(childIndex) {
+                merged.append(childIndex)
+                mergedBytes += children[childIndex].bytes
+                mergedItems += children[childIndex].node.treemapPresentedItemCount
+            }
+            survivors.removeAll { folding.contains($0) }
 
             if survivors.isEmpty {
                 // Everything folded: the aggregate is the directory's whole
                 // rectangle, which is the truthful picture of a region too
                 // small to resolve.
                 statistics.maximumMergeRounds = max(statistics.maximumMergeRounds, round + 1)
-                return pack(survivors: [], merged: merged, in: rect, statistics: &statistics)
+                return pack(
+                    children, survivors: [], merged: merged,
+                    mergedBytes: mergedBytes, mergedItems: mergedItems,
+                    in: rect, statistics: &statistics
+                )
             }
         }
         return placements
@@ -191,20 +230,16 @@ public enum TreemapLayout {
     /// packing in 2 rounds instead of 5 — both are deterministic, so both
     /// satisfy the golden-rectangle requirement; only one could be the rule.
     private static func pack<Node: TreemapInputNode>(
-        survivors: [PreparedNode<Node>],
-        merged: [PreparedNode<Node>],
+        _ children: [PreparedChild<Node>],
+        survivors: [Int],
+        merged: [Int],
+        mergedBytes: Int64,
+        mergedItems: Int,
         in rect: TreemapRect,
         statistics: inout TreemapLayoutStatistics
     ) -> [Placement<Node>] {
-        var weights = survivors.map { Double($0.bytes) }
-
-        var mergedBytes: Int64 = 0
-        var mergedItems = 0
+        var weights = survivors.map { Double(children[$0].bytes) }
         if !merged.isEmpty {
-            for node in merged {
-                mergedBytes += node.bytes
-                mergedItems += node.itemCount
-            }
             weights.append(Double(mergedBytes))
         }
 
@@ -227,7 +262,7 @@ public enum TreemapLayout {
     }
 
     private struct Frame<Node: TreemapInputNode> {
-        let node: PreparedNode<Node>
+        let node: Node
         let rect: TreemapRect
         let depth: Int
         let boxIndex: Int

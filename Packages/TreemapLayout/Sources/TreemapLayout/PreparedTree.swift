@@ -1,74 +1,53 @@
 import Foundation
 
-/// One entry of the tree, normalized for layout.
+/// One child of one directory, normalized for layout.
 ///
-/// The input protocol is read exactly once per layout: zero-byte entries are
-/// dropped, children are sorted, and item counts are rolled up, all before any
-/// squarifying happens. The merge fixpoint re-packs a directory several times,
-/// and it must see the same numbers and the same order every round.
+/// A value, and only three fields wide. The engine used to build a whole
+/// parallel tree of class instances before placing anything, which made every
+/// relayout O(total nodes) and put a multi-second allocation walk on the main
+/// thread at volume scale (ticket 14). Nothing here outlives the directory it
+/// belongs to.
 ///
-/// A reference type so the fixpoint can track survivors by identity even when
-/// two siblings have the same name and the same size.
-final class PreparedNode<Node: TreemapInputNode> {
+/// `itemCount` is deliberately absent: it is asked of the seam only for the
+/// children that actually fold, because that is the only place it is used.
+struct PreparedChild<Node: TreemapInputNode> {
     let node: Node
-    let name: String
     let bytes: Int64
+    let name: String
     /// Discovery position among its siblings, before sorting — the last
     /// tie-break, so the order is total even for duplicate name/size pairs and
     /// cannot depend on the sort algorithm's handling of equal elements.
     let ordinal: Int
-    var children: [PreparedNode<Node>] = []
-    /// This entry plus every positive-byte entry beneath it.
-    var itemCount = 1
-
-    init(node: Node, ordinal: Int) {
-        self.node = node
-        self.name = node.treemapName
-        self.bytes = node.treemapAttributedBytes
-        self.ordinal = ordinal
-    }
 }
 
-/// The whole normalized tree, built in one pass.
-struct PreparedTree<Node: TreemapInputNode> {
-    let root: PreparedNode<Node>
-    let nodeCount: Int
-
-    init(root inputRoot: Node) {
-        let root = PreparedNode(node: inputRoot, ordinal: 0)
-
-        // Breadth-first, so a parent always precedes its children in `flat` and
-        // the reverse pass below is a valid bottom-up order. Iterative because
-        // a 64-level rung — let alone a pathological chain — has no business
-        // being bounded by the stack.
-        var flat: [PreparedNode<Node>] = [root]
-        var index = 0
-        while index < flat.count {
-            let current = flat[index]
-            index += 1
-
-            var ordinal = 0
-            for child in current.node.treemapPresentedChildren {
-                // Zero attributed bytes means no area, so no rectangle and no
-                // subtree (spec §6.2). The entry stays in the tree view; it
-                // simply has nothing to draw.
-                guard child.treemapAttributedBytes > 0 else { continue }
-                let prepared = PreparedNode(node: child, ordinal: ordinal)
-                ordinal += 1
-                current.children.append(prepared)
-                flat.append(prepared)
-            }
-            current.children.sort(by: PreparedTree.precedes)
+/// The normalization the layout applies to one directory, on the way in.
+///
+/// It runs **when a directory is about to be subdivided**, never before: a
+/// directory that folded into an aggregate, or that never had a rectangle at
+/// all, is never asked for its children. That is the whole of the pruning —
+/// the merge rule already guarantees no surviving box is under 2 pt on either
+/// side, so the number of directories that get here is bounded by the viewport
+/// and not by the tree.
+enum PreparedTree<Node: TreemapInputNode> {
+    /// `node`'s presented children, minus the ones with no area, in child
+    /// order (spec §6.1).
+    ///
+    /// Zero attributed bytes means no area, so no rectangle and no subtree
+    /// (spec §6.2). The entry stays in the tree view; it simply has nothing to
+    /// draw.
+    static func children(of node: Node) -> [PreparedChild<Node>] {
+        var prepared: [PreparedChild<Node>] = []
+        var ordinal = 0
+        for child in node.treemapPresentedChildren {
+            let bytes = child.treemapAttributedBytes
+            guard bytes > 0 else { continue }
+            prepared.append(
+                PreparedChild(node: child, bytes: bytes, name: child.treemapName, ordinal: ordinal)
+            )
+            ordinal += 1
         }
-
-        for node in flat.reversed() {
-            var count = 1
-            for child in node.children { count += child.itemCount }
-            node.itemCount = count
-        }
-
-        self.root = root
-        self.nodeCount = flat.count
+        prepared.sort(by: precedes)
+        return prepared
     }
 
     /// Child order (spec §6.1): **bytes descending, ties by name ascending in
@@ -95,7 +74,7 @@ struct PreparedTree<Node: TreemapInputNode> {
     /// names here as well — otherwise this comparison would claim code-point
     /// order and then hand canonically equivalent names to the ordinal
     /// tie-break.
-    static func precedes(_ a: PreparedNode<Node>, _ b: PreparedNode<Node>) -> Bool {
+    static func precedes(_ a: PreparedChild<Node>, _ b: PreparedChild<Node>) -> Bool {
         if a.bytes != b.bytes { return a.bytes > b.bytes }
         if !a.name.unicodeScalars.elementsEqual(b.name.unicodeScalars) {
             return a.name.unicodeScalars.lexicographicallyPrecedes(b.name.unicodeScalars) {

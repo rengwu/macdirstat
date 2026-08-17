@@ -106,8 +106,20 @@ public struct TreemapLayoutStatistics: Hashable, Sendable {
     public var mergedItemCount = 0
     public var mergedBytes: Int64 = 0
     /// Entries with positive attributed bytes reachable through the presented
-    /// tree, including the root.
+    /// tree, including the root. Read from the input seam
+    /// (``TreemapInputNode/treemapPresentedItemCount``), not counted here: the
+    /// layout never walks the whole tree.
     public var placedNodeCount = 0
+    /// Entries the layout actually read from the seam — one per child of every
+    /// directory it subdivided.
+    ///
+    /// This is the work a relayout does, and the number that makes §6.2's
+    /// "bounded by rendered boxes" checkable rather than asserted: it is
+    /// bounded by the boxes on screen and their siblings, and on a tree whose
+    /// bulk is folded away it is a small fraction of ``placedNodeCount``.
+    public var preparedChildCount = 0
+    /// Directories that were subdivided, i.e. asked for their children at all.
+    public var visitedDirectoryCount = 0
     /// Total area of the filled boxes. Equals the viewport area to within
     /// float drift, which is what "100% area truthfulness" means in points.
     public var coveredArea: Double = 0
@@ -176,3 +188,14 @@ public struct TreemapLayoutResult<Node: TreemapInputNode> {
         box(at: point)?.node
     }
 }
+
+// A draw list is an immutable value once returned, so it may cross to whichever
+// thread computed it — which is the point: ``TreemapLayoutCoordinator`` runs the
+// layout off the main thread and hands the result back (ticket 14). The
+// conformances are conditional because ``TreemapInputNode`` deliberately does
+// not require `Sendable`: a conformer that is only ever touched on one thread
+// stays legal, it simply cannot be laid out in the background.
+extension TreemapAggregate: Sendable where Node: Sendable {}
+extension TreemapBoxContent: Sendable where Node: Sendable {}
+extension TreemapBox: Sendable where Node: Sendable {}
+extension TreemapLayoutResult: Sendable where Node: Sendable {}

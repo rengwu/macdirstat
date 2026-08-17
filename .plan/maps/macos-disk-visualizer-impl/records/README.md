@@ -61,6 +61,24 @@ mixes. It is written by hand from what
 `MacDirStatPerformanceTests/DirectorySortCostTests` prints, because the half that
 matters most reads a real tree the harness did not build and so cannot run unattended.
 
+## The treemap's relayout cost
+
+Three things ticket 14 added, all at the Large rung and all at 2,560×1,600:
+
+- **`treemapPlacedNodeCount` beside `treemapPreparedChildCount`** on every `-with-treemap`
+  rung. The first is how many entries have a rectangle to lose; the second is how many the
+  layout actually read. They used to be the same number, because the engine materialized a
+  parallel tree of class instances before placing anything. The pair is the cost claim:
+  the work follows the picture, so the same tree at 640×400 reads a fraction of what it
+  reads at 2,560×1,600.
+- **`large-treemap-layout-pass`** measures one layout's own peak footprint, sampled around
+  the pass rather than around the scan, so the transient allocation is visible instead of
+  folded into the scan's figure.
+- **`large-treemap-main-thread`** is the freeze itself, measured: the longest the main
+  actor was ever unable to run while layouts happened in the background, beside the same
+  measurement taken while one layout ran inline. The second is the control — an instrument
+  that cannot see a main-thread layout would prove nothing about its absence.
+
 ## Reading the columns
 
 `measurementNotes` in the JSON says what each number means and, more importantly, which

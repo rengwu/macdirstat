@@ -17,7 +17,7 @@ import TreemapLayout
 /// code, in its own package. `MacDirStatTests` owns the proof that the app's
 /// adapter reports the same things this one does, including package drill-in,
 /// which no generated rung contains.
-struct ScanNodeTreemapRef: TreemapInputNode {
+struct ScanNodeTreemapRef: TreemapInputNode, Sendable {
     let node: ScanNode
 
     var treemapName: String { node.name }
@@ -46,6 +46,14 @@ struct ScanNodeTreemapRef: TreemapInputNode {
     /// rung builds one, so this is the collapsed half only.
     var treemapPresentedChildren: [ScanNodeTreemapRef] {
         node.kind == .package ? [] : node.children.map(ScanNodeTreemapRef.init(node:))
+    }
+
+    /// Constant time, from the count `ScanCore` rolls up during the scan — the
+    /// reason a folded subtree never has to be walked (ticket 14). The app's
+    /// adapter answers the same way; the walking default in the protocol would
+    /// reintroduce exactly the cost these tests measure the absence of.
+    var treemapPresentedItemCount: Int {
+        node.kind == .package ? (node.subtreeBytes > 0 ? 1 : 0) : node.attributedNodeCount
     }
 }
 

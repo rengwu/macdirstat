@@ -22,6 +22,10 @@ final class TreemapRenderingTests: XCTestCase {
         appearance: TreemapAppearance
     ) -> (TreemapView, SelectionModel) {
         let view = TreemapView(frame: viewport)
+        // Inline layout: a bitmap regression has to rasterize the real draw
+        // list, not the stretched preview the view shows while a background
+        // layout is still running (ticket 14).
+        view.layoutExecution = .immediate
         view.appearance = NSAppearance(named: appearance == .dark ? .darkAqua : .aqua)
         view.appearanceOverride = appearance
         view.contentBuilder = InspectorContentBuilder(formatter: DisplayFormatter(locale: Locale(identifier: "en_US")))

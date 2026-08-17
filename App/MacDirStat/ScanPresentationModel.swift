@@ -25,19 +25,18 @@ final class ScanPresentationModel {
 
     var onChange: (() -> Void)?
 
-    /// How often the in-progress tree is republished to the two panes.
+    /// How often the in-progress tree is republished to the two panes —
+    /// ticket 01's settled 4 Hz (spec §5.5).
     ///
-    /// Every tree snapshot costs a full treemap relayout plus an outline-view
-    /// `reloadData`, and both scale with the tree — on a several-hundred-GB
-    /// volume that is expensive enough that emitting near the spec's ~4 Hz
-    /// ceiling (§5.5) spends most of the main thread relaying out a picture
-    /// that is obsolete before it finishes, and starves the scan itself. The
-    /// rectangles also reshuffle far faster than anyone can read them, so the
-    /// frequent redraws were not buying legibility either.
-    ///
-    /// Scalars stay fast — see `progressInterval` — so the window still reads
-    /// as live between tree updates.
-    static let treeInterval: TimeInterval = 10.0
+    /// It was raised to 10 s in `cc212c8` because every snapshot cost a full
+    /// treemap relayout on the main thread, and at volume scale that relayout
+    /// took seconds. Ticket 14 removed both halves of that: the layout is
+    /// bounded by the boxes on screen rather than by the tree, and it runs off
+    /// the main thread, coalesced, so a snapshot the layout cannot keep up with
+    /// costs a skipped picture rather than a frozen window. The throttle was
+    /// hiding a freeze, not preventing one, so with the freeze gone the settled
+    /// cadence comes back.
+    static let treeInterval: TimeInterval = 0.25
 
     /// Progress scalars are a handful of numbers and a path label: no layout,
     /// no reload, so this stays responsive.

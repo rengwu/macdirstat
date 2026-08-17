@@ -95,6 +95,12 @@ final class ScannedFixture {
         _ = workspace.view
         workspace.view.frame = NSRect(x: 0, y: 0, width: 1_100, height: 700)
         workspace.view.layoutSubtreeIfNeeded()
+        // Layout inline, so a test that asks for geometry has it in the same
+        // turn. Production lays out in the background (ticket 14); the geometry
+        // is identical either way — `LayoutCoordinatorTests` asserts that
+        // directly — and `TreemapViewTests` covers the background path's own
+        // behaviour separately.
+        workspace.treemapViewController.treemapView.layoutExecution = .immediate
         workspace.treemapViewController.treemapView.frame = NSRect(x: 0, y: 0, width: 520, height: 390)
         workspace.treeViewController.setRoot(model.root)
         workspace.treemapViewController.treemapView.context = workspace.selectionContext

@@ -15,6 +15,7 @@
 		AB000000000000000000B006 /* MacDirStatScaffoldTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F007 /* MacDirStatScaffoldTests.swift */; };
 		AB000000000000000000B007 /* MacDirStatUIScaffoldTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F008 /* MacDirStatUIScaffoldTests.swift */; };
 		AB000000000000000000B008 /* CompatibilitySmokeUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F009 /* CompatibilitySmokeUITests.swift */; };
+		AB000000000000000000B032 /* RealVolumeResponsivenessUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F032 /* RealVolumeResponsivenessUITests.swift */; };
 		AB000000000000000000B009 /* MacDirStatPerformanceScaffoldTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F00A /* MacDirStatPerformanceScaffoldTests.swift */; };
 		AB000000000000000000B00A /* ScanCore in Frameworks */ = {isa = PBXBuildFile; productRef = AB000000000000000000EB01 /* ScanCore */; };
 		AB000000000000000000B00B /* TreemapLayout in Frameworks */ = {isa = PBXBuildFile; productRef = AB000000000000000000EB02 /* TreemapLayout */; };
@@ -32,6 +33,7 @@
 		AB000000000000000000B017 /* InspectorContentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F01C /* InspectorContentTests.swift */; };
 		AB000000000000000000B018 /* SelectionAndActionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F01D /* SelectionAndActionTests.swift */; };
 		AB000000000000000000B019 /* TreemapViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F01E /* TreemapViewTests.swift */; };
+		AB000000000000000000B030 /* TreemapThreadingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F030 /* TreemapThreadingTests.swift */; };
 		AB000000000000000000B020 /* ScaleWorkload.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F020 /* ScaleWorkload.swift */; };
 		AB000000000000000000B021 /* WorkloadShapes.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F021 /* WorkloadShapes.swift */; };
 		AB000000000000000000B022 /* ScaleRungs.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F022 /* ScaleRungs.swift */; };
@@ -48,6 +50,7 @@
 		AB000000000000000000B02D /* TreemapScaleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F02D /* TreemapScaleTests.swift */; };
 		AB000000000000000000B02E /* RealFilesystemSoakTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F02E /* RealFilesystemSoakTests.swift */; };
 		AB000000000000000000B02F /* DirectorySortCostTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F02F /* DirectorySortCostTests.swift */; };
+		AB000000000000000000B031 /* TreemapLayoutCostTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F031 /* TreemapLayoutCostTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -84,6 +87,7 @@
 		AB000000000000000000F007 /* MacDirStatScaffoldTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacDirStatScaffoldTests.swift; sourceTree = "<group>"; };
 		AB000000000000000000F008 /* MacDirStatUIScaffoldTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacDirStatUIScaffoldTests.swift; sourceTree = "<group>"; };
 		AB000000000000000000F009 /* CompatibilitySmokeUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompatibilitySmokeUITests.swift; sourceTree = "<group>"; };
+		AB000000000000000000F032 /* RealVolumeResponsivenessUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealVolumeResponsivenessUITests.swift; sourceTree = "<group>"; };
 		AB000000000000000000F00A /* MacDirStatPerformanceScaffoldTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacDirStatPerformanceScaffoldTests.swift; sourceTree = "<group>"; };
 		AB000000000000000000F00B /* CI.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = text; path = CI.xctestplan; sourceTree = "<group>"; };
 		AB000000000000000000F00C /* CI-ThreadSanitizer.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = text; path = "CI-ThreadSanitizer.xctestplan"; sourceTree = "<group>"; };
@@ -109,6 +113,7 @@
 		AB000000000000000000F01C /* InspectorContentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorContentTests.swift; sourceTree = "<group>"; };
 		AB000000000000000000F01D /* SelectionAndActionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectionAndActionTests.swift; sourceTree = "<group>"; };
 		AB000000000000000000F01E /* TreemapViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TreemapViewTests.swift; sourceTree = "<group>"; };
+		AB000000000000000000F030 /* TreemapThreadingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TreemapThreadingTests.swift; sourceTree = "<group>"; };
 		AB000000000000000000F020 /* ScaleWorkload.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScaleWorkload.swift; sourceTree = "<group>"; };
 		AB000000000000000000F021 /* WorkloadShapes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkloadShapes.swift; sourceTree = "<group>"; };
 		AB000000000000000000F022 /* ScaleRungs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScaleRungs.swift; sourceTree = "<group>"; };
@@ -125,6 +130,7 @@
 		AB000000000000000000F02D /* TreemapScaleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TreemapScaleTests.swift; sourceTree = "<group>"; };
 		AB000000000000000000F02E /* RealFilesystemSoakTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealFilesystemSoakTests.swift; sourceTree = "<group>"; };
 		AB000000000000000000F02F /* DirectorySortCostTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectorySortCostTests.swift; sourceTree = "<group>"; };
+		AB000000000000000000F031 /* TreemapLayoutCostTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TreemapLayoutCostTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -223,6 +229,7 @@
 				AB000000000000000000F01C /* InspectorContentTests.swift */,
 				AB000000000000000000F01D /* SelectionAndActionTests.swift */,
 				AB000000000000000000F01E /* TreemapViewTests.swift */,
+				AB000000000000000000F030 /* TreemapThreadingTests.swift */,
 				AB000000000000000000F007 /* MacDirStatScaffoldTests.swift */,
 			);
 			path = MacDirStatTests;
@@ -233,6 +240,7 @@
 			children = (
 				AB000000000000000000F008 /* MacDirStatUIScaffoldTests.swift */,
 				AB000000000000000000F009 /* CompatibilitySmokeUITests.swift */,
+				AB000000000000000000F032 /* RealVolumeResponsivenessUITests.swift */,
 			);
 			path = MacDirStatUITests;
 			sourceTree = "<group>";
@@ -256,6 +264,7 @@
 				AB000000000000000000F02D /* TreemapScaleTests.swift */,
 				AB000000000000000000F02E /* RealFilesystemSoakTests.swift */,
 				AB000000000000000000F02F /* DirectorySortCostTests.swift */,
+				AB000000000000000000F031 /* TreemapLayoutCostTests.swift */,
 				AB000000000000000000F00A /* MacDirStatPerformanceScaffoldTests.swift */,
 			);
 			path = MacDirStatPerformanceTests;
@@ -478,6 +487,7 @@
 				AB000000000000000000B017 /* InspectorContentTests.swift in Sources */,
 				AB000000000000000000B018 /* SelectionAndActionTests.swift in Sources */,
 				AB000000000000000000B019 /* TreemapViewTests.swift in Sources */,
+				AB000000000000000000B030 /* TreemapThreadingTests.swift in Sources */,
 				AB000000000000000000B006 /* MacDirStatScaffoldTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -487,6 +497,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				AB000000000000000000B008 /* CompatibilitySmokeUITests.swift in Sources */,
+				AB000000000000000000B032 /* RealVolumeResponsivenessUITests.swift in Sources */,
 				AB000000000000000000B007 /* MacDirStatUIScaffoldTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -511,6 +522,7 @@
 				AB000000000000000000B02D /* TreemapScaleTests.swift in Sources */,
 				AB000000000000000000B02E /* RealFilesystemSoakTests.swift in Sources */,
 				AB000000000000000000B02F /* DirectorySortCostTests.swift in Sources */,
+				AB000000000000000000B031 /* TreemapLayoutCostTests.swift in Sources */,
 				AB000000000000000000B009 /* MacDirStatPerformanceScaffoldTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

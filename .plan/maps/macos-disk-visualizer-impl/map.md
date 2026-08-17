@@ -167,22 +167,49 @@ matrix recorded across macOS 11 through current.
   NFD/NFC frames the field sample caught on a volume holding 18 non-ASCII names in 447,367.
   Record: [`records/sort-cost.md`](./records/sort-cost.md).
 
+- [The treemap lays out where it must: off the main thread, over what it draws](./tickets/14-treemap-relayout-blocks-main-thread.md) —
+  the freeze is gone and it was two defects in one symptom. `PreparedTree` no longer
+  builds a class instance per positive-byte node before placing anything: it prepares
+  **one directory at a time**, the moment that directory is about to be subdivided, so a
+  folded subtree is never opened and the fixpoint tracks survivors by index. The price is
+  a fifth seam requirement, `treemapPresentedItemCount` — an aggregate must still say
+  exactly how many entries it hid — answered in O(1) by a new `ScanNode.attributedNodeCount`
+  rolled up on the same ancestor walk as `subtreeBytes` (an eleventh stored property, and
+  the stored-property cap moved to say so). `TreemapLayoutCoordinator` owns *when*: one
+  layout at a time, newest wins, on a detached task; the view draws what has arrived and
+  refuses a stale **viewport** for hit testing, hover and accessibility while painting it
+  stretched so a divider drag is not a grey window. **4 Hz is restored** — `cc212c8`'s
+  10 s was hiding the freeze, not preventing it. Large rung: relayout 2.27 s → **1.17 s**,
+  main-thread stall **0.019 s** against an inline control of **1.15 s**, entries read
+  2,000,000 → **1,335,183** and **221,869** for the same tree at 640×400. Proved in the
+  field too: scanning `/System/Library` the shipped app answers for its window in 0.36 s
+  and `sample(1)` shows the main thread 91% idle with every layout frame under the
+  coordinator's detached task.
+
 ## Not yet specified
 
 - **Compiler availability checking does not reject everything §4.4 assumes it does.** A
   `Canvas` in a `some View` body is a *warning*, not an error, and would crash on Big Sur.
   The `Scripts/check-post-bigsur-apis.sh` guard is load-bearing rather than a second
   opinion; §4.4 and §9.3 word it as though the compiler alone suffices.
-- **The 10 s tree throttle contradicts a settled decision, and the reason is relayout cost,
-  not memory.** Ticket 01 fixed "10 Hz scalars / **4 Hz tree**"; commit `cc212c8` quietly
-  raised the tree interval to 10 s. Ticket 10 measured why: a full treemap relayout at the
-  Large rung takes **2.27 s** at 2,560×1,600, because `PreparedTree` rebuilds every
-  positive-byte node on every layout. The scan's autorelease fix does not move that
-  number, so 4 Hz is unaffordable at two million nodes for an independent reason. The
-  options — keep the throttle, prune sub-pixel nodes before layout, or cache the draw list
-  — are a decision, not a measurement. The field run showed the throttle only changes how
-  often the app freezes, not whether it does: the pre-pass runs on the main thread.
-  <clears-with: 14>
+- **A VoiceOver client copying a whole-volume map's accessibility hierarchy takes 7–8
+  seconds of main thread.** §9.4 gives the treemap one accessibility element per rendered
+  rectangle, which is up to 137,056 of them at the Large rung and comparable on a real
+  volume. Ticket 14's field harness measured `AXUIElementCopyHierarchy` against the app
+  scanning `/System/Library` at **7.0–8.4 s**, all of it on the main thread, because that
+  is where an accessibility client's questions are answered. Nothing in the app is doing
+  anything wrong — it is publishing exactly what §9.4 asks for — but it is the same
+  symptom the ticket removed, reached by a different road, and nobody has decided whether
+  the element set should be culled (to the labelled boxes? to a fixed budget?) or whether
+  this is simply what a two-million-entry map costs an assistive technology. Not measured
+  under VoiceOver itself.
+- **A relayout at the Large rung still costs 1.17 seconds of a background core, and it is
+  allocation churn rather than algorithm.** Two arrays per directory opened — the
+  adapter's `treemapPresentedChildren`, then the prepared children — and four more per
+  merge round, across 126,144 directories. Reusing buffers across directories would cut
+  it without touching geometry. §8.2 commits no wall-clock bar and the main thread no
+  longer waits for it, so this is a recorded cost and not a defect; it matters only if
+  the tree feed's 4 Hz ever needs to be honoured rather than coalesced.
 - **The single logical measure is indefensible on sparse files, and the progress fraction
   is dimensionally wrong.** A 1 TiB `Docker.raw` occupying 34.6 GiB is the normal case on a
   developer's machine. Whether the engine carries logical bytes, allocated bytes or both is

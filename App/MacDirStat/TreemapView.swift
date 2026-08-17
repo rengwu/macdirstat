@@ -11,9 +11,17 @@ import TreemapLayout
 /// the result is held only for the frame it describes, because hit testing,
 /// hover and the accessibility children all have to answer for *the rectangles
 /// currently on screen*. Holding a layout for a size the view no longer has is
-/// what hysteresis would be, and that never happens here: a resize invalidates
-/// before it repaints. Repaints coalesce to the display refresh because
-/// `needsDisplay` does, which is what keeps a divider drag smooth.
+/// what hysteresis would be, and that never happens here: hit testing, hover
+/// and accessibility all refuse a result whose viewport is not the view's.
+/// Repaints coalesce to the display refresh because `needsDisplay` does, which
+/// is what keeps a divider drag smooth.
+///
+/// **The recompute does not happen here.** It is asked of a
+/// ``TreemapLayoutCoordinator``, which runs it off the main thread and calls
+/// back when it lands (ticket 14): laying out inside `draw(_:)` froze the
+/// window for seconds during a scan of a real volume. Between asking and
+/// landing there is a gap, and the view has to draw *something* — see
+/// ``drawPreview(of:in:)``.
 @MainActor
 final class TreemapView: NSView {
     /// The one shared selection (spec §7.2). The view both writes it (a click)
@@ -40,21 +48,29 @@ final class TreemapView: NSView {
     /// backing scale to read.
     var backingScaleOverride: Double?
 
+    /// Where the layout runs. Production is `.background` — the whole point of
+    /// ticket 14. Tests that assert on geometry set `.immediate`, so the draw
+    /// list exists in the same turn they asked for it; the geometry is
+    /// identical either way, which `LayoutCoordinatorTests` proves directly.
+    var layoutExecution: TreemapLayoutExecution = .background {
+        didSet {
+            guard layoutExecution != oldValue else { return }
+            makeCoordinator()
+            requestLayout()
+            needsDisplay = true
+        }
+    }
+
     private var root: ScanNode?
-    private var layoutResult: TreemapLayoutResult<TreemapNodeRef>?
-    private var layoutKey: LayoutKey?
+    private var coordinator = TreemapLayoutCoordinator<TreemapNodeRef>(execution: .background)
+    /// Bumped whenever the *content* changes — a new tree, a package drilled
+    /// into. The viewport is the request's other half and is read from
+    /// `bounds`, so a resize needs no bump.
+    private var contentRevision = 0
     private var accessibilityChildElements: [TreemapAccessibilityElement] = []
-    private var accessibilityKey: LayoutKey?
+    private var accessibilityRequest: TreemapLayoutCoordinator<TreemapNodeRef>.Request?
     private var hoveredBoxIndex: Int?
     private var trackingArea: NSTrackingArea?
-
-    private struct LayoutKey: Equatable {
-        let root: ObjectIdentifier?
-        let width: Double
-        let height: Double
-        let expansionGeneration: Int
-        let appearance: TreemapAppearance
-    }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -62,6 +78,19 @@ final class TreemapView: NSView {
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
         setAccessibilityLabel("Treemap")
+        makeCoordinator()
+    }
+
+    private func makeCoordinator() {
+        coordinator = TreemapLayoutCoordinator<TreemapNodeRef>(execution: layoutExecution)
+        coordinator.onResult = { [weak self] in self?.layoutDidArrive() }
+        accessibilityRequest = nil
+    }
+
+    /// Waits for the background layout to settle. Tests only — nothing on a
+    /// drawing path may wait for a layout.
+    func settleLayout() async {
+        await coordinator.settle()
     }
 
     required init?(coder: NSCoder) { nil }
@@ -93,23 +122,31 @@ final class TreemapView: NSView {
     }
 
     private func invalidateLayout() {
-        layoutResult = nil
-        layoutKey = nil
+        contentRevision += 1
         hoveredBoxIndex = nil
         toolTip = nil
+        if root == nil { coordinator.invalidate() }
+        requestLayout()
         needsDisplay = true
     }
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         // Full recompute on every size change (§6.4). Marking dirty is what
-        // coalesces the recompute to the next display refresh during a drag.
-        invalidateLayout()
+        // coalesces the recompute to the next display refresh during a drag;
+        // the coordinator coalesces the layouts themselves, so a drag asks for
+        // dozens of sizes and computes one at a time, ending on the last.
+        hoveredBoxIndex = nil
+        toolTip = nil
+        requestLayout()
+        needsDisplay = true
     }
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        invalidateLayout()
+        // Colours only: the appearance never moved a rectangle, so this is a
+        // repaint and not a relayout.
+        needsDisplay = true
     }
 
     override func updateTrackingAreas() {
@@ -135,33 +172,42 @@ final class TreemapView: NSView {
         backingScaleOverride ?? Double(window?.backingScaleFactor ?? 2)
     }
 
-    /// The draw list for the rectangles currently on screen, recomputed the
-    /// moment any input differs from the one it was computed for.
+    private var currentViewport: TreemapSize {
+        TreemapSize(width: Double(bounds.width), height: Double(bounds.height))
+    }
+
+    /// Asks for the draw list the view's current inputs call for. Idempotent
+    /// and cheap: the coordinator drops a request it is already holding or
+    /// already running.
+    private func requestLayout() {
+        guard let root, currentViewport.isDrawable else { return }
+        coordinator.request(
+            tree: TreemapNodeRef(node: root, expansion: expansion.snapshot()),
+            viewport: currentViewport,
+            revision: contentRevision
+        )
+    }
+
+    /// The draw list **for the rectangles currently on screen**, or `nil` while
+    /// none has arrived for this viewport.
+    ///
+    /// A result computed for another size is deliberately not offered here:
+    /// hit testing, hover and the accessibility children have to answer for
+    /// what is really on screen, and a stretched preview is not that. Drawing
+    /// is the one caller that may use the older result, and it says so.
     @discardableResult
     func currentLayout() -> TreemapLayoutResult<TreemapNodeRef>? {
-        guard let root else {
-            layoutResult = nil
-            layoutKey = nil
-            return nil
-        }
-        let key = LayoutKey(
-            root: ObjectIdentifier(root),
-            width: Double(bounds.width),
-            height: Double(bounds.height),
-            expansionGeneration: expansion.generation,
-            appearance: currentAppearance
-        )
-        if let layoutResult, layoutKey == key { return layoutResult }
-
-        let result = TreemapLayout.layout(
-            tree: TreemapNodeRef(node: root, expansion: expansion),
-            viewport: TreemapSize(width: Double(bounds.width), height: Double(bounds.height))
-        )
-        layoutResult = result
-        layoutKey = key
-        accessibilityKey = nil
-        refreshAggregateSelection(against: result)
+        requestLayout()
+        guard let result = coordinator.result, result.viewport == currentViewport else { return nil }
         return result
+    }
+
+    private func layoutDidArrive() {
+        accessibilityRequest = nil
+        if let result = coordinator.result, result.viewport == currentViewport {
+            refreshAggregateSelection(against: result)
+        }
+        needsDisplay = true
     }
 
     /// The number of rectangles the layout put on screen — what §6.2 says
@@ -175,8 +221,18 @@ final class TreemapView: NSView {
         TreemapChrome.voidBackground(appearance).setFill()
         bounds.fill()
 
-        guard let result = currentLayout(), !result.boxes.isEmpty,
+        requestLayout()
+        guard let held = coordinator.result, !held.boxes.isEmpty,
               let cgContext = NSGraphicsContext.current?.cgContext else { return }
+
+        // The one place a layout for another size is allowed on screen: it is
+        // stretched, unlabelled and visibly provisional, and it is replaced the
+        // moment the real one lands. The alternative during a divider drag is a
+        // grey window, because the layout no longer happens on this thread.
+        guard held.viewport == currentViewport else {
+            return drawPreview(of: held, appearance: appearance, context: cgContext)
+        }
+        let result = held
 
         let scale = backingScale
 
@@ -255,6 +311,54 @@ final class TreemapView: NSView {
             NSColor.controlAccentColor.setStroke()
             let path = NSBezierPath(rect: strokeRect)
             path.lineWidth = width
+            path.stroke()
+        }
+    }
+
+    /// The last real draw list, stretched to the view's current size, while the
+    /// layout for that size is still being computed.
+    ///
+    /// Fills and directory outlines only: no labels (they would stretch), no
+    /// hairlines, no hover, no selection stroke — every one of those makes a
+    /// promise about a rectangle's exact edges, and these edges are an
+    /// approximation. It is never hit-tested, never handed to accessibility,
+    /// and never snapped to the pixel grid, all of which would dress an
+    /// estimate up as the truth. §6.4's "no cache" is about not *reusing*
+    /// geometry to avoid recomputing it; the recompute is already running.
+    private func drawPreview(
+        of result: TreemapLayoutResult<TreemapNodeRef>,
+        appearance: TreemapAppearance,
+        context: CGContext
+    ) {
+        guard result.viewport.isDrawable else { return }
+        context.saveGState()
+        defer { context.restoreGState() }
+        context.scaleBy(
+            x: bounds.width / CGFloat(result.viewport.width),
+            y: bounds.height / CGFloat(result.viewport.height)
+        )
+
+        for box in result.boxes where !box.isSubdivided {
+            let rect = NSRect(
+                x: box.frame.x, y: box.frame.y,
+                width: box.frame.width, height: box.frame.height
+            )
+            guard rect.width > 0, rect.height > 0 else { continue }
+            if box.isAggregate {
+                TreemapPalette.mergedBoxFillColor(appearance).nsColor.setFill()
+            } else {
+                TreemapPalette.color(for: box.kindGroup ?? .other, appearance: appearance).nsColor.setFill()
+            }
+            rect.fill()
+        }
+
+        TreemapChrome.directoryOutline(appearance).setStroke()
+        for box in result.outlinedBoxes {
+            let path = NSBezierPath(rect: NSRect(
+                x: box.frame.x, y: box.frame.y,
+                width: box.frame.width, height: box.frame.height
+            ))
+            path.lineWidth = CGFloat(TreemapMetrics.directoryOutlineWidthPoints)
             path.stroke()
         }
     }
@@ -467,16 +571,16 @@ final class TreemapView: NSView {
     }
 
     private func invalidateAccessibilityElements() {
-        accessibilityKey = nil
+        accessibilityRequest = nil
     }
 
     private func rebuildAccessibilityElementsIfNeeded() {
         guard let result = currentLayout() else {
             accessibilityChildElements = []
-            accessibilityKey = nil
+            accessibilityRequest = nil
             return
         }
-        if accessibilityKey == layoutKey, !accessibilityChildElements.isEmpty { return }
+        if accessibilityRequest == coordinator.resultRequest, !accessibilityChildElements.isEmpty { return }
 
         let selected = selectionModel?.selection
         accessibilityChildElements = result.boxes.compactMap { box in
@@ -492,7 +596,7 @@ final class TreemapView: NSView {
             element.setAccessibilitySelected(selected.map { $0 == selection } ?? false)
             return element
         }
-        accessibilityKey = layoutKey
+        accessibilityRequest = coordinator.resultRequest
     }
 }
 

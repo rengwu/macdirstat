@@ -276,8 +276,13 @@ final class IncrementalResultTests: XCTestCase {
         let labels = Set(mirror.children.compactMap(\.label))
         XCTAssertTrue(labels.contains("name"))
         XCTAssertTrue(labels.contains("parent"))
+        // Eleven since ticket 14 added `attributedNodeCount`: the treemap has
+        // to be able to say how many entries an aggregate folded without
+        // walking them, and the count has to be maintained where the bytes are.
+        // One `Int` per node against a per-node budget measured in dozens of
+        // bytes is the trade that bought a relayout bounded by rendered boxes.
         XCTAssertLessThanOrEqual(
-            labels.count, 10,
+            labels.count, 11,
             "ScanNode grew a stored property; every one of them is multiplied by two million at Large"
         )
 

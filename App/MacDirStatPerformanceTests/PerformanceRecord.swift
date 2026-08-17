@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import TreemapLayout
 import XCTest
 
 /// The machine and build a set of numbers was taken on.
@@ -123,6 +124,39 @@ struct RungRecord: Codable, Equatable {
     var treemapMaximumMergeRounds: Int?
     var treemapReachedRoundCap: Bool?
     var treemapDiagnosticLayoutSeconds: Double?
+
+    /// Entries with a rectangle to lose — the size of the tree, as the layout
+    /// sees it.
+    var treemapPlacedNodeCount: Int?
+    /// Entries the layout actually read. The pair `(placed, prepared)` is the
+    /// whole of ticket 14's cost claim: it used to be that these were the same
+    /// number.
+    var treemapPreparedChildCount: Int?
+    var treemapVisitedDirectoryCount: Int?
+
+    /// A layout pass's own peak footprint, sampled around the pass rather than
+    /// around the scan, so the transient allocation is visible instead of
+    /// folded into the scan's figure.
+    var treemapLayoutPeakFootprintBytes: UInt64?
+    var treemapLayoutFootprintDeltaBytes: UInt64?
+
+    /// The longest the main actor was unable to run while the treemap laid out
+    /// in the background — and, as a control, the same measurement made while
+    /// one layout ran inline. Asserted: the first is under
+    /// `TreemapLayoutCostTests.mainThreadStallBoundSeconds`.
+    var treemapMainThreadStallSeconds: Double?
+    var treemapInlineMainThreadStallSeconds: Double?
+
+    mutating func apply(_ statistics: TreemapLayoutStatistics) {
+        treemapVisibleBoxCount = statistics.visibleBoxCount
+        treemapAggregateBoxCount = statistics.aggregateBoxCount
+        treemapMergedItemCount = statistics.mergedItemCount
+        treemapMaximumMergeRounds = statistics.maximumMergeRounds
+        treemapReachedRoundCap = statistics.reachedRoundCap
+        treemapPlacedNodeCount = statistics.placedNodeCount
+        treemapPreparedChildCount = statistics.preparedChildCount
+        treemapVisitedDirectoryCount = statistics.visitedDirectoryCount
+    }
 }
 
 /// The whole record, accumulated across the suite and written out as it grows.

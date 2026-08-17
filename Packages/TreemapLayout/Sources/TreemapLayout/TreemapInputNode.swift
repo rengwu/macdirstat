@@ -44,6 +44,15 @@ public enum TreemapReadState: Hashable, Sendable {
 /// needs expansion state (which `ScanCore.ScanNode` alone cannot carry) wraps
 /// the node in a value type that holds both.
 ///
+/// **`treemapPresentedItemCount` is the price of pruning.** The layout walks
+/// only the part of the tree that has room to be drawn, so when it folds a
+/// subtree into an aggregate it never sees inside it — and the aggregate still
+/// has to report exactly how many entries it hid. A conformer that can answer
+/// in constant time (the scan engine rolls the number up as it walks) makes
+/// relayout cost proportional to the boxes on screen; the default
+/// implementation walks the subtree, which is correct and is what a fixture
+/// wants, but it is the O(total nodes) cost this seam exists to avoid.
+///
 /// Children are `[Self]` rather than an existential so the layout stays
 /// specialized and allocation-free at the seam.
 public protocol TreemapInputNode {
@@ -57,6 +66,33 @@ public protocol TreemapInputNode {
     /// unreadable entries of unknowable size) report `0` and get no rectangle.
     var treemapAttributedBytes: Int64 { get }
     var treemapPresentedChildren: [Self] { get }
+    /// Entries with positive attributed bytes in this entry's *presented*
+    /// subtree, counting this entry. Exactly the entries that would get a
+    /// rectangle if the whole subtree were drawn — which is the number an
+    /// aggregate reports as *"N items below individual size"* (spec §6.2).
+    ///
+    /// A collapsed package presents no children, so it answers `1`: what it
+    /// contains is not on the map to be folded.
+    var treemapPresentedItemCount: Int { get }
+}
+
+extension TreemapInputNode {
+    /// The walking default: correct for any conformer, and O(subtree).
+    ///
+    /// Iterative rather than recursive, for the same reason the layout is: a
+    /// 64-level rung has no business being bounded by the stack.
+    public var treemapPresentedItemCount: Int {
+        guard treemapAttributedBytes > 0 else { return 0 }
+        var count = 0
+        var stack: [Self] = [self]
+        while let node = stack.popLast() {
+            count += 1
+            for child in node.treemapPresentedChildren where child.treemapAttributedBytes > 0 {
+                stack.append(child)
+            }
+        }
+        return count
+    }
 }
 
 /// A concrete tree for tests, previews, and any caller that already holds a

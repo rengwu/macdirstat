@@ -10,8 +10,9 @@ import TreemapLayout
 /// already counted at scan time. `ScanNode` cannot carry this — it is frozen and
 /// shared — so the expansion set lives beside it and the adapter reads both.
 ///
-/// Used from the main actor only. It is a reference type so every
-/// ``TreemapNodeRef`` in a tree shares one set instead of copying it per node.
+/// Used from the main actor only, and read through an immutable
+/// ``PackageExpansionSet`` — never directly — because the layout that reads it
+/// runs off the main thread (ticket 14).
 final class PackageExpansion {
     private var expanded: Set<ObjectIdentifier> = []
     /// Bumped on every change, so the view can tell "same tree, same viewport,
@@ -35,6 +36,22 @@ final class PackageExpansion {
         expanded.removeAll()
         generation += 1
     }
+
+    /// The drill-in state as of now, frozen so a background layout can read it
+    /// without racing the click that changes it. A handful of identifiers at
+    /// most: nobody drills into a thousand packages.
+    func snapshot() -> PackageExpansionSet {
+        PackageExpansionSet(expanded: expanded)
+    }
+}
+
+/// One frozen reading of which packages are drilled into.
+struct PackageExpansionSet: Sendable {
+    let expanded: Set<ObjectIdentifier>
+
+    func isExpanded(_ node: ScanNode) -> Bool {
+        expanded.contains(ObjectIdentifier(node))
+    }
 }
 
 /// `ScanCore`'s tree, seen through `TreemapLayout`'s seam.
@@ -42,9 +59,14 @@ final class PackageExpansion {
 /// The two packages do not know about each other (spec §4.2, §10); this value
 /// type is the whole of the adapter, and it lives in the app because only the
 /// app knows the presentation policy — which packages are drilled into.
-struct TreemapNodeRef: TreemapInputNode {
+///
+/// `Sendable`, and that is load-bearing: a frozen `ScanNode` never mutates
+/// again and the expansion set is a value, so a whole tree can be handed to a
+/// background layout without the scan and the layout ever touching the same
+/// memory (ticket 14).
+struct TreemapNodeRef: TreemapInputNode, Sendable {
     let node: ScanNode
-    let expansion: PackageExpansion
+    let expansion: PackageExpansionSet
 
     var treemapName: String { node.name }
 
@@ -71,8 +93,22 @@ struct TreemapNodeRef: TreemapInputNode {
     var treemapAttributedBytes: Int64 { node.subtreeBytes }
 
     var treemapPresentedChildren: [TreemapNodeRef] {
-        if node.kind == .package, !expansion.isExpanded(node) { return [] }
+        guard isDrilledInto else { return [] }
         return node.children.map { TreemapNodeRef(node: $0, expansion: expansion) }
+    }
+
+    /// Constant time, because `ScanCore` rolls this count up as it scans. It is
+    /// what lets the layout fold a subtree away and still say exactly how many
+    /// entries it hid, without opening it (spec §6.2, ticket 14).
+    var treemapPresentedItemCount: Int {
+        guard isDrilledInto else { return node.subtreeBytes > 0 ? 1 : 0 }
+        return node.attributedNodeCount
+    }
+
+    /// A package presents as one box until the user drills in (spec §3.4);
+    /// everything else presents what it holds.
+    private var isDrilledInto: Bool {
+        node.kind != .package || expansion.isExpanded(node)
     }
 }
 

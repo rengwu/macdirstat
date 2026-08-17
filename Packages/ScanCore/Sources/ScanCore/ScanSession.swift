@@ -422,9 +422,18 @@ final class ScanSession {
         // Roll up to every ancestor, so each open directory's total is live at
         // every instant (spec §3.1). A deduplicated name rolls up zero bytes —
         // it is still one entry, just not a second copy of the bytes.
+        //
+        // The attributed-entry count rides the same walk. It starts at this
+        // leaf, if it has bytes at all, and grows by one each time a directory
+        // on the chain becomes attributed for the first time: that directory is
+        // a new attributed entry for everything above it, as well as for
+        // itself.
+        var newlyAttributed = bytes > 0 ? 1 : 0
         var ancestor = node.parent
         while let current = ancestor {
-            current.accumulate(bytes: bytes, files: isRegularFile ? 1 : 0)
+            if current.accumulate(bytes: bytes, files: isRegularFile ? 1 : 0, attributedNodes: newlyAttributed) {
+                newlyAttributed += 1
+            }
             ancestor = current.parent
         }
     }

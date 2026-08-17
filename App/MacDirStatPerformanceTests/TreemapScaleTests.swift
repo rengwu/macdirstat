@@ -226,11 +226,7 @@ final class TreemapScaleTests: XCTestCase {
                 hardLinkDuplicates: census.hardLinkDuplicates
             )
             record.treemapViewport = "\(Int(viewport.width))×\(Int(viewport.height))"
-            record.treemapVisibleBoxCount = statistics.visibleBoxCount
-            record.treemapAggregateBoxCount = statistics.aggregateBoxCount
-            record.treemapMergedItemCount = statistics.mergedItemCount
-            record.treemapMaximumMergeRounds = statistics.maximumMergeRounds
-            record.treemapReachedRoundCap = statistics.reachedRoundCap
+            record.apply(statistics)
             record.treemapDiagnosticLayoutSeconds = elapsed
             record.rung = "\(rung)-with-treemap"
             PerformanceRecordStore.shared.append(record, attachingTo: self)
