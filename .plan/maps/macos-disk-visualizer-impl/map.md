@@ -248,6 +248,29 @@ on a Release build that launches and scans a real volume.
   1,817.97 GiB of length**, `/Users` 263 GiB occupying and 1,724 GiB long, two runs
   agreeing to 0.02%. Record: [`records/blocks-on-disk.md`](./records/blocks-on-disk.md).
 
+- [Full lifecycle legibility + accessibility mechanics](./tickets/09-lifecycle-legibility-and-accessibility.md) —
+  the app tells the truth in every terminal and degraded state, and the
+  accessibility mechanics are finished. The two prior commits built the parts
+  with teeth: unreadable folders are **named** in the inspector's scan summary
+  (first five paths, "…and N more", counts by reason, which kind makes a total a
+  floor), and the treemap publishes **only the labelled rectangles** to
+  accessibility plus the selected one, because one element per rendered rectangle
+  cost a screen-reader client 7–8 s of main thread on a whole-volume map. The
+  cancelled state leads the status bar with "● Incomplete — scan cancelled" and
+  keeps its partial total browsable; completed-with-errors marks the row
+  Unreadable, its ancestors Incomplete, and surfaces the error/excluded counts;
+  per-item semantics (symlink, hard link + owner, iCloud/sparse, package,
+  Incomplete = red hatch **and** text) render concretely; the treemap is a
+  focusable group that follows the shared selection and announces changes once.
+  The one part of §7.3 the app tests had not asserted — the status bar's two
+  degraded states — is now two pure `text(...)` tests. **The VoiceOver +
+  Accessibility Inspector walkthrough was deliberately cut as YAGNI (2026-08-18)
+  and never done:** the spec commits no accessibility coverage bar (§11.3), the
+  mechanics themselves are unit-tested, and a by-hand VoiceOver pass is a
+  release-checklist step, not a build step. If a release candidate is ever
+  declared, somebody runs it then. Gate green at ScanCore 143 · TreemapLayout 88
+  · app 74.
+
 ## Not yet specified
 
 - **A relayout at the Large rung still costs 1.17 seconds of a background core, and it is
