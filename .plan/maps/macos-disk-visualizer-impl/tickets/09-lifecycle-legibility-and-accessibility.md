@@ -56,3 +56,51 @@ Implement in the app target:
   color nor hatch alone carries meaning; the treemap is focusable and announces
   selection changes.
 - All six states match the ticket-01 gold-standard prototype.
+
+## Answer
+
+**The app tells the truth in every terminal and degraded state, and the accessibility
+mechanics are finished.** The cancelled state leads the status bar with
+"● Incomplete — scan cancelled" and keeps its partial total browsable and selectable, with
+a rescan affordance; completed-with-errors marks the entry **Unreadable**, its ancestors
+**Incomplete**, and surfaces the error summary and the excluded-cloud count. Per-item
+ticket-01 semantics render concretely — symlink at 0 bytes and never followed, hard link
+with "counted elsewhere" and its owner path, iCloud materialized-vs-omitted, package as one
+box, and an Incomplete directory drawn with the red diagonal hatch **and** text, so neither
+color nor hatch ever carries meaning alone. The treemap is a focusable group that follows
+the shared selection and announces changes once; kind is written in tooltip, inspector and
+legend; the tree keyboard set (↑/↓, Return, ⌘O/⌘R, Esc for the chooser) works and selection
+survives relayout.
+
+**Two things the ticket did not ask for, found by building it.** A count of errors says how
+wrong a total might be; only a path says whether that matters to you — so the inspector now
+describes the *scan* while nothing is selected, naming the first five unreadable paths with
+"…and N more", the counts by reason, and which kind makes a total a floor. And the treemap
+published one accessibility element per
+rendered rectangle, up to 137,056 on a whole-volume map; a client copying that hierarchy
+cost **7.0–8.4 s of main thread** — the freeze ticket 14 removed, reached from outside the
+process. It now publishes only the labelled rectangles plus the selected one, which is the
+rule already on screen and already in the mouse. Nothing becomes unreachable: the tree pane
+carries every node and its hierarchy. `spec.md` §9.4 is amended to match.
+
+### Verification
+
+Asserted in `MacDirStatTests` against deterministic injected scan streams, per the
+2026-08-18 note above — no UI-test target was added back. The one part of §7.3 the app
+tests had not covered, the status bar's two degraded states, is now two pure `text(...)`
+tests matching the existing status-bar style. Gate green at **ScanCore 143 ·
+TreemapLayout 88 · app 74**.
+
+### Excluded
+
+**The VoiceOver + Accessibility Inspector walkthrough was deliberately cut as YAGNI on
+2026-08-18 and never run** — recorded here so a later reader knows it was skipped, not that
+it passed. The spec commits no accessibility coverage bar (§11.3), the mechanics themselves
+are unit-tested, and a by-hand VoiceOver pass is a release-checklist step rather than a
+build step. If a release candidate is ever declared, somebody runs it then. This was the
+one surviving piece of [ticket 11](./11-compatibility-matrix.md); ruling it out here does
+not reopen that ticket.
+
+The read-only guarantee and the scan-scope rule are still stated nowhere in the UI — a
+consequence accepted when the empty-state disclosures and the chooser's disabled ineligible
+rows were cut. It is carried on the map as an open patch, not fixed here.

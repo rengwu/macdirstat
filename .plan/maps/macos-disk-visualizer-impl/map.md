@@ -299,8 +299,9 @@ on a Release build that launches and scans a real volume.
   of `/`). Unmeasured, and nothing depends on it today.
 - **The read-only guarantee and the scan-scope rule are stated nowhere in the UI.** A
   consequence a human accepted knowingly when the empty-state disclosures and the
-  chooser's disabled ineligible rows were cut. Worth one look before 09 ships: a user
-  whose network volume is simply absent from the chooser gets no reason for it.
+  chooser's disabled ineligible rows were cut. Ticket 09 shipped without addressing it and
+  no ticket owns it now: a user whose network volume is simply absent from the chooser
+  still gets no reason for it.
 - **Nothing measures memory at scale any more, and that was a deliberate trade.** The
   performance suite is deleted, so the 8 GiB ceiling has no automated check behind it and
   the last numbers on record were taken on the wrong machine anyway (an M1 Pro with 16 GB,
