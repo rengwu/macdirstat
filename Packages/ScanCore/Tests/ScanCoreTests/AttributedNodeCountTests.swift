@@ -130,23 +130,15 @@ final class AttributedNodeCountTests: XCTestCase {
         assertCountsFold(result.root)
     }
 
-    /// Live at every instant, like `subtreeDiskBytes` (spec §3.1) — the property
-    /// that lets a treemap lay out a snapshot taken mid-scan and still report
-    /// exact aggregate counts.
-    func test_atCadenceZeroTheCountIsMonotonicAndExactAtEverySnapshot() async {
+    /// The count is what a treemap aggregate reports as "N items below
+    /// individual size", so it has to fold exactly at every directory of the
+    /// finished tree — not just at the root.
+    func test_theCountFoldsExactlyAtEveryDirectory() async {
         let probe = ScriptedDirectoryProbe(rootURL: scanRootURL, root: mixedTree())
 
-        let events = await runScan(probe)
+        guard let result = await runScan(probe).result else { return XCTFail("expected a result") }
 
-        var previous = 0
-        var snapshots = 0
-        for snapshot in events.treeSnapshots {
-            snapshots += 1
-            XCTAssertGreaterThanOrEqual(snapshot.root.attributedNodeCount, previous, "the count went backwards")
-            previous = snapshot.root.attributedNodeCount
-            assertCountsFold(snapshot.root)
-        }
-        XCTAssertGreaterThan(snapshots, 1)
-        XCTAssertEqual(previous, 11, "the last snapshot must agree with the finished tree")
+        XCTAssertEqual(result.root.attributedNodeCount, 11)
+        assertCountsFold(result.root)
     }
 }

@@ -7,12 +7,13 @@ import TreemapLayout
 /// Package drill-in is *presentation*, not structure (ticket 01, decision 2):
 /// expanding a package in the tree subdivides its treemap box exactly like a
 /// folder, and the outer rectangle's area never changes because the bytes were
-/// already counted at scan time. `ScanNode` cannot carry this — it is frozen and
-/// shared — so the expansion set lives beside it and the adapter reads both.
+/// already counted at scan time. `ScanNode` is the engine's and carries no
+/// presentation state, so the expansion set lives beside it and the adapter
+/// reads both.
 ///
 /// Used from the main actor only, and read through an immutable
 /// ``PackageExpansionSet`` — never directly — because the layout that reads it
-/// runs off the main thread (ticket 14).
+/// runs off the main thread.
 final class PackageExpansion {
     private var expanded: Set<ObjectIdentifier> = []
     /// Bumped on every change, so the view can tell "same tree, same viewport,
@@ -60,10 +61,10 @@ struct PackageExpansionSet: Sendable {
 /// type is the whole of the adapter, and it lives in the app because only the
 /// app knows the presentation policy — which packages are drilled into.
 ///
-/// `Sendable`, and that is load-bearing: a frozen `ScanNode` never mutates
-/// again and the expansion set is a value, so a whole tree can be handed to a
-/// background layout without the scan and the layout ever touching the same
-/// memory (ticket 14).
+/// `Sendable`, and that is load-bearing: the scan is finished with its tree
+/// before the app ever sees it, and the expansion set is a value, so a whole
+/// tree can be handed to a background layout without the scan and the layout
+/// ever touching the same memory.
 struct TreemapNodeRef: TreemapInputNode, Sendable {
     let node: ScanNode
     let expansion: PackageExpansionSet

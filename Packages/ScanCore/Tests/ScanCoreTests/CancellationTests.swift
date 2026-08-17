@@ -53,7 +53,7 @@ final class CancellationTests: XCTestCase {
 
         let stream = await scanner.scan(makeRequest(
             probe: probe,
-            options: ScanOptions(progressCadence: .terminalOnly, treeCadence: .terminalOnly, cancellationBatchSize: 256)
+            options: ScanOptions(progressInterval: .infinity, cancellationBatchSize: 256)
         ))
         let events = await collectEvents(stream)
 
@@ -110,12 +110,17 @@ final class CancellationTests: XCTestCase {
         XCTAssertEqual(node(result.root, at: "finished")?.readState, .complete)
         XCTAssertEqual(node(result.root, at: "finished/a.bin")?.readState, .complete)
 
-        // The whole tree is frozen and browsable.
+        // The whole tree is browsable, and every node in it can name its own
+        // path — nothing was handed over with a broken parent chain.
         var stack: [ScanNode] = [result.root]
+        var visited = 0
         while let node = stack.popLast() {
-            XCTAssertTrue(node.isFrozen, "\(node.name) was handed over still open")
+            visited += 1
+            XCTAssertEqual(node.pathComponents().first, result.root.name,
+                           "\(node.name) does not lead back to the root")
             stack.append(contentsOf: node.children)
         }
+        XCTAssertGreaterThan(visited, 1)
     }
 
     func test_cancellationIsTerminalEvenWhenTheWalkHadAlreadyFinished() async {

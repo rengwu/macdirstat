@@ -76,7 +76,6 @@ final class RepeatedDirectoryTests: XCTestCase {
         XCTAssertEqual(graft.fileCount, 0)
         XCTAssertTrue(graft.children.isEmpty)
         XCTAssertEqual(graft.attribution, .directoryCountedElsewhere(owner: ["scan-root", "a-real"]))
-        XCTAssertTrue(graft.isFrozen)
     }
 
     /// Which name owns the bytes follows the traversal's own deterministic
@@ -445,7 +444,7 @@ final class RepeatedDirectoryTests: XCTestCase {
     /// the whole subtree of nodes — which is precisely the field report this
     /// ticket came from.
     func test_withoutTheGuardTheSameTreeDoubles() async {
-        var options = ScanOptions(progressCadence: .everyChange, treeCadence: .everyChange)
+        var options = ScanOptions(progressInterval: 0)
         options.deduplicatesRepeatedDirectories = false
         let probe = ScriptedDirectoryProbe(rootURL: scanRootURL, root: graftedTree())
 

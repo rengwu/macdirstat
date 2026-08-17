@@ -1,5 +1,34 @@
 # macOS Disk Visualizer — Implementation-Ready Specification
 
+## Decisions taken after this spec was written
+
+**These supersede the body of this document wherever the two disagree.** The spec below
+is left as the original design record rather than rewritten in place.
+
+*2026-08-18 — simplification pass. The repo had grown ~14,000 lines of tests and guard
+machinery around ~8,000 lines of product, and mid-scan tree publishing was producing wrong
+percentages and a crash on held selections.*
+
+1. **The deployment floor is macOS 14**, not 11.0, and the build is no longer pinned to a
+   universal `arm64 + x86_64` slice. This retires the whole post-Big-Sur API watch-list
+   (§4.4), the compatibility-smoke target/plan/scheme and the Big Sur endpoint testing
+   (§9.1, §9.4, §10), and the availability workarounds the floor forced.
+2. **The tree is published once, with the terminal event.** §5.2's structurally-shared
+   frozen snapshots, `TreeSnapshot`, the ~4 Hz tree cadence (§5.4, §5.5) and the panes
+   populating behind the progress card (§7.1) are all gone. Reused subtrees kept pointing
+   up into the live tree, so a published node's parent was a node the scan thread was still
+   mutating — a moving denominator for share-of-parent, and an upward pointer that did not
+   keep its target alive. Progress scalars still stream at ~15 Hz and carry the live
+   feedback.
+3. **Emission cadence is a plain interval in seconds**, not a three-case enum. `0` means
+   every change and `.infinity` means the final reading only.
+4. **The verification surface is one test plan and one app test target.** The performance
+   and scale suite (§8.2, §9.1), the UI-test target, the thread-sanitizer plan, the
+   compatibility-smoke plan and the build-time guard scripts (`Scripts/`) are all deleted.
+   `swift test` on both packages plus the `CI` plan is the whole gate.
+
+---
+
 **Status:** Settled. This specification is the single authoritative contract for the
 first implementation. It consolidates the seven resolved planning tickets of the
 *macOS Disk Visualizer* map, reconciles the two flagged contradictions, and names the

@@ -8,11 +8,8 @@ public enum ScanMode: Sendable, Equatable {
 }
 
 /// The engine's time source, injectable so throttling is deterministic in
-/// tests.
-///
-/// `Swift.Clock` is macOS 13+, above the 11.0 floor (spec §4.2), so the engine
-/// owns this one-property protocol instead. `now` is elapsed seconds from an
-/// arbitrary origin and must be monotonic.
+/// tests. `now` is elapsed seconds from an arbitrary origin and must be
+/// monotonic.
 public protocol ScanClock: Sendable {
     var now: TimeInterval { get }
 }
@@ -23,37 +20,21 @@ public struct MonotonicClock: ScanClock {
     public var now: TimeInterval { ProcessInfo.processInfo.systemUptime }
 }
 
-/// How often an event kind may be emitted.
-///
-/// Emissions are coalesced, never per-entry (spec §5.5). Tests set
-/// `.everyChange` (cadence 0) to see the full progression, or `.terminalOnly`
-/// (cadence ∞) to see only the final exact snapshot.
-public enum EmissionCadence: Sendable, Equatable {
-    /// Emit on every change — cadence 0.
-    case everyChange
-    /// Emit at most once per interval, in seconds.
-    case minimumInterval(TimeInterval)
-    /// Emit only the final exact snapshot — cadence ∞.
-    case terminalOnly
-
-    /// ≤ ~15 Hz scalars (spec §5.5).
-    public static let progressDefault = EmissionCadence.minimumInterval(1.0 / 15.0)
-    /// ≤ ~4 Hz tree (spec §5.5).
-    public static let treeDefault = EmissionCadence.minimumInterval(0.25)
-}
-
-/// Tunables a scan carries. Every one has a default; tests override cadence
-/// and clock.
+/// Tunables a scan carries. Every one has a default; tests override the
+/// progress interval and the clock.
 public struct ScanOptions: Sendable {
-    public var progressCadence: EmissionCadence
-    public var treeCadence: EmissionCadence
+    /// The shortest gap between two `.progress` emissions, in seconds.
+    /// Progress is coalesced, never emitted per entry. `0` emits on every
+    /// change (tests, to see the whole progression) and `.infinity` emits only
+    /// the final exact reading.
+    public var progressInterval: TimeInterval
     /// Cancellation is checked per directory **and** every this-many entries
     /// inside one directory — a worst-case operation bound independent of tree
-    /// size, not a millisecond SLA (spec §5.6).
+    /// size, not a millisecond promise.
     public var cancellationBatchSize: Int
     /// How many per-entry error records to retain before keeping only the exact
-    /// running total (spec §5.7). The category counts stay exact either way —
-    /// this bounds memory, not honesty.
+    /// running total. The category counts stay exact either way — this bounds
+    /// memory, not honesty.
     public var maxDetailedErrors: Int
     public var clock: ScanClock
     /// The visited-directory guard's off switch (``VisitedDirectoryIndex``).
@@ -65,15 +46,17 @@ public struct ScanOptions: Sendable {
     /// known to be a graft in the first place.
     var deduplicatesRepeatedDirectories = true
 
+    /// ~15 Hz, which is as often as a handful of numbers on a card can
+    /// usefully change.
+    public static let defaultProgressInterval: TimeInterval = 1.0 / 15.0
+
     public init(
-        progressCadence: EmissionCadence = .progressDefault,
-        treeCadence: EmissionCadence = .treeDefault,
+        progressInterval: TimeInterval = ScanOptions.defaultProgressInterval,
         cancellationBatchSize: Int = 256,
         maxDetailedErrors: Int = 1_000,
         clock: ScanClock = MonotonicClock()
     ) {
-        self.progressCadence = progressCadence
-        self.treeCadence = treeCadence
+        self.progressInterval = max(0, progressInterval)
         self.cancellationBatchSize = max(1, cancellationBatchSize)
         self.maxDetailedErrors = max(0, maxDetailedErrors)
         self.clock = clock

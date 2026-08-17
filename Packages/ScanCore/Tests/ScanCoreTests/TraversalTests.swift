@@ -75,7 +75,7 @@ final class TraversalTests: XCTestCase {
 
         let events = await runScan(
             probe,
-            options: ScanOptions(progressCadence: .terminalOnly, treeCadence: .terminalOnly)
+            options: ScanOptions(progressInterval: .infinity)
         )
 
         guard let result = events.result else { return XCTFail("expected a result") }

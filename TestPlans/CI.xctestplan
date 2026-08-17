@@ -1,56 +1,47 @@
 {
-  "configurations" : [
+  "configurations": [
     {
-      "id" : "4BA37C33-D7B4-4A02-BADC-F56B3A293D06",
-      "name" : "Default",
-      "options" : {
-
-      }
+      "id": "4BA37C33-D7B4-4A02-BADC-F56B3A293D06",
+      "name": "Default",
+      "options": {}
     }
   ],
-  "defaultOptions" : {
-    "targetForVariableExpansion" : {
-      "containerPath" : "container:MacDirStat.xcodeproj",
-      "identifier" : "AB000000000000000000A001",
-      "name" : "MacDirStat"
+  "defaultOptions": {
+    "targetForVariableExpansion": {
+      "containerPath": "container:MacDirStat.xcodeproj",
+      "identifier": "AB000000000000000000A001",
+      "name": "MacDirStat"
     }
   },
-  "testTargets" : [
+  "testTargets": [
     {
-      "target" : {
-        "containerPath" : "container:Packages\/ScanCore",
-        "identifier" : "ScanCoreTests",
-        "name" : "ScanCoreTests"
+      "target": {
+        "containerPath": "container:Packages/ScanCore",
+        "identifier": "ScanCoreTests",
+        "name": "ScanCoreTests"
       }
     },
     {
-      "target" : {
-        "containerPath" : "container:Packages\/ScanCore",
-        "identifier" : "ScanCoreFileSystemTests",
-        "name" : "ScanCoreFileSystemTests"
+      "target": {
+        "containerPath": "container:Packages/ScanCore",
+        "identifier": "ScanCoreFileSystemTests",
+        "name": "ScanCoreFileSystemTests"
       }
     },
     {
-      "target" : {
-        "containerPath" : "container:Packages\/TreemapLayout",
-        "identifier" : "TreemapLayoutTests",
-        "name" : "TreemapLayoutTests"
+      "target": {
+        "containerPath": "container:Packages/TreemapLayout",
+        "identifier": "TreemapLayoutTests",
+        "name": "TreemapLayoutTests"
       }
     },
     {
-      "target" : {
-        "containerPath" : "container:MacDirStat.xcodeproj",
-        "identifier" : "AB000000000000000000A002",
-        "name" : "MacDirStatTests"
-      }
-    },
-    {
-      "target" : {
-        "containerPath" : "container:MacDirStat.xcodeproj",
-        "identifier" : "AB000000000000000000A003",
-        "name" : "MacDirStatUITests"
+      "target": {
+        "containerPath": "container:MacDirStat.xcodeproj",
+        "identifier": "AB000000000000000000A002",
+        "name": "MacDirStatTests"
       }
     }
   ],
-  "version" : 1
+  "version": 1
 }

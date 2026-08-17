@@ -2,9 +2,9 @@ import XCTest
 @testable import ScanCore
 import ScanCoreTestSupport
 
-/// Progress honesty, spec §5.5: coalesced at ≤ ~15 Hz scalars and ≤ ~4 Hz tree,
-/// buffering-newest under a slow consumer, an exact final snapshot whatever the
-/// cadence, and no completion fraction for a folder scan.
+/// Progress honesty: coalesced to ~15 Hz, newest-wins under a slow consumer, an
+/// exact final reading whatever the interval, and no completion percentage for a
+/// folder scan.
 ///
 /// Every timing claim here is made against a clock the test drives by hand. A
 /// throttle asserted against the wall clock asserts the speed of the machine.
@@ -23,7 +23,7 @@ final class ProgressCadenceTests: XCTestCase {
 
     private var expectedWideTotal: Int64 { (1...60).reduce(0) { $0 + Int64($1) } }
 
-    func test_emissionsAreThrottledToTheDocumentedCadences() async {
+    func test_progressIsThrottledToTheDocumentedInterval() async {
         let clock = VirtualClock()
         let probe = ScriptedDirectoryProbe(
             rootURL: scanRootURL,
@@ -35,31 +35,25 @@ final class ProgressCadenceTests: XCTestCase {
         let events = await runScan(
             probe,
             options: ScanOptions(
-                progressCadence: .progressDefault,
-                treeCadence: .treeDefault,
+                progressInterval: ScanOptions.defaultProgressInterval,
                 clock: clock
             )
         )
 
-        guard let lastProgress = events.progressSnapshots.last,
-              let lastTree = events.treeSnapshots.last
-        else { return XCTFail("expected snapshots") }
+        guard let lastProgress = events.progressSnapshots.last else {
+            return XCTFail("expected snapshots")
+        }
 
         let elapsed = lastProgress.elapsed
-        XCTAssertGreaterThan(elapsed, 1.0, "the fixture must span several cadence windows")
+        XCTAssertGreaterThan(elapsed, 1.0, "the fixture must span several windows")
 
-        // `sequence`/`generation` count what the *engine* emitted, before any
-        // coalescing on the way to this consumer — so they are the rate itself.
-        let progressBudget = UInt64(elapsed / (1.0 / 15.0)) + 2
-        let treeBudget = UInt64(elapsed / 0.25) + 2
+        // `sequence` counts what the *engine* emitted, before any coalescing on
+        // the way to this consumer — so it is the rate itself.
+        let progressBudget = UInt64(elapsed / ScanOptions.defaultProgressInterval) + 2
         XCTAssertLessThanOrEqual(lastProgress.sequence, progressBudget,
-                                 "\(lastProgress.sequence) scalar emissions over \(elapsed)s exceeds ~15 Hz")
-        XCTAssertLessThanOrEqual(lastTree.generation, treeBudget,
-                                 "\(lastTree.generation) tree emissions over \(elapsed)s exceeds ~4 Hz")
-        XCTAssertGreaterThan(lastProgress.sequence, lastTree.generation,
-                             "scalars must run faster than the tree")
+                                 "\(lastProgress.sequence) emissions over \(elapsed)s exceeds ~15 Hz")
 
-        // Delivered snapshots are spaced by at least the scalar window — all
+        // Delivered snapshots are spaced by at least the window — all
         // but the last, which is the forced exact final frame and is allowed to
         // land early.
         let elapsedTimes = events.progressSnapshots.dropLast().map(\.elapsed)
@@ -69,7 +63,7 @@ final class ProgressCadenceTests: XCTestCase {
         XCTAssertGreaterThan(elapsedTimes.count, 3, "the fixture must produce a real progression")
     }
 
-    func test_terminalOnlyCadenceEmitsExactlyOneExactSnapshotOfEachKind() async {
+    func test_anInfiniteIntervalEmitsExactlyOneExactReading() async {
         let clock = VirtualClock()
         let probe = ScriptedDirectoryProbe(
             rootURL: scanRootURL,
@@ -80,19 +74,16 @@ final class ProgressCadenceTests: XCTestCase {
 
         let events = await runScan(
             probe,
-            options: ScanOptions(progressCadence: .terminalOnly, treeCadence: .terminalOnly, clock: clock)
+            options: ScanOptions(progressInterval: .infinity, clock: clock)
         )
 
         XCTAssertEqual(events.progressSnapshots.count, 1)
-        XCTAssertEqual(events.treeSnapshots.count, 1)
         XCTAssertEqual(events.progressSnapshots.first?.sequence, 1)
-        XCTAssertEqual(events.treeSnapshots.first?.generation, 1)
         XCTAssertEqual(events.progressSnapshots.first?.attributedDiskBytes, expectedWideTotal)
-        XCTAssertEqual(events.treeSnapshots.first?.root.subtreeDiskBytes, expectedWideTotal)
         XCTAssertEqual(events.result?.root.subtreeDiskBytes, expectedWideTotal)
     }
 
-    func test_theFinalSnapshotIsExactWhateverTheCadence() async {
+    func test_theFinalReadingIsExactWhateverTheInterval() async {
         let clock = VirtualClock()
         let probe = ScriptedDirectoryProbe(
             rootURL: scanRootURL,
@@ -103,15 +94,14 @@ final class ProgressCadenceTests: XCTestCase {
 
         let events = await runScan(
             probe,
-            options: ScanOptions(progressCadence: .progressDefault, treeCadence: .treeDefault, clock: clock)
+            options: ScanOptions(progressInterval: ScanOptions.defaultProgressInterval, clock: clock)
         )
 
         guard let result = events.result else { return XCTFail("expected a result") }
         XCTAssertEqual(events.progressSnapshots.last?.attributedDiskBytes, result.root.subtreeDiskBytes)
         XCTAssertEqual(events.progressSnapshots.last?.filesSeen, 60)
         XCTAssertEqual(events.progressSnapshots.last?.directoriesSeen, 61)
-        XCTAssertEqual(events.treeSnapshots.last?.root.subtreeDiskBytes, result.root.subtreeDiskBytes)
-        XCTAssertEqual(events.treeSnapshots.last?.root.fileCount, 60)
+        XCTAssertEqual(result.root.fileCount, 60)
     }
 
     /// A consumer that looks away must come back to the newest snapshot, not to
@@ -122,7 +112,7 @@ final class ProgressCadenceTests: XCTestCase {
         let scanner = Scanner()
         let stream = await scanner.scan(makeRequest(
             probe: probe,
-            options: ScanOptions(progressCadence: .everyChange, treeCadence: .everyChange)
+            options: ScanOptions(progressInterval: 0)
         ))
 
         // Look away while the scan runs.

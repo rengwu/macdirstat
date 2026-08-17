@@ -135,7 +135,7 @@ final class ResilienceTests: XCTestCase {
 
         guard let result = await runScan(
             probe,
-            options: ScanOptions(progressCadence: .terminalOnly, treeCadence: .terminalOnly)
+            options: ScanOptions(progressInterval: .infinity)
         ).result else { return XCTFail("expected a result") }
 
         XCTAssertEqual(result.reason, .completed, "2,500 failures still do not fail the scan")

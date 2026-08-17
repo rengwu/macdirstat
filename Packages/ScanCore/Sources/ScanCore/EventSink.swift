@@ -2,15 +2,13 @@ import Foundation
 
 /// The buffer between the traversal and the `AsyncStream` the UI iterates.
 ///
-/// **Buffering-newest, without losing the events that carry the contract.**
-/// A slow consumer must not build an unbounded backlog of stale snapshots
-/// (spec §5.5), but `.started` and the terminal event are the contract itself
-/// and may never be dropped. So this sink queues `.progress` and `.tree` as
-/// *slots*: a slot holds one value and keeps its place in the queue, and
-/// re-emitting overwrites that value in place. A consumer that looks away for
-/// a second comes back to the newest snapshot, exactly once, in the position
-/// the first superseded one held — while `.started` and `.finished`/`.failed`
-/// queue normally and always arrive.
+/// **Newest progress wins; the rest always arrives.** A slow consumer must not
+/// build a backlog of stale progress snapshots, but `.started` and the terminal
+/// event are the contract itself and may never be dropped. So `.progress` is
+/// queued as a *slot*: it holds one value and keeps its place in the queue, and
+/// re-emitting overwrites that value in place. A consumer that looks away for a
+/// second comes back to the newest reading, exactly once, in the position the
+/// first superseded one held.
 ///
 /// `emit` is synchronous and never blocks the traversal; `next()` is the
 /// pull side of `AsyncStream(unfolding:)`.
@@ -18,15 +16,12 @@ final class EventSink: @unchecked Sendable {
     private enum Slot {
         case reliable(ScanEvent)
         case progress
-        case tree
     }
 
     private let lock = NSLock()
     private var queue: [Slot] = []
     private var pendingProgress: ProgressSnapshot?
-    private var pendingTree: TreeSnapshot?
     private var progressQueued = false
-    private var treeQueued = false
     private var producerFinished = false
     private var waiter: CheckedContinuation<ScanEvent?, Never>?
 
@@ -43,12 +38,6 @@ final class EventSink: @unchecked Sendable {
             if !progressQueued {
                 progressQueued = true
                 queue.append(.progress)
-            }
-        case .tree(let snapshot):
-            pendingTree = snapshot
-            if !treeQueued {
-                treeQueued = true
-                queue.append(.tree)
             }
         case .started, .finished, .failed:
             queue.append(.reliable(event))
@@ -148,12 +137,6 @@ final class EventSink: @unchecked Sendable {
                 if let snapshot = pendingProgress {
                     pendingProgress = nil
                     return .progress(snapshot)
-                }
-            case .tree:
-                treeQueued = false
-                if let snapshot = pendingTree {
-                    pendingTree = nil
-                    return .tree(snapshot)
                 }
             }
         }

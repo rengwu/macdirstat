@@ -4,20 +4,16 @@ A native macOS disk visualizer: scan one folder or volume, and read it as a
 synchronized directory tree and a classic flat treemap. Read-only — the only
 file actions are Open and Reveal.
 
-The authoritative contract is
-[`.plan/maps/macos-disk-visualizer/spec.md`](.plan/maps/macos-disk-visualizer/spec.md).
-Section references below (§) point into it.
-
 ## Layout
 
 | Path | What it is |
 | --- | --- |
-| `MacDirStat.xcodeproj` | The app project: one macOS App target and three test targets (§4.2) |
-| `App/MacDirStat` | AppKit shell — programmatic lifecycle, no storyboard, not document-based (§4.1) |
-| `Packages/ScanCore` | Foundation-only scan engine: traversal, aggregation, cancellation, progress, errors (§3, §5) |
-| `Packages/TreemapLayout` | Foundation-only rectangle layout: squarified geometry and the merge rule (§6) |
-| `TestPlans` | The CI, thread-sanitizer, performance and compatibility-smoke plans (§9.1) |
-| `Scripts` | The build-time guards and the local verification gate |
+| `MacDirStat.xcodeproj` | The app project: one macOS App target and one test target |
+| `App/MacDirStat` | AppKit shell — programmatic lifecycle, no storyboard, not document-based |
+| `App/MacDirStatTests` | The app's tests: formatting, status line, selection, inspector, treemap view |
+| `Packages/ScanCore` | Foundation-only scan engine: traversal, aggregation, cancellation, progress, errors |
+| `Packages/TreemapLayout` | Foundation-only rectangle layout: squarified geometry and the merge rule |
+| `TestPlans/CI.xctestplan` | The one test plan |
 
 The two packages import Foundation and nothing else — not AppKit, not SwiftUI,
 not even CoreGraphics — so they test headlessly and own their own geometry
@@ -33,60 +29,56 @@ build the packages and typecheck the app, but you cannot run a single test.
 sudo xcode-select -s /Applications/Xcode.app
 ```
 
-Deployment floor: **macOS 11.0 Big Sur**, universal (`arm64` + `x86_64`).
+Deployment floor: **macOS 14**.
 
-## The four local commands (§9.1)
+## Running the tests
+
+The packages test on their own, headlessly and in about three seconds:
 
 ```sh
 swift test --package-path Packages/ScanCore
 swift test --package-path Packages/TreemapLayout
-
-xcodebuild test -project MacDirStat.xcodeproj -scheme MacDirStat-CI \
-  -testPlan CI -destination 'platform=macOS'
-
-xcodebuild build -project MacDirStat.xcodeproj -scheme MacDirStat \
-  -configuration Release -destination 'generic/platform=macOS' \
-  ARCHS='arm64 x86_64' ONLY_ACTIVE_ARCH=NO MACOSX_DEPLOYMENT_TARGET=11.0
 ```
 
-Or run everything at once:
+Everything, including the app target:
 
 ```sh
-Scripts/verify-scaffold.sh
+xcodebuild test -project MacDirStat.xcodeproj -scheme MacDirStat-CI \
+  -testPlan CI -destination 'platform=macOS'
 ```
 
-It exits `0` when every step ran and passed, `1` on failure, and `2` when a step
-had to be skipped — a skipped step is not a green gate.
+And to build the app:
 
-## Schemes and plans (§9.1)
-
-| Scheme | Plan | Purpose |
-| --- | --- | --- |
-| `MacDirStat` | — | Build and run the app |
-| `MacDirStat-CI` | `CI` | Every test target except performance; the one-command gate |
-| `MacDirStat-CI` | `CI-ThreadSanitizer` | The same targets once under TSan, required before an RC |
-| `MacDirStat-Performance` | `Performance` | Release, no sanitizers, reference machine, opt-in before an RC |
-| `MacDirStat-CompatibilitySmoke` | `CompatibilitySmoke` | Launch/scan/cancel/selection workflow on each supported macOS |
-
-The six test targets: `ScanCoreTests`, `ScanCoreFileSystemTests`,
-`TreemapLayoutTests`, `MacDirStatTests`, `MacDirStatUITests`,
-`MacDirStatPerformanceTests`.
-
-## Guards
-
-These run on every app build and from `Scripts/verify-scaffold.sh`. Each has its
-own self-test under `Scripts/tests/`, so a guard that has stopped guarding shows
-up as a failure rather than as silence.
-
-| Script | What it enforces |
-| --- | --- |
-| `check-post-bigsur-apis.sh` | No unreviewed `SwiftUI.Table`, `Canvas`, `NavigationSplitView` or `searchable` — all above the 11.0 floor; `NSSearchField` is the permitted search control (§4.4) |
-| `check-package-purity.sh` | Both packages import Foundation and no UI framework, taken from the compiler's own import list, and pin the 11.0 floor (§4.2) |
-| `check-project-integrity.py` | The project's object graph, file references, schemes, test plans and pinned build settings still agree with each other |
-
-A genuinely reviewed and guarded use of a watch-list API is exempted with a
-marker on the line or the line above it:
-
-```swift
-// compat-reviewed: guarded by if #available(macOS 12.0, *), Big Sur takes the fallback
+```sh
+xcodebuild build -project MacDirStat.xcodeproj -scheme MacDirStat \
+  -configuration Release -destination 'platform=macOS'
 ```
+
+## How a scan reaches the screen
+
+The engine walks the tree on its own thread and **hands it over once**, with the
+terminal event. While the scan runs, the window shows the progress card — bytes
+counted, files, folders, elapsed, items per second, the folder being read, and a
+percentage on volume scans — and the tree and treemap fill in when it finishes.
+
+That is deliberate. The engine used to republish the tree several times a second
+by copying the folders it was still working on and reusing the finished ones by
+reference, and those reused nodes kept pointing up into the live tree the scan
+thread was still writing to. The % column divided by a total that was still
+moving, and a selection held across a republish could outlive the copy it came
+from. One tree makes both impossible rather than fixed.
+
+## What the two size figures mean
+
+**On-disk size** is the blocks an entry occupies, and it is the measure: it
+drives the treemap's area, the Size column and every total. **Content length** is
+how many bytes the content is; it is carried beside on-disk size and drives
+nothing, so the inspector can explain the visible figure where the two diverge —
+a sparse disk image, a compressed binary, a cloud placeholder. `CONTEXT.md` has
+the full vocabulary.
+
+## Design record
+
+`.plan/maps/macos-disk-visualizer/spec.md` is the original specification. It is a
+record, not a contract: the decisions listed at the top of that file supersede
+the body wherever the two disagree.

@@ -25,21 +25,8 @@ final class ScanPresentationModel {
 
     var onChange: (() -> Void)?
 
-    /// How often the in-progress tree is republished to the two panes —
-    /// ticket 01's settled 4 Hz (spec §5.5).
-    ///
-    /// It was raised to 10 s in `cc212c8` because every snapshot cost a full
-    /// treemap relayout on the main thread, and at volume scale that relayout
-    /// took seconds. Ticket 14 removed both halves of that: the layout is
-    /// bounded by the boxes on screen rather than by the tree, and it runs off
-    /// the main thread, coalesced, so a snapshot the layout cannot keep up with
-    /// costs a skipped picture rather than a frozen window. The throttle was
-    /// hiding a freeze, not preventing one, so with the freeze gone the settled
-    /// cadence comes back.
-    static let treeInterval: TimeInterval = 0.25
-
-    /// Progress scalars are a handful of numbers and a path label: no layout,
-    /// no reload, so this stays responsive.
+    /// Progress is a handful of numbers and a path label: no layout, no reload,
+    /// so this stays responsive.
     static let progressInterval: TimeInterval = 0.1
 
     init(scanner: any Scanning = Scanner()) {
@@ -64,10 +51,7 @@ final class ScanPresentationModel {
             root: url,
             mode: mode,
             probe: FileManagerDirectoryProbe(),
-            options: ScanOptions(
-                progressCadence: .minimumInterval(Self.progressInterval),
-                treeCadence: .minimumInterval(Self.treeInterval)
-            )
+            options: ScanOptions(progressInterval: Self.progressInterval)
         )
 
         consumingTask = Task { [weak self] in
@@ -91,8 +75,6 @@ final class ScanPresentationModel {
             volumeCapacity = capacity
         case let .progress(snapshot):
             progress = snapshot
-        case let .tree(snapshot):
-            root = snapshot.root
         case let .finished(scanResult):
             result = scanResult
             root = scanResult.root

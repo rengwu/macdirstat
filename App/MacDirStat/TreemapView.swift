@@ -210,10 +210,6 @@ final class TreemapView: NSView {
         needsDisplay = true
     }
 
-    /// The number of rectangles the layout put on screen — what §6.2 says
-    /// relayout cost is bounded by.
-    var renderedBoxCount: Int { currentLayout()?.boxes.count ?? 0 }
-
     // MARK: - Drawing
 
     override func draw(_ dirtyRect: NSRect) {

@@ -62,29 +62,7 @@ public struct ProgressSnapshot: Sendable, Equatable {
     }
 }
 
-/// An immutable view of the tree as it stands.
-///
-/// Its `root` is frozen: completed subtrees are the very same objects the scan
-/// built, shared by reference, and only the still-open spine is copied
-/// (spec §5.2).
-public struct TreeSnapshot: Sendable {
-    public let root: ScanNode
-    /// Emission order. Later snapshots supersede earlier ones.
-    public let generation: UInt64
-
-    /// Keeps the scan's live tree alive for as long as this snapshot is held.
-    /// A shared frozen subtree's `parent` chain points into that live tree, so
-    /// releasing it while a snapshot survives would leave those links dangling.
-    private let retainedLiveTree: ScanNode
-
-    init(root: ScanNode, liveTree: ScanNode, generation: UInt64) {
-        self.root = root
-        self.retainedLiveTree = liveTree
-        self.generation = generation
-    }
-}
-
-/// Whether a result is the whole truth (spec §5.3).
+/// Whether a result is the whole truth.
 public enum Completeness: Sendable, Equatable {
     /// Ran to completion with nothing unreadable.
     case exact
@@ -103,8 +81,8 @@ public struct ScanResult: Sendable {
     }
 
     public let reason: Reason
-    /// The frozen, fully retained tree. Browsable and selectable whatever the
-    /// reason (spec §3.5).
+    /// The tree. Browsable and selectable whatever the reason — a cancelled
+    /// scan hands over everything it did reach.
     public let root: ScanNode
     public let completeness: Completeness
     /// What could not be read: exact totals, bounded detail (spec §5.7).
@@ -147,14 +125,22 @@ public enum ScanFailure: Error, Sendable, Equatable {
 
 /// The scan's event stream.
 ///
-/// Order is: exactly one `.started`, then interleaved `.progress` and `.tree`
-/// (both monotonic, later supersedes earlier), then exactly one terminal
-/// `.finished` or `.failed`, then the stream ends.
+/// Order is: exactly one `.started`, then `.progress` (monotonic, later
+/// supersedes earlier), then exactly one terminal `.finished` or `.failed`,
+/// then the stream ends.
+///
+/// **The tree is delivered once, with the terminal event.** It used to be
+/// republished several times a second so the panes could fill in as the scan
+/// ran, which meant handing out a tree the scan was still writing to. Those
+/// snapshots shared their finished subtrees with the live tree by reference, so
+/// a published node's `parent` pointed at a node the scan thread was still
+/// mutating — wrong percentages, and a dangling pointer once the snapshot it
+/// was selected from went away. There is now one tree, built by the scan and
+/// handed over when it is finished with it.
 public enum ScanEvent: Sendable {
     case started(root: URL, mode: ScanMode, volumeCapacity: VolumeCapacity?)
     case progress(ProgressSnapshot)
-    case tree(TreeSnapshot)
-    /// Terminal: `.completed` or `.cancelled`.
+    /// Terminal: `.completed` or `.cancelled`. Carries the tree.
     case finished(ScanResult)
     /// Terminal, pre-flight only.
     case failed(ScanFailure)
@@ -162,7 +148,7 @@ public enum ScanEvent: Sendable {
     public var isTerminal: Bool {
         switch self {
         case .finished, .failed: return true
-        case .started, .progress, .tree: return false
+        case .started, .progress: return false
         }
     }
 }

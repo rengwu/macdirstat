@@ -1,12 +1,12 @@
-// swift-tools-version:5.7
+// swift-tools-version:5.9
 // TreemapLayout — the Foundation-only rectangle layout (spec §4.2, §6).
 
 import PackageDescription
 
 let package = Package(
     name: "TreemapLayout",
-    // Deployment floor fixed at macOS 11.0 (spec §4.2).
-    platforms: [.macOS(.v11)],
+    // Deployment floor: macOS 14.
+    platforms: [.macOS(.v14)],
     products: [
         .library(name: "TreemapLayout", targets: ["TreemapLayout"])
     ],

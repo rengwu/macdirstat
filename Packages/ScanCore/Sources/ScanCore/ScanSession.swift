@@ -2,13 +2,13 @@ import Foundation
 
 /// One scan, start to terminal event.
 ///
-/// A session is created inside the scan's own task and never escapes it, so
-/// the mutable tree, the counters and the accumulators have exactly one
-/// writer — the property spec §5.2 asks for, obtained by confinement rather
-/// than by locking the hot path.
+/// A session is created inside the scan's own task and never escapes it, so the
+/// mutable tree, the counters and the accumulators have exactly one writer —
+/// obtained by confinement rather than by locking the hot path. The tree is
+/// handed to the UI once, with the terminal event, and never touched again.
 ///
-/// The traversal is **serial, iterative, depth-first** over an explicit stack
-/// (spec §5.4). Serial because hard-link "first path" ownership is only
+/// The traversal is **serial, iterative, depth-first** over an explicit stack.
+/// Serial because hard-link "first path" ownership is only
 /// well-defined under a deterministic order, because it keeps every lock off
 /// the hot path, and because a scan is confined to one device anyway.
 /// Iterative because a filesystem's depth is the user's to choose, not ours to
@@ -42,6 +42,7 @@ final class ScanSession {
     private let token: CancellationToken
     private let probe: DirectoryProbe
     private let clock: ScanClock
+    private let progressInterval: TimeInterval
     private let batchSize: Int
 
     private let root: ScanNode
@@ -65,13 +66,10 @@ final class ScanSession {
 
     private var startedAt: TimeInterval = 0
     private var lastProgressEmit: TimeInterval = -.infinity
-    private var lastTreeEmit: TimeInterval = -.infinity
     private var progressSequence: UInt64 = 0
     /// Sticky: once the counted total has passed the volume's used figure, the
     /// completion percentage is gone for the rest of the scan.
     private var fractionWithdrawn = false
-    private var treeGeneration: UInt64 = 0
-    private var treeDirty = false
     private var entriesSinceClockRead = 0
     private var entriesSinceCancellationCheck = 0
 
@@ -86,6 +84,7 @@ final class ScanSession {
         self.token = token
         self.probe = request.probe
         self.clock = request.options.clock
+        self.progressInterval = request.options.progressInterval
         self.batchSize = request.options.cancellationBatchSize
         self.diagnostics = ScanDiagnostics(detailLimit: request.options.maxDetailedErrors)
         self.visitedDirectories = VisitedDirectoryIndex(
@@ -125,7 +124,7 @@ final class ScanSession {
 
         let stoppedEarly = traverse()
 
-        emitFinalSnapshots()
+        emitFinalProgress()
         sink.emit(.finished(ScanResult(
             // Cancellation is terminal: once requested, a scan never reports
             // `.completed` (spec §5.6). Whether the *data* is short is a
@@ -237,9 +236,7 @@ final class ScanSession {
                 // so it is an exclusion and its ancestors stay Complete.
                 diagnostics.exclude(.repeatedDirectory)
                 stack[top].node.markDirectoryCountedElsewhere(owner: owner.pathComponents())
-                stack[top].node.freeze()
                 stack.removeLast()
-                treeDirty = true
                 emitIfDue()
                 continue
             }
@@ -258,7 +255,6 @@ final class ScanSession {
                     entries.sort { NameOrder.precedes($0.name, $1.name) }
                     stack[top].entries = entries
                     stack[top].listed = true
-                    treeDirty = true
                     emitIfDue()
                 } catch {
                     // A directory we cannot read is a recoverable problem, not
@@ -271,9 +267,7 @@ final class ScanSession {
                         category: Self.isMissing(error) ? .disappeared : .unreadableDirectory,
                         error: error
                     )
-                    stack[top].node.freeze()
                     stack.removeLast()
-                    treeDirty = true
                     emitIfDue()
                     continue
                 }
@@ -301,7 +295,6 @@ final class ScanSession {
                 let kind = Self.kind(of: meta)
                 let node = ScanNode(name: meta.name, kind: kind, parent: stack[top].node)
                 stack[top].node.appendChild(node)
-                treeDirty = true
 
                 if kind == .directory || kind == .package {
                     directoriesSeen += 1
@@ -313,7 +306,6 @@ final class ScanSession {
                         // exclusion, not an error, and its ancestors stay
                         // Complete.
                         diagnostics.exclude(.crossedVolumeBoundary)
-                        node.freeze()
                     } else {
                         let isMountPoint = mountPointPaths.contains(childURL.path)
                         let frame = Frame(
@@ -357,9 +349,7 @@ final class ScanSession {
                 continue
             }
 
-            stack[top].node.freeze()
             stack.removeLast()
-            treeDirty = true
             emitIfDue()
         }
 
@@ -387,7 +377,6 @@ final class ScanSession {
     private func stopAtCancellation(_ stack: [Frame]) {
         for frame in stack {
             frame.node.markIncomplete()
-            frame.node.freeze()
         }
     }
 
@@ -433,7 +422,6 @@ final class ScanSession {
         }
 
         node.attribute(diskBytes: bytes, contentBytes: contentBytes, isRegularFile: isRegularFile)
-        node.freeze()
 
         guard bytes > 0 || contentBytes > 0 || isRegularFile else { return }
         // Roll up to every ancestor, so each open directory's total is live at
@@ -519,48 +507,30 @@ final class ScanSession {
         return isCancellationRequested
     }
 
-    private var emitsOnEveryChange: Bool {
-        request.options.progressCadence == .everyChange || request.options.treeCadence == .everyChange
-    }
-
     private func throttledEmit() {
         entriesSinceClockRead += 1
-        if !emitsOnEveryChange && entriesSinceClockRead < Self.clockReadInterval { return }
+        if progressInterval > 0 && entriesSinceClockRead < Self.clockReadInterval { return }
         entriesSinceClockRead = 0
         emitIfDue()
     }
 
     private func emitIfDue() {
+        // An infinite interval means "only the final reading" — and without the
+        // finiteness check the very first call would pass, because the last
+        // emission starts at negative infinity.
+        guard progressInterval.isFinite else { return }
         let now = clock.now
-        if Self.isDue(request.options.progressCadence, last: lastProgressEmit, now: now) {
-            lastProgressEmit = now
-            sink.emit(.progress(makeProgress(now: now)))
-        }
-        if treeDirty, Self.isDue(request.options.treeCadence, last: lastTreeEmit, now: now) {
-            lastTreeEmit = now
-            treeDirty = false
-            sink.emit(.tree(makeTree()))
-        }
+        guard now - lastProgressEmit >= progressInterval else { return }
+        lastProgressEmit = now
+        sink.emit(.progress(makeProgress(now: now)))
     }
 
-    /// The last frame the UI draws is always exact, whatever the cadence
-    /// (spec §5.5).
-    private func emitFinalSnapshots() {
+    /// The last reading the card shows is always exact, whatever the interval.
+    private func emitFinalProgress() {
         let now = clock.now
         lastProgressEmit = now
-        lastTreeEmit = now
-        treeDirty = false
         currentPathTail = ""
         sink.emit(.progress(makeProgress(now: now, isFinal: true)))
-        sink.emit(.tree(makeTree()))
-    }
-
-    private static func isDue(_ cadence: EmissionCadence, last: TimeInterval, now: TimeInterval) -> Bool {
-        switch cadence {
-        case .everyChange: return true
-        case .terminalOnly: return false
-        case .minimumInterval(let interval): return now - last >= interval
-        }
     }
 
     private func makeProgress(now: TimeInterval, isFinal: Bool = false) -> ProgressSnapshot {
@@ -602,15 +572,6 @@ final class ScanSession {
         guard !fractionWithdrawn else { return nil }
         let fraction = Double(attributedDiskBytes) / Double(capacity.usedBytes)
         return min(fraction, isFinal ? 1.0 : 0.99)
-    }
-
-    private func makeTree() -> TreeSnapshot {
-        treeGeneration += 1
-        return TreeSnapshot(
-            root: root.frozenSnapshot(parent: nil),
-            liveTree: root,
-            generation: treeGeneration
-        )
     }
 
     /// Exclusions deliberately do not appear here: nothing went wrong, so a

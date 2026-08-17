@@ -50,19 +50,18 @@ public enum ReadState: Sendable, Equatable {
 /// **Name-only.** A node stores its last path component, not an absolute URL —
 /// at millions of nodes the paths would dominate memory. The absolute URL for
 /// Open/Reveal/inspector is rebuilt from the parent chain on demand, off the
-/// hot path (spec §5.2, §8.4).
+/// hot path.
 ///
-/// **Freeze discipline.** A node is *open* while it or its subtree is still
-/// being built and *frozen* once its listing is exhausted and its children are
-/// frozen. A frozen node never mutates again, which is what makes it safe to
-/// share a frozen subtree by reference into a snapshot instead of deep-copying
-/// it (spec §5.2). That discipline — not the type system — is why this class
-/// is `@unchecked Sendable`: the actor-side scan mutates only open nodes, and
-/// only frozen nodes ever cross to the UI side.
+/// **One tree, handed over once.** The scan builds the tree on its own thread
+/// and mutates nothing after it emits `.finished`; the UI only ever sees it
+/// after that. That hand-off — not the type system — is why this class is
+/// `@unchecked Sendable`. Nothing here is shared between a mutating tree and a
+/// published one, which is what used to make published percentages wrong and
+/// selections crash.
 ///
 /// **Lifetime.** `parent` is `unowned`: the tree owns its children downward, so
-/// holding the root (as `ScanResult` and `TreeSnapshot` both do) keeps every
-/// node's parent chain alive. Hold the root, not a bare descendant.
+/// holding the root (as `ScanResult` does) keeps every node's parent chain
+/// alive. Hold the root, not a bare descendant.
 public final class ScanNode: @unchecked Sendable {
     /// Last path component only.
     public let name: String
@@ -115,8 +114,6 @@ public final class ScanNode: @unchecked Sendable {
 
     public private(set) var attribution: Attribution
     public private(set) var readState: ReadState
-    /// `true` once this node and its subtree are final and immutable.
-    public private(set) var isFrozen: Bool
 
     init(name: String, kind: NodeKind, parent: ScanNode?) {
         self.name = name
@@ -131,7 +128,6 @@ public final class ScanNode: @unchecked Sendable {
         self.attributedNodeCount = 0
         self.attribution = .owned
         self.readState = .complete
-        self.isFrozen = false
     }
 
     // MARK: - Reading
@@ -235,35 +231,5 @@ public final class ScanNode: @unchecked Sendable {
         if readState == .complete {
             readState = .incomplete
         }
-    }
-
-    func freeze() {
-        isFrozen = true
-    }
-
-    // MARK: - Snapshots
-
-    /// Builds an immutable view of this subtree.
-    ///
-    /// A frozen node is returned **as-is, shared by reference** — no copy, no
-    /// walk. Only the still-open spine (root → the directory being listed) is
-    /// copied, carrying its current partial totals. Cost is therefore O(spine
-    /// depth + the open nodes' child arrays), never O(total nodes), which is
-    /// what makes a 4 Hz tree feed affordable on a million-node scan
-    /// (spec §5.2).
-    func frozenSnapshot(parent snapshotParent: ScanNode?) -> ScanNode {
-        if isFrozen { return self }
-        let copy = ScanNode(name: name, kind: kind, parent: snapshotParent)
-        copy.ownDiskBytes = ownDiskBytes
-        copy.subtreeDiskBytes = subtreeDiskBytes
-        copy.ownContentBytes = ownContentBytes
-        copy.subtreeContentBytes = subtreeContentBytes
-        copy.fileCount = fileCount
-        copy.attributedNodeCount = attributedNodeCount
-        copy.attribution = attribution
-        copy.readState = readState
-        copy.children = children.map { $0.frozenSnapshot(parent: copy) }
-        copy.isFrozen = true
-        return copy
     }
 }

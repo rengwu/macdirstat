@@ -14,7 +14,7 @@ func makeRequest(
     probe: DirectoryProbe,
     mode: ScanMode = .folder,
     access: SecurityScopedAccess = SpySecurityScopedAccess(),
-    options: ScanOptions = ScanOptions(progressCadence: .everyChange, treeCadence: .everyChange)
+    options: ScanOptions = ScanOptions(progressInterval: 0)
 ) -> ScanRequest {
     ScanRequest(root: scanRootURL, mode: mode, probe: probe, access: access, options: options)
 }
@@ -32,7 +32,7 @@ func runScan(
     _ probe: DirectoryProbe,
     mode: ScanMode = .folder,
     access: SecurityScopedAccess = SpySecurityScopedAccess(),
-    options: ScanOptions = ScanOptions(progressCadence: .everyChange, treeCadence: .everyChange)
+    options: ScanOptions = ScanOptions(progressInterval: 0)
 ) async -> [ScanEvent] {
     let scanner = Scanner()
     let stream = await scanner.scan(makeRequest(probe: probe, mode: mode, access: access, options: options))
@@ -46,10 +46,6 @@ extension Array where Element == ScanEvent {
 
     var progressSnapshots: [ProgressSnapshot] {
         compactMap { if case .progress(let snapshot) = $0 { return snapshot } else { return nil } }
-    }
-
-    var treeSnapshots: [TreeSnapshot] {
-        compactMap { if case .tree(let snapshot) = $0 { return snapshot } else { return nil } }
     }
 
     var terminalEvents: [ScanEvent] {

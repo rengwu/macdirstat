@@ -105,15 +105,6 @@ public final class TemporaryFileSystemFixture {
         }
     }
 
-    // MARK: - Fingerprinting
-
-    /// The before/after read-only proof (spec §9.2). Covers the whole owned
-    /// directory — including anything staged *outside* the scan root, so a
-    /// scan that reached out of scope would show up here too.
-    public func fingerprint() throws -> FilesystemFingerprint {
-        try FilesystemFingerprint.take(of: directory)
-    }
-
     // MARK: - Cleanup
 
     public func cleanUp() throws {

@@ -41,7 +41,7 @@ class RealFixtureTestCase: XCTestCase {
 
 /// Only the final, exact snapshots — every assertion here is about what a scan
 /// *measured*, and cadence is the pure suite's subject.
-let terminalSnapshotsOnly = ScanOptions(progressCadence: .terminalOnly, treeCadence: .terminalOnly)
+let terminalSnapshotsOnly = ScanOptions(progressInterval: .infinity)
 
 func makeProductionRequest(
     root: URL,

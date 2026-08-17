@@ -974,7 +974,7 @@ final class WorkspaceSplitViewController: NSSplitViewController, FileActionRespo
             displayedRoot = nil
             treeViewController.setRoot(nil)
         }
-        // The treemap is fed the same frozen snapshot the tree is, so the two
+        // The treemap is fed the same tree the outline view is, so the two
         // panes are never describing different trees.
         treemapViewController.treemapView.context = selectionContext
         treemapViewController.treemapView.setRoot(model.root)

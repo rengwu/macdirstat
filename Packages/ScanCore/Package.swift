@@ -1,19 +1,18 @@
-// swift-tools-version:5.7
+// swift-tools-version:5.9
 // ScanCore — the Foundation-only scan engine (spec §4.2, §5).
 
 import PackageDescription
 
 let package = Package(
     name: "ScanCore",
-    // Deployment floor fixed at macOS 11.0 (spec §4.2).
-    platforms: [.macOS(.v11)],
+    // Deployment floor: macOS 14.
+    platforms: [.macOS(.v14)],
     products: [
         .library(name: "ScanCore", targets: ["ScanCore"])
     ],
     targets: [
-        // Foundation only. No UI framework may be imported here or in the tests;
-        // Scripts/check-package-purity.sh enforces this from the compiler's own
-        // import list.
+        // Foundation only. No UI framework may be imported here or in the
+        // tests: the engine has to be testable headlessly.
         .target(name: "ScanCore"),
 
         // The scripted probe, the virtual clock and the security-scope spy

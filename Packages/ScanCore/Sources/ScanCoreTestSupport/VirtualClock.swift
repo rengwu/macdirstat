@@ -5,8 +5,8 @@ import ScanCore
 ///
 /// Throttling is the one part of the engine whose correctness is a statement
 /// about *time*, and a test that asserts it against the wall clock asserts the
-/// speed of the machine instead. Driving time by hand makes "≤ 15 Hz" and
-/// "≤ 4 Hz" exact claims (spec §5.5, §9.3).
+/// speed of the machine instead. Driving time by hand makes "≤ 15 Hz" an exact
+/// claim.
 public final class VirtualClock: ScanClock, @unchecked Sendable {
     private let lock = NSLock()
     private var seconds: TimeInterval

@@ -159,14 +159,8 @@ final class ScannerLifecycleTests: XCTestCase {
             lastSequence = snapshot.sequence
         }
 
-        var lastGeneration: UInt64 = 0
-        for snapshot in events.treeSnapshots {
-            XCTAssertGreaterThan(snapshot.generation, lastGeneration)
-            lastGeneration = snapshot.generation
-        }
-
         XCTAssertFalse(events.progressSnapshots.isEmpty)
-        XCTAssertFalse(events.treeSnapshots.isEmpty)
+        XCTAssertNotNil(events.result, "the tree arrives with the terminal event")
     }
 
     // MARK: - One active scan

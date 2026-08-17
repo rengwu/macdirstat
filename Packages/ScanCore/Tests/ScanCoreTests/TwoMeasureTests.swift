@@ -193,10 +193,10 @@ final class TwoMeasureTests: XCTestCase {
         let probe = ScriptedDirectoryProbe(rootURL: scanRootURL, root: tree)
 
         let events = await runScan(probe)
-        guard let snapshot = events.treeSnapshots.last else { return XCTFail("expected a tree snapshot") }
+        guard let result = events.result else { return XCTFail("expected a result") }
 
-        XCTAssertEqual(snapshot.root.subtreeDiskBytes, 8_192)
-        XCTAssertEqual(snapshot.root.subtreeContentBytes, 1_073_741_824)
-        XCTAssertEqual(node(snapshot.root, at: "deep")?.subtreeContentBytes, 1_073_741_824)
+        XCTAssertEqual(result.root.subtreeDiskBytes, 8_192)
+        XCTAssertEqual(result.root.subtreeContentBytes, 1_073_741_824)
+        XCTAssertEqual(node(result.root, at: "deep")?.subtreeContentBytes, 1_073_741_824)
     }
 }

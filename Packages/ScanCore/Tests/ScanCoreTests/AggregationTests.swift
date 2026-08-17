@@ -63,33 +63,20 @@ final class AggregationTests: XCTestCase {
         }
     }
 
-    /// Cadence zero: every change is published, so the invariant is checked at
-    /// every event rather than only at the end.
-    func test_atCadenceZeroEveryAncestorTotalIsMonotonicAndExactAtEveryEvent() async {
+    /// Running counts climb and never fall back: the card's headline figure
+    /// must not appear to lose bytes mid-scan.
+    func test_theRunningByteCountIsMonotonicAndEndsExact() async {
         let probe = ScriptedDirectoryProbe(rootURL: scanRootURL, root: mixedTree())
 
-        let events = await runScan(
-            probe,
-            options: ScanOptions(progressCadence: .everyChange, treeCadence: .everyChange)
-        )
+        let events = await runScan(probe, options: ScanOptions(progressInterval: 0))
 
-        var previousTotals: [String: Int64] = [:]
-        XCTAssertGreaterThan(events.treeSnapshots.count, 1, "cadence zero must publish a progression")
-
-        for snapshot in events.treeSnapshots {
-            // Exact: the rolled-up total is never ahead of what was attributed.
-            XCTAssertEqual(snapshot.root.subtreeDiskBytes, foldOwnDiskBytes(snapshot.root))
-
-            let totals = subtreeTotals(snapshot.root)
-            for (path, total) in previousTotals {
-                guard let now = totals[path] else {
-                    return XCTFail("\(path) disappeared from a later snapshot")
-                }
-                XCTAssertGreaterThanOrEqual(now, total, "\(path) total went backwards")
-            }
-            previousTotals = totals
+        var previous: Int64 = 0
+        for snapshot in events.progressSnapshots {
+            XCTAssertGreaterThanOrEqual(snapshot.attributedDiskBytes, previous, "the running total went backwards")
+            previous = snapshot.attributedDiskBytes
         }
-
+        XCTAssertGreaterThan(events.progressSnapshots.count, 1, "an interval of zero must publish a progression")
+        XCTAssertEqual(previous, 1_855, "the last reading must agree with the finished tree")
         XCTAssertEqual(events.result?.root.subtreeDiskBytes, 1_855)
     }
 
