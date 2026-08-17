@@ -563,8 +563,9 @@ final class TreemapView: NSView {
         return accessibilityChildElements
     }
 
-    /// One element per rendered rectangle — directory regions and aggregates
-    /// included — in the draw list's deterministic order.
+    /// One element per rectangle a user could point at — the labelled ones —
+    /// in the draw list's deterministic order, plus the selected rectangle
+    /// whatever its size.
     func accessibilityRectangleElements() -> [TreemapAccessibilityElement] {
         rebuildAccessibilityElementsIfNeeded()
         return accessibilityChildElements
@@ -583,7 +584,24 @@ final class TreemapView: NSView {
         if accessibilityRequest == coordinator.resultRequest, !accessibilityChildElements.isEmpty { return }
 
         let selected = selectionModel?.selection
-        accessibilityChildElements = result.boxes.compactMap { box in
+        // Only the rectangles that carry a label are published.
+        //
+        // Publishing one element per rendered rectangle cost 7–8 seconds of
+        // main thread on a whole-volume map, all of it inside the accessibility
+        // client's own question — the same freeze ticket 14 removed, reached
+        // from outside the process. `fitsLabel` is the rule already on screen
+        // and already in the mouse: a subdivided directory region is never
+        // labelled and never hit-tested, and a rectangle under 48×15 pt is
+        // neither readable nor reliably clickable. Labelled leaves do not
+        // overlap, so their count is bounded by the viewport's area over
+        // 48×15 pt — a few thousand at any window size, whatever the tree
+        // holds. Nothing becomes unreachable: the tree pane carries every node,
+        // hierarchy included, which is the pane built for navigating it.
+        let selectedIndex = selectedBoxIndex(in: result)
+        accessibilityChildElements = result.boxes.enumerated().compactMap { index, box in
+            // The selected rectangle is always published, however small, so a
+            // selection made in the tree is never a thing the map cannot name.
+            guard box.fitsLabel || index == selectedIndex else { return nil }
             guard let selection = selection(for: box, in: result) else { return nil }
             let element = TreemapAccessibilityElement(selection: selection) { [weak self] chosen in
                 self?.selectionModel?.select(chosen, source: .treemap)

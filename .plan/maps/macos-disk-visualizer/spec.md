@@ -755,9 +755,16 @@ formatting; app/UI/read-only). Load-bearing acceptance criteria:
 
 ### 9.4 Accessibility mechanics (required; no coverage threshold — §11.3)
 
-- One accessibility child per rendered node **or aggregate rectangle** (including
-  directory regions), deterministic sorted order, labels containing name/size/kind (or
-  combined count/size for a merge box), focusability, selected state, and an
+- One accessibility child per **labelled** rectangle — the leaves at or above the 48×15 pt
+  label threshold (§6.3), aggregates included — plus the selected rectangle whatever its
+  size. Subdivided directory regions are not published: they carry no label and no click
+  selects one, and the tree pane already exposes every node with its hierarchy. Publishing
+  every rectangle instead cost a screen-reader client **7–8 s of main thread** on a
+  whole-volume map, because an accessibility client's questions are answered there; the
+  labelled leaves do not overlap, so their number is bounded by viewport area over
+  48×15 pt regardless of how many entries the scan holds.
+- Deterministic draw order, labels containing name/size/kind (or combined count/size for a
+  merge box), focusability, selected state, and an
   `NSAccessibilityAnnouncementNotification` when shared selection changes.
 - Kind is written in tooltip/inspector/legend and **Incomplete** uses hatch **plus** text,
   so neither color nor hatch alone carries meaning; keyboard navigation lives in the tree,

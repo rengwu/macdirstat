@@ -224,17 +224,6 @@ matrix recorded across macOS 11 through current.
   `Canvas` in a `some View` body is a *warning*, not an error, and would crash on Big Sur.
   The `Scripts/check-post-bigsur-apis.sh` guard is load-bearing rather than a second
   opinion; §4.4 and §9.3 word it as though the compiler alone suffices.
-- **A VoiceOver client copying a whole-volume map's accessibility hierarchy takes 7–8
-  seconds of main thread.** §9.4 gives the treemap one accessibility element per rendered
-  rectangle, which is up to 137,056 of them at the Large rung and comparable on a real
-  volume. Ticket 14's field harness measured `AXUIElementCopyHierarchy` against the app
-  scanning `/System/Library` at **7.0–8.4 s**, all of it on the main thread, because that
-  is where an accessibility client's questions are answered. Nothing in the app is doing
-  anything wrong — it is publishing exactly what §9.4 asks for — but it is the same
-  symptom the ticket removed, reached by a different road, and nobody has decided whether
-  the element set should be culled (to the labelled boxes? to a fixed budget?) or whether
-  this is simply what a two-million-entry map costs an assistive technology. Not measured
-  under VoiceOver itself.
 - **A relayout at the Large rung still costs 1.17 seconds of a background core, and it is
   allocation churn rather than algorithm.** Two arrays per directory opened — the
   adapter's `treemapPresentedChildren`, then the prepared children — and four more per

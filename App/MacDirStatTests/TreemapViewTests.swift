@@ -345,21 +345,31 @@ final class TreemapAccessibilityTests: XCTestCase {
         }
     }
 
-    func test_thereIsOneElementPerRenderedRectangleInDrawOrder() async throws {
+    func test_thereIsOneElementPerLabelledRectangleInDrawOrder() async throws {
         let fixture = try await makeFixture()
         let (workspace, _, _) = fixture.makeWorkspace()
         let view = workspace.treemapViewController.treemapView
 
         let layout = try XCTUnwrap(view.currentLayout())
         let elements = view.accessibilityRectangleElements()
+        let published = layout.boxes.filter(\.fitsLabel)
 
         XCTAssertEqual(
             elements.count,
+            published.count,
+            "one child per rectangle a user can point at and read"
+        )
+        XCTAssertLessThan(
+            published.count,
             layout.boxes.count,
-            "one child per rendered rectangle, directory regions and aggregates included"
+            """
+            the subdivided directory regions must not be published: they carry no label, \
+            no click can select one, and publishing every rectangle cost a screen-reader \
+            user 7–8 s of main thread on a whole-volume map
+            """
         )
         let builder = InspectorContentBuilder(formatter: DisplayFormatter(locale: Locale(identifier: "en_US")))
-        for (element, box) in zip(elements, layout.boxes) {
+        for (element, box) in zip(elements, published) {
             if let node = box.node {
                 XCTAssertEqual(element.accessibilityLabel(), builder.accessibilityLabel(for: .node(node.node)))
             } else {
@@ -372,6 +382,44 @@ final class TreemapAccessibilityTests: XCTestCase {
                 "each element must be the size of the rectangle it stands for"
             )
         }
+    }
+
+    /// The one exception to the label rule, and the reason it is safe: a
+    /// rectangle too small to label is not published — until it is selected,
+    /// which is how a selection made in the tree stays nameable in the map.
+    func test_aRectangleTooSmallToLabelIsPublishedOnlyWhileItIsSelected() async throws {
+        // A spread of sizes rather than one chosen pair: which rectangle lands
+        // between the merge threshold and the label threshold is the layout's
+        // business, so the test finds one instead of predicting it.
+        let fixture = try await ScannedFixture.make(in: self) { root in
+            var bytes = 4_000_000
+            for index in 0..<9 {
+                try writeFile(String(format: "%02d.bin", index), bytes: bytes, in: root)
+                bytes /= 2
+            }
+        }
+        let (workspace, _, _) = fixture.makeWorkspace()
+        let view = workspace.treemapViewController.treemapView
+
+        let layout = try XCTUnwrap(view.currentLayout())
+        let box = try XCTUnwrap(
+            layout.boxes.first { $0.node != nil && !$0.fitsLabel },
+            "the fixture must produce a rectangle of its own that is too small to label"
+        )
+        let small = try XCTUnwrap(box.node?.node)
+
+        func elementForSmall() -> TreemapAccessibilityElement? {
+            view.accessibilityRectangleElements().first {
+                $0.accessibilityLabel()?.hasPrefix(small.name) == true
+            }
+        }
+
+        XCTAssertNil(elementForSmall(), "an unlabelled rectangle is not published")
+
+        workspace.selectionModel.select(.node(small), source: .tree)
+
+        XCTAssertNotNil(elementForSmall(), "the selected rectangle is published however small")
+        XCTAssertEqual(elementForSmall()?.isAccessibilitySelected(), true)
     }
 
     func test_anElementIsFocusableAndSelectsWhenPressed() async throws {
