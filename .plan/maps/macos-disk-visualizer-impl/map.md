@@ -231,13 +231,6 @@ matrix recorded across macOS 11 through current.
   it without touching geometry. §8.2 commits no wall-clock bar and the main thread no
   longer waits for it, so this is a recorded cost and not a defect; it matters only if
   the tree feed's 4 Hz ever needs to be honoured rather than coalesced.
-- **`spec.md` §5.2 names two fields that no longer exist.** It describes the node as
-  carrying `ownBytes`/`subtreeBytes`; ticket 16 renamed them `ownDiskBytes`/
-  `subtreeDiskBytes` and added `ownContentBytes`/`subtreeContentBytes`, so every call site
-  says which of the two measures it means. §3.1 already describes both measures correctly —
-  this is the data-model paragraph lagging the names, and the patch is the edit, not a
-  re-decision.
-
 - **A scan of `/` reconciles about ten percent below the volume's used figure, and nothing
   is wrong.** `volumeAvailableCapacityKey` is a property of the APFS *container*, so
   Preboot, Recovery and VM are inside the denominator while §3.3 correctly keeps them
@@ -254,20 +247,6 @@ matrix recorded across macOS 11 through current.
   path building and every UI read pay some version of the same tax. Copying each name once,
   in the probe, would buy it back at the price of one allocation per entry (2.9 M on a scan
   of `/`). Unmeasured, and nothing depends on it today.
-- **§3.3 now has three rules where the spec states one.** The device-identity boundary
-  check is joined by a visited-directory identity guard and by two ordering rules — a
-  mount point inside the root's own volume is opened last, a hidden subdirectory after its
-  visible siblings — because macOS reports one device *and* one file identity for `/` and
-  `/System/Volumes/Data`, and hangs synthetic aliases of the whole filesystem off the
-  volume root. Ticket 12 settled all three and proved them on a real `/`; `spec.md` still
-  describes the boundary check alone, and the probe seam it calls "listing and metadata
-  only" now also reads the mount table. The patch is the edit to `spec.md`, not a
-  re-decision.
-- **Spec text lags the prototype.** Ticket 01's answer supersedes six clauses across
-  §§6.1, 6.2, 7.1 and 7.3 (merge iteration, merge-box order, outline depth cap,
-  tree-visible counts, Cancelled banner → status-bar chip, empty-state and chooser
-  disclosures removed). `spec.md` still carries the old wording. These are settled
-  decisions, not open questions — the patch is the edit to `spec.md`, not a re-decision.
 - **The read-only guarantee and the scan-scope rule are stated nowhere in the UI.** A
   consequence a human accepted knowingly when the empty-state disclosures and the
   chooser's disabled ineligible rows were cut. Worth one look before 09 ships: a user

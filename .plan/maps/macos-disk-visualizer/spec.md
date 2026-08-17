@@ -156,6 +156,20 @@ evidence against it, and the decision, are in that ticket's answer.*
   mounted volumes. Traversal **stays on the root's filesystem device**: the engine
   descends into a subdirectory only when its `volumeIdentifierKey` equals the root's
   (compared via `isEqual`), which makes nested mounts out-of-scope automatically.
+- **The device check is not enough on APFS, and three rules do the work.** macOS reports
+  one device *and* one file identity for `/` and `/System/Volumes/Data`, and hangs
+  synthetic aliases of the whole filesystem off the volume root, so a scan of `/` counted
+  the disk twice until ticket 12 added:
+  1. a **visited-directory identity guard** — one entry per directory *opened*, keyed on
+     `fileResourceIdentifierKey`; a repeat is an **exclusion**, never an error, and the
+     second name stays visible and weightless with the owner's path;
+  2. a **mount point inside the root's own volume is opened last and never indexed**,
+     because two volume roots may share an inode number and skipping one would lose
+     everything only it can reach;
+  3. a **hidden subdirectory is opened after its visible siblings**, because `/.nofollow`
+     is an alias of the whole filesystem that sorts before every real name.
+  The probe seam therefore reads the mount table (`mountPointPaths()`, one
+  `getmntinfo_r_np` per scan) as well as listings and metadata.
 - **Known residual gap (§11.2):** on macOS 11 no first-party `URLResourceKey` reliably
   distinguishes a disk-image-backed volume selected *directly as the root* from an
   ordinary local volume (it reports `volumeIsLocalKey == true`). Accepted: scanning it is
@@ -332,7 +346,9 @@ func scan(_ request: ScanRequest) -> AsyncStream<ScanEvent>
 ### 5.2 Data model and state ownership
 
 - **`final class ScanNode`** — **name-only** (not absolute URL), parent link, children,
-  `ownBytes`/`subtreeBytes` (`Int64`), attribution flags, read-state, lifecycle. URLs are
+  `ownDiskBytes`/`subtreeDiskBytes` and `ownContentBytes`/`subtreeContentBytes` (`Int64`
+  each — the two measures of §3.1, so every call site says which one it means),
+  `attributedNodeCount`, `fileCount`, attribution flags, read-state, lifecycle. URLs are
   **rebuilt on demand** from the parent chain (memory bound; §8).
 - The **`actor` solely owns** the mutable tree, the hard-link identity index, and the
   accumulators for the scan's duration.
@@ -444,8 +460,10 @@ depth.
 - **Precision:** layout in **unrounded points**; snap to the pixel grid **only at draw
   time** via the backing scale factor; no cumulative integer rounding.
 - **Insets (classic flat, accepted):** none — children tile 100% of their directory's
-  rectangle. Hierarchy is a **post-pass**: every directory region below the root gets a
-  **1 pt outline**, with **0.5 pt hairlines** between sibling leaves.
+  rectangle. Hierarchy is a **post-pass**: a directory region below the root gets a
+  **1 pt outline** for the **first three levels only** (ticket 01 — deeper strokes overdraw
+  a strip the fills already bound, with no visible difference), with **0.5 pt hairlines**
+  between sibling leaves.
 
 ### 6.2 The merge rule — "merge, never disappear" (supersedes §05 culling)
 
@@ -457,6 +475,12 @@ The treemap is **always area-truthful, and nothing with real bytes disappears.**
   attributed bytes. (2×2 pt is the **merge** trigger, not a *drop* trigger.)
 - The trigger applies to any child — a leaf **or** an entire too-small subtree — so a
   collectively-tiny directory folds into its parent's single aggregate box.
+- **The rule iterates to a fixpoint** (ticket 01): folding children into the aggregate
+  enlarges it and re-flows the row, which can push a previously-adequate sibling under the
+  trigger, so the pass repeats until no survivor is below it (capped at 8 rounds — the
+  worst case measured across all four bench fixtures was 5).
+- **The aggregate box is pinned last** in its directory's child order, so the fixpoint is
+  stable and the box lands in the same corner every time.
 - **Distinct fill:** the aggregate box uses a **neutral, visibly different fill** (e.g. a
   subtle hatch), **not** any single kind-hue, so it reads as "combined," not one file.
 - **Selectable and honest:** the aggregate box is **hit-testable**; its tooltip/inspector
@@ -520,15 +544,20 @@ prototype-only and must **not** enter the implementation map's main code.*
   - **Center** — treemap (the **growable** item).
   - **Right** — inspector (fixed **~300 pt**, **collapsible**).
 - **Unified toolbar.** **Bottom status bar** carries: scanned on-disk total; file + folder
-  counts; (volumes only) capacity & free; error & exclusion counts; and the **size-color
-  legend**.
+  counts; (volumes only) capacity & free, and the counted-against-used reconciliation;
+  error & exclusion counts; and the **size-color legend**, which appears only once a scan
+  has colour to explain. The counts are **tree-visible** — what the panes are showing —
+  not the scanner's enumeration, so a package contributes one item until it is drilled
+  into (ticket 01, decision 10). The inspector's "Contains" row deliberately answers the
+  other question.
 - **Chooser:** a toolbar **"Choose…"** sheet listing eligible sources (internal +
   directly-attached drives, plus "choose folder…" via `NSOpenPanel
-  canChooseDirectories`). **Ineligible sources — network volumes, mounted disk images,
-  cloud-provider roots — are shown disabled with the reason inline**, not hidden, so the
-  scope rule is legible. Esc dismisses.
-- **Empty state:** centered call-to-action (not a blank window), stating read-only +
-  hidden-files-included + drive-eligibility up front.
+  canChooseDirectories`). Ineligible sources are **absent rather than shown disabled with
+  a reason** (ticket 01). Esc dismisses.
+- **Empty state:** centered call-to-action (not a blank window). The read-only and
+  scan-scope disclosures were **cut** (ticket 01) — see §11 for the consequence a human
+  accepted knowingly: a user whose network volume is simply missing from the chooser is
+  given no reason for it.
 - **Scanning state:** centered progress card — indeterminate bar (a coarse, explicitly
   approximate % **only** for whole-volume scans), live telemetry (measured bytes, files,
   folders, elapsed, current path), a **prominent Cancel**. Tree and treemap populate
@@ -556,13 +585,19 @@ prototype-only and must **not** enter the implementation map's main code.*
 
 - **Empty**, **Choosing**, **Scanning** — as above.
 - **Completed** — normal status bar.
-- **Cancelled** — unmistakable **"Incomplete — scan cancelled"** banner, partial results
-  retained as fully browsable/selectable, offer a fresh scan.
+- **Cancelled** — an **"● Incomplete — scan cancelled" chip at the head of the status
+  bar**, not a banner (ticket 01: a banner costs a pane's worth of height to say one
+  sentence). Partial results are retained as fully browsable/selectable, and Choose… is
+  always available for a fresh scan.
 - **Partially failed ("Completed with errors")** — the unreadable entry marked
   **Unreadable** (size never guessed), every affected ancestor **Incomplete**, an error
   summary + an **excluded-cloud-items count** surfaced. Ticket-01 semantics shown
   concretely per item: symlink (0 bytes, "never followed"), hard link ("counted
   elsewhere" + owner path), iCloud materialized-vs-omitted, package as one box.
+- **Where the error summary lives:** the status bar carries the counts; the inspector
+  describes the scan itself **while nothing is selected**, naming the first five paths
+  that could not be read with "…and N more", the counts by reason, and which of the two
+  kinds makes a total a lower bound. A scan that read everything says nothing there.
 
 ---
 
