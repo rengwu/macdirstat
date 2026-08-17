@@ -50,3 +50,29 @@ Do:
   macOS with defects recorded.
 - This runtime record — not availability compilation alone — stands as the compatibility
   claim, satisfying the specification's acceptance criteria (§12) for a release candidate.
+
+## Ruled out
+
+Closed by the 2026-08-18 floor decision, which is recorded at the top of `spec.md`: **the
+deployment floor is macOS 14 and the build is no longer a universal `arm64 + x86_64`
+slice.** Every deliverable this ticket asks for is either impossible or meaningless now:
+
+- The `MacDirStat-CompatibilitySmoke` plan, the UI-test target it would run in, and the
+  Thread Sanitizer plan were all deleted in the same pass.
+- There is no universal Release artifact to carry between hosts, because `ARCHS` is
+  unpinned and the build follows the standard setting.
+- The post-Big-Sur source guard that would flag `SwiftUI.Table`, `Canvas`,
+  `NavigationSplitView` and `searchable` is deleted, along with the whole watch-list — those
+  APIs are all available at the macOS 14 floor, so there is nothing left to flag.
+- Running on "Big Sur 11.7.x on the 2015-era Intel floor" is testing four major versions
+  below the floor the app now declares. It would not launch.
+
+Its `blocked_by: [09, 10]` is also unsatisfiable in the direction it assumed: ticket 10's
+deliverable no longer exists.
+
+**Nothing here was proven, so this is a boundary and not an answer.** One piece of it is a
+real loss and does not deserve to disappear with the rest: the **VoiceOver + Accessibility
+Inspector walkthrough**, which ticket 09 explicitly defers to this ticket. That walkthrough
+survives as a one-host check on current macOS and moves to
+[ticket 09](./09-lifecycle-legibility-and-accessibility.md), where the mechanics it would
+exercise are built. Nothing else here is recoverable, and a floor of macOS 14 is why.
