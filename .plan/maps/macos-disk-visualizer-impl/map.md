@@ -186,6 +186,25 @@ matrix recorded across macOS 11 through current.
   and `sample(1)` shows the main thread 91% idle with every layout frame under the
   coordinator's detached task.
 
+- [What the app measures: blocks on disk, with content length beside them](./tickets/13-sparse-files-and-honest-totals.md) —
+  the single logical measure is replaced. **`/Users/rengwu` reports 1,812 GiB of content
+  length and occupies 277 GiB** — 6.5× too big on a 460 GB disk — and the error runs the
+  other way too: macOS compresses its own binaries, so length over-reports `/System` by
+  43%. `fileAllocatedSizeKey` drives the treemap, the tree, every total and the progress
+  figures; `fileSizeKey` is carried beside it, rolled up through folders, and shown in the
+  inspector only where the two differ. Reading the second key is **0.1%** on a real tree
+  and the second pair of `Int64` is ~58 MB at 3.63 M nodes. Blocks on disk, **deduplicated
+  the way this engine deduplicates hard links**, land within **0.3%** of the volume's own
+  used figure (332.97 GiB against 331.98) — undeduplicated they read 347.59, and all 14.62
+  GiB of that difference is 66,920 second names. Throughput becomes **items per second**
+  (bytes/s here was never a disk speed — the scanner reads listings, never contents); the
+  progress fraction is capped at 99% while scanning and withdrawn if the count passes
+  volume-used; a finished volume scan reconciles out loud. Ticket 04's semantics survive
+  intact except that the **on-disk figure decides readability** (length is never
+  substituted) and the third-party cloud placeholder now counts as zero on its own, which
+  is what it is. Clones flip to over-reporting and are accepted. `spec.md` is amended;
+  `CONTEXT.md` pins the two terms; the build is [ticket 16](./tickets/16-count-blocks-on-disk.md).
+
 ## Not yet specified
 
 - **Compiler availability checking does not reject everything §4.4 assumes it does.** A
@@ -210,12 +229,13 @@ matrix recorded across macOS 11 through current.
   it without touching geometry. §8.2 commits no wall-clock bar and the main thread no
   longer waits for it, so this is a recorded cost and not a defect; it matters only if
   the tree feed's 4 Hz ever needs to be honoured rather than coalesced.
-- **The single logical measure is indefensible on sparse files, and the progress fraction
-  is dimensionally wrong.** A 1 TiB `Docker.raw` occupying 34.6 GiB is the normal case on a
-  developer's machine. Whether the engine carries logical bytes, allocated bytes or both is
-  a product decision that reaches back into ticket 04's semantics and into `spec.md`; the
-  "About N% of used space" bar divides logical bytes by real used space and pegs at 100%
-  long before a scan ends. <clears-with: 13>
+- **The specification and the code disagree about what the app measures, on purpose.**
+  Ticket 13 settled it — blocks on disk, content length carried beside them — and amended
+  `spec.md` to say so. The engine still measures `fileSizeKey` alone, so until the build
+  lands, `spec.md` describes an app that does not exist yet and every number the app shows
+  on a developer's machine is several times too large. This is the one patch on this map
+  where reading the spec will actively mislead an implementer about current behaviour.
+  <clears-with: 16>
 - **Every name a scan holds is a non-native Swift string.** `URL.lastPathComponent` returns
   a string whose UTF-8 is not contiguous, and ticket 15 measured one consequence: canonical
   `String <` on those names costs **5.9×** what it costs on the same names copied into

@@ -39,8 +39,9 @@ a pixel-for-pixel port. It is:
   one shared selection.
 
 The MVP's guarantee is **correctness and honesty**, not speed: area is strictly
-proportional to logical bytes, sizes are never guessed, partial and failed scans stay
-truthful and browsable, and nothing with real bytes ever disappears from the picture.
+proportional to the blocks a file occupies, sizes are never guessed, partial and failed
+scans stay truthful and browsable, and nothing with real bytes ever disappears from the
+picture.
 
 ---
 
@@ -96,18 +97,37 @@ implementation, per Tickets 04/05:
 
 *From Ticket 01, with engine detail from Ticket 03.*
 
-### 3.1 The one measure: logical content bytes
+### 3.1 The measure: blocks on disk, with content length beside it
 
-- The scan represents the **ordinary logical length of locally present file content**:
-  the `URLResourceKey.fileSizeKey` value, held as `Int64`.
-- **Excluded from the measure:** extended attributes, resource forks, filesystem
-  metadata, sparse-file allocation, compression savings, and APFS shared-clone
-  allocation. `totalFileAllocatedSizeKey` and any block/allocation figure are **never
-  read**.
-- Rectangle area and directory totals use this one measure, rolled up incrementally to
-  every ancestor so each open directory's total is live during the scan.
-- **Rationale (intentional tradeoff):** a cheap, consistent, performant content-size view
-  is preferred over an estimate of physical blocks consumed.
+*Amended by Ticket 13. This section previously fixed a single logical measure; the field
+evidence against it, and the decision, are in that ticket's answer.*
+
+- The scan represents the **blocks a file actually occupies**: the
+  `URLResourceKey.fileAllocatedSizeKey` value, held as `Int64`. This is the measure the
+  treemap's area, the tree's Size column, share-of-parent, and every total are computed
+  from.
+- **Content length is carried beside it** — the `fileSizeKey` value, likewise `Int64`,
+  likewise rolled up to every ancestor. It drives nothing on screen; it explains the
+  visible figure where the two diverge (§7.2).
+- Both are rolled up incrementally to every ancestor on one walk, so each open directory's
+  totals are live during the scan.
+- **Still excluded from both:** extended attributes, resource forks, and filesystem
+  metadata. Directories report no allocated size of their own and contribute zero, exactly
+  as they did under the old measure.
+- **Rationale:** a disk visualizer's picture has to match the disk. Measured on the field
+  machine (Ticket 13), content length reports `/Users/rengwu` as 1,812 GiB where it
+  occupies 277 GiB — 6.5× too big on a 460 GB disk — because sparse VM images and
+  cloud-provider placeholders are counted at their full nominal length. Length is wrong in
+  the other direction too: macOS compresses its own binaries, so it over-reports `/System`
+  by 43%. Blocks on disk, deduplicated for hard links as §3.4 requires, land within 0.3%
+  of what the volume itself reports as used.
+- **The second key is free.** `fileAllocatedSizeKey` rides the batched prefetch of §5.4;
+  measured overhead on a real 25,456-file tree is 0.1%, inside the noise. No extra syscall,
+  no second pass.
+- **Accepted residual error:** block slack. A one-byte file occupies a 4 KiB block, so a
+  directory of tiny files reads slightly larger than the sum of its contents. Across
+  2,529,061 files on the field machine this totalled 6.64 GiB — 2% of the true total, and
+  the honest figure regardless, since the blocks are genuinely spent.
 
 ### 3.2 Units and formatting
 
@@ -120,6 +140,11 @@ implementation, per Tickets 04/05:
 - The inspector shows the **exact grouped byte count** alongside the IEC value.
 - Share-of-parent **percentages** to 1 decimal; values below 0.05% render `< 0.1%`, never
   `0.0%`. **Zero** renders `0 bytes`; the singular is handled (`1 byte`).
+- **Naming the two measures (Ticket 13).** The tree's column header stays **"Size"** — in a
+  disk tool that is what a size column means. The inspector labels its figure **"on disk"**
+  and adds the content length as a second line **only when the two differ by more than a
+  display step**, so the pair reads as a finding rather than as clutter on every ordinary
+  file. No second tree column: it would be identical on ~99% of rows.
 
 ### 3.3 One root, one device
 
@@ -145,14 +170,18 @@ implementation, per Tickets 04/05:
 - **Finder aliases that are ordinary files remain ordinary files** (normal attribution).
 - **Hard links** are deduplicated by filesystem identity (`fileResourceIdentifierKey`)
   within the scan. Under a deterministic within-directory name sort, the **first in-scope
-  path encountered owns the logical bytes**; later in-scope paths remain visible with
+  path encountered owns the bytes**; later in-scope paths remain visible with
   **zero attributed bytes**, a "Hard link — counted elsewhere" marker, and a reference to
   the owning path when available. The scanner does **not** search outside the root for
   other names of the inode. The identity index is populated **only for `linkCount > 1`**
   (tiny index) and bypassed when the volume reports no hard-link support.
 - **APFS clones are not deduplicated** — inexpensive metadata gives no exact shared-block
-  attribution, so each clone contributes its ordinary logical length (distinct
-  identities fall out as separate contributions automatically).
+  attribution, so each clone contributes its own figure (distinct identities fall out as
+  separate contributions automatically). **Under the §3.1 measure this over-reports**: two
+  clones of one file each report their full allocated size, where under the old length
+  measure they under-reported. Accepted, and the direction is recorded (Ticket 13); on the
+  field volume the residual is inside the 0.3% separating the scan's total from the
+  volume's own used figure.
 - **macOS packages** are measured by enumerating their descendants during the initial
   scan, so their aggregate is accurate. They initially appear as **one collapsed package
   item and one treemap box**. Materializing the package's detailed child hierarchy is
@@ -161,7 +190,12 @@ implementation, per Tickets 04/05:
   (`ubiquitousItemDownloadingStatusKey` is `.downloaded`/`.current`). Remote-only
   placeholders (`.notDownloaded`) are **omitted** and **counted as exclusions** —
   scanning **never** initiates a download or network request. An unavailable/third-party
-  status safely counts the present logical file.
+  status safely counts the present file. **Under the §3.1 measure that case is now right on
+  its own** (Ticket 13): a third-party provider's placeholder that surfaces no download
+  status reports a full nominal length and **zero blocks** — ten such videos on the field
+  machine reported up to 10.22 GiB each while occupying nothing — so it counts as zero,
+  stays visible, and the inspector can say "10.2 GiB in length, nothing on disk". The rule
+  itself is unchanged.
 
 ### 3.5 Errors, cancellation, live change
 
@@ -169,7 +203,11 @@ implementation, per Tickets 04/05:
   disappearing files, malformed metadata: the entry stays visible where possible, is
   marked **Unreadable** (size not guessed), every affected ancestor is marked
   **Incomplete**, and an error summary is exposed. No synthetic "Unknown" byte count is
-  ever derived (e.g. by subtracting logical totals from physical volume usage).
+  ever derived (e.g. by subtracting scanned totals from physical volume usage).
+- **Which size decides (Ticket 13).** With two measures carried, the **on-disk figure**
+  determines readability: an entry whose blocks cannot be read is Unreadable, is **never**
+  given its content length as a substitute, and never enters the hard-link identity index —
+  owning an inode of unknown size would zero out a later name that could be read.
 - For a **whole-volume scan**, capacity and free space may be shown **separately**; they
   never become an attributed node byte count.
 - **Cancellation** stops traversal promptly and **retains everything already discovered**.
@@ -184,7 +222,7 @@ implementation, per Tickets 04/05:
 
 1. A hidden 2 GiB file contributes 2 GiB and appears normally.
 2. A symlink to a 2 GiB file contributes zero content bytes and is not traversed.
-3. Two hard-link paths under the root contribute the file's logical bytes once; a
+3. Two hard-link paths under the root contribute the file's bytes once; a
    hard-link path outside the root is neither sought nor displayed.
 4. A package containing 500 MiB of descendants contributes 500 MiB while initially
    occupying one box.
@@ -194,6 +232,8 @@ implementation, per Tickets 04/05:
    result are Incomplete rather than falsely reported as exact.
 7. Cancelling after some entries are aggregated leaves those partial results visible and
    labelled incomplete.
+8. A sparse file 1 TiB in length occupying 34.6 GiB of blocks contributes **34.6 GiB**; it
+   remains visible, and the inspector reports both figures (Ticket 13).
 
 ---
 
@@ -329,15 +369,32 @@ State machine: **`idle → scanning → completed | cancelled | failed`**.
   recurses itself over shallow **`contentsOfDirectory(at:includingPropertiesForKeys:
   options:)`** with **prefetched URL resource keys**, and descends into a subdirectory
   only when its `volumeIdentifierKey == root`'s (§3.3).
-- **One measure:** `fileSizeKey` (logical), rolled up incrementally to every ancestor.
+- **The measure:** `fileAllocatedSizeKey` (blocks on disk), with `fileSizeKey` (content
+  length) carried beside it; both rolled up incrementally to every ancestor on one walk
+  (§3.1, Ticket 13).
 
 ### 5.5 Progress
 
 - **Indeterminate primary progress** with live telemetry: attributed bytes, files/dirs
-  seen, current path, elapsed, throughput.
+  seen, current path, elapsed, **items per second**.
+- **The rate shown is items per second, never bytes per second (Ticket 13).** The scanner
+  reads directory listings and never file contents, so a byte rate here is not a disk speed
+  and will be read as one — the field build displayed *2.91 GiB/s*, a figure no disk on that
+  machine can produce. Items per second is the only rate on the card that is a measurement
+  of what the scan actually does.
 - An **explicitly approximate** completion fraction **only for whole-volume scans**
-  (attributed bytes ÷ volume-used); a **synthetic byte figure never enters the tree**.
-  Folder scans have **no** fraction (`nil`).
+  (attributed on-disk bytes ÷ volume-used — the same quantity on both sides since §3.1);
+  a **synthetic byte figure never enters the tree**. Folder scans have **no** fraction
+  (`nil`).
+- **No state claims 100% before a scan ends (Ticket 13).** The fraction is capped at **99%**
+  while a scan is running, and is **withdrawn** (`nil`) for the remainder of a scan whose
+  counted total passes the volume's used figure — clones and snapshots make that reachable —
+  leaving the card on counted total, item count and elapsed. Only a *finished* scan may
+  report 1.0.
+- **A finished whole-volume scan reconciles out loud**: the counted total is shown against
+  the volume's used figure ("333 GB counted · 332 GB used"). Agreement is evidence the
+  picture is real; disagreement means something was unreadable or skipped, which is when the
+  user most needs to know the map is incomplete.
 - Emissions are coalesced/throttled: **≤ ~15 Hz scalars, ≤ ~4 Hz tree**, buffering-newest,
   no per-entry backlog; **immediate exact final snapshot** at terminal. Cadence is
   configurable to 0/∞ for deterministic tests.
@@ -381,7 +438,7 @@ depth.
   directory. Children enter the layout sorted **bytes descending, ties by name ascending
   (code-point order)** — this sort is part of the spec, so identical trees always produce
   identical rectangles.
-- **Area:** **strictly proportional to attributed logical bytes** (§3.1). **No** log
+- **Area:** **strictly proportional to attributed on-disk bytes** (§3.1). **No** log
   scaling, minimum-area cheating, or synthetic "other" box (beyond the exact merge bucket
   in §6.2).
 - **Precision:** layout in **unrounded points**; snap to the pixel grid **only at draw
@@ -462,7 +519,7 @@ prototype-only and must **not** enter the implementation map's main code.*
   - **Left** — directory tree (`NSOutlineView`, source-list styling).
   - **Center** — treemap (the **growable** item).
   - **Right** — inspector (fixed **~300 pt**, **collapsible**).
-- **Unified toolbar.** **Bottom status bar** carries: scanned logical total; file + folder
+- **Unified toolbar.** **Bottom status bar** carries: scanned on-disk total; file + folder
   counts; (volumes only) capacity & free; error & exclusion counts; and the **size-color
   legend**.
 - **Chooser:** a toolbar **"Choose…"** sheet listing eligible sources (internal +
@@ -632,8 +689,11 @@ Two fixture adapters share one logical manifest:
 
 Generation is versioned **`fixture-v1`, seed `0x4D4453`**; each manifest records generator
 version, seed, entry count, exact attributed bytes, expected node-tree digest,
-error/exclusion totals, and hard-link owner paths. Sparse files give multi-GiB logical
-lengths without allocating contents. Scale rungs: Smoke 4,096 entries / 768 MiB;
+error/exclusion totals, and hard-link owner paths. **A manifest states both §3.1 measures**,
+because sparse files give multi-GiB content lengths without allocating contents, and the
+sparse entries are exactly where the two diverge — the §9.2 fixture's sparse hidden file
+pins its attributed bytes to its *allocated* size, so a later change cannot silently move
+the measure (Ticket 13). Scale rungs: Smoke 4,096 entries / 768 MiB;
 Representative 400,000 / 200 GiB; Large 2,000,000 / 1 TiB; Stress the four shapes (flat
 100k; depth 64; 40 GiB + 10,000 tiny; 10,000 links; 2,500 injected failures). Wall-clock
 time is reported **for context only**, never a pass/fail threshold.
@@ -784,8 +844,9 @@ The first implementation is accepted when all of the following hold:
    `MacDirStat-CI` scheme passes (incl. one Thread Sanitizer run); the universal Release
    build succeeds; the compatibility smoke passes on the Big Sur/2015-Intel floor and
    current-stable/Apple-Silicon endpoints (§9).
-2. **Measurement is correct and honest:** all seven §3.6 cases pass; only logical
-   `fileSizeKey` bytes roll up; hidden included; symlinks 0 bytes and not followed; hard
+2. **Measurement is correct and honest:** all eight §3.6 cases pass; `fileAllocatedSizeKey`
+   bytes drive every visible figure and `fileSizeKey` is carried beside them (§3.1); hidden
+   included; symlinks 0 bytes and not followed; hard
    links counted once with owner reference; APFS clones each counted; packages measured
    recursively yet one box; only materialized cloud items counted with exact exclusion
    count; unreadable → Unreadable + ancestors Incomplete, size never guessed; no synthetic
@@ -798,7 +859,7 @@ The first implementation is accepted when all of the following hold:
    cooperative per-directory/per-256-entry cancellation retaining partial results;
    security access balanced exactly once; ≤1,000 bounded error records.
 5. **Treemap:** recursive squarified, deterministic (bytes desc, name asc code-point);
-   area strictly ∝ logical bytes; classic-flat rendering; **merge (not cull)** for
+   area strictly ∝ on-disk bytes; classic-flat rendering; **merge (not cull)** for
    sub-2×2 pt content with 100% area truthfulness; zero-byte items no rect but in tree;
    fixed kind palette + status-bar legend; labels ≥48×15 pt; hover/selection strokes;
    deepest-node hit testing; pure recompute on resize.
