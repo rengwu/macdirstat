@@ -36,12 +36,12 @@ final class ResilienceTests: XCTestCase {
         guard let result = await runScan(probe).result else { return XCTFail("expected a result") }
 
         XCTAssertEqual(result.reason, .completed, "a recoverable error still reaches completion")
-        XCTAssertEqual(result.root.subtreeBytes, 300, "the sibling after the failure was still measured")
+        XCTAssertEqual(result.root.subtreeDiskBytes, 300, "the sibling after the failure was still measured")
         XCTAssertEqual(probe.listedPaths, ["", "a-before", "b-locked", "c-after"])
 
         let locked = node(result.root, at: "b-locked")
         XCTAssertEqual(locked?.readState, .unreadable)
-        XCTAssertEqual(locked?.subtreeBytes, 0, "an unreadable directory's size is not guessed")
+        XCTAssertEqual(locked?.subtreeDiskBytes, 0, "an unreadable directory's size is not guessed")
         XCTAssertTrue(locked?.children.isEmpty == true)
 
         XCTAssertEqual(result.root.readState, .incomplete)
@@ -78,7 +78,7 @@ final class ResilienceTests: XCTestCase {
         XCTAssertEqual(node(result.root, at: "clean")?.readState, .complete,
                        "a subtree with nothing wrong in it is not tainted")
         XCTAssertEqual(node(result.root, at: "outer/inner/sibling.bin")?.readState, .complete)
-        XCTAssertEqual(result.root.subtreeBytes, 30)
+        XCTAssertEqual(result.root.subtreeDiskBytes, 30)
     }
 
     func test_malformedMetadataIsAnUnreadableEntryWithNoGuessedSize() async {
@@ -91,9 +91,9 @@ final class ResilienceTests: XCTestCase {
         guard let result = await runScan(probe).result else { return XCTFail("expected a result") }
 
         XCTAssertEqual(result.reason, .completed)
-        XCTAssertEqual(result.root.subtreeBytes, 700, "no synthetic figure fills the gap")
+        XCTAssertEqual(result.root.subtreeDiskBytes, 700, "no synthetic figure fills the gap")
         XCTAssertEqual(node(result.root, at: "malformed.bin")?.readState, .unreadable)
-        XCTAssertEqual(node(result.root, at: "malformed.bin")?.ownBytes, 0)
+        XCTAssertEqual(node(result.root, at: "malformed.bin")?.ownDiskBytes, 0)
         XCTAssertEqual(result.errors.byCategory, [.unreadableEntry: 1])
         XCTAssertEqual(result.errors.details.map(\.path), [["scan-root", "malformed.bin"]])
     }
@@ -121,7 +121,7 @@ final class ResilienceTests: XCTestCase {
         ])
         XCTAssertEqual(result.errors.total, 6)
         XCTAssertEqual(result.completeness, .incomplete(cancelled: false, unreadableEntries: 6))
-        XCTAssertEqual(result.root.subtreeBytes, 5)
+        XCTAssertEqual(result.root.subtreeDiskBytes, 5)
         XCTAssertTrue(result.exclusions.isEmpty, "nothing here was excluded by policy")
     }
 
@@ -206,7 +206,7 @@ final class ResilienceTests: XCTestCase {
         XCTAssertEqual(result.errors.byCategory, [.disappeared: 1],
                        "a disappearance is its own category, not a permission failure")
         XCTAssertEqual(node(result.root, at: "b-vanishing")?.readState, .unreadable)
-        XCTAssertEqual(result.root.subtreeBytes, 33)
+        XCTAssertEqual(result.root.subtreeDiskBytes, 33)
 
         // No second pass and no automatic restart: every directory was listed
         // exactly once, the vanished one included.

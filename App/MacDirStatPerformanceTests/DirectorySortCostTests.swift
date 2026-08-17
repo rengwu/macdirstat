@@ -103,7 +103,7 @@ final class DirectorySortCostTests: XCTestCase {
                 probe.entries, probe.listings, probe.nonASCIINames
             ))
             let measured = try XCTUnwrap(run.result, "the instrumented scan failed pre-flight")
-            if measured.root.subtreeBytes != plain.result?.root.subtreeBytes {
+            if measured.root.subtreeDiskBytes != plain.result?.root.subtreeDiskBytes {
                 // Not a failure: a tree somebody is using changes under a scan,
                 // and the share this test reports is unaffected by that. It is
                 // worth saying out loud, because it explains a wobble between

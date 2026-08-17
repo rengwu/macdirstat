@@ -234,10 +234,10 @@ final class DirectoryTreeViewController: NSViewController, NSOutlineViewDataSour
             let identifier = NSUserInterfaceItemIdentifier("PercentCell")
             let cell = (outlineView.makeView(withIdentifier: identifier, owner: self) as? PercentTableCellView)
                 ?? PercentTableCellView(identifier: identifier)
-            let parentBytes = node.parent?.subtreeBytes ?? node.subtreeBytes
+            let parentBytes = node.parent?.subtreeDiskBytes ?? node.subtreeDiskBytes
             cell.configure(
-                text: formatter.share(childBytes: node.subtreeBytes, parentBytes: parentBytes),
-                fraction: parentBytes > 0 ? Double(node.subtreeBytes) / Double(parentBytes) : 0
+                text: formatter.share(childBytes: node.subtreeDiskBytes, parentBytes: parentBytes),
+                fraction: parentBytes > 0 ? Double(node.subtreeDiskBytes) / Double(parentBytes) : 0
             )
             return cell
         }
@@ -250,7 +250,7 @@ final class DirectoryTreeViewController: NSViewController, NSOutlineViewDataSour
             cell.textField?.stringValue = presentedName(node)
             cell.imageView?.image = icon(for: node)
         case .size:
-            cell.textField?.stringValue = formatter.bytes(node.subtreeBytes)
+            cell.textField?.stringValue = formatter.bytes(node.subtreeDiskBytes)
         case .items:
             cell.textField?.stringValue = node.isDirectoryLike
                 ? formatter.count(Int64(VisibleTreeCounts.countItems(beneath: node)))
@@ -282,11 +282,11 @@ final class DirectoryTreeViewController: NSViewController, NSOutlineViewDataSour
                     ? NameOrder.precedes(lhs.name, rhs.name)
                     : NameOrder.precedes(rhs.name, lhs.name)
             case .size:
-                if lhs.subtreeBytes == rhs.subtreeBytes { return NameOrder.precedes(lhs.name, rhs.name) }
-                return sortAscending ? lhs.subtreeBytes < rhs.subtreeBytes : lhs.subtreeBytes > rhs.subtreeBytes
+                if lhs.subtreeDiskBytes == rhs.subtreeDiskBytes { return NameOrder.precedes(lhs.name, rhs.name) }
+                return sortAscending ? lhs.subtreeDiskBytes < rhs.subtreeDiskBytes : lhs.subtreeDiskBytes > rhs.subtreeDiskBytes
             case .percent:
-                if lhs.subtreeBytes == rhs.subtreeBytes { return NameOrder.precedes(lhs.name, rhs.name) }
-                return sortAscending ? lhs.subtreeBytes < rhs.subtreeBytes : lhs.subtreeBytes > rhs.subtreeBytes
+                if lhs.subtreeDiskBytes == rhs.subtreeDiskBytes { return NameOrder.precedes(lhs.name, rhs.name) }
+                return sortAscending ? lhs.subtreeDiskBytes < rhs.subtreeDiskBytes : lhs.subtreeDiskBytes > rhs.subtreeDiskBytes
             case .items:
                 let left = VisibleTreeCounts.countItems(beneath: lhs)
                 let right = VisibleTreeCounts.countItems(beneath: rhs)
@@ -481,7 +481,7 @@ final class TreemapPaneViewController: NSViewController {
     }
 
     func showNoRectangleNote(for selection: WorkspaceSelection?) {
-        guard let node = selection?.node, node.subtreeBytes == 0 else {
+        guard let node = selection?.node, node.subtreeDiskBytes == 0 else {
             noRectangleNote.isHidden = true
             return
         }
@@ -530,7 +530,7 @@ final class ScanProgressCardView: NSVisualEffectView {
     private let files = NSTextField(labelWithString: "0")
     private let folders = NSTextField(labelWithString: "0")
     private let elapsed = NSTextField(labelWithString: "0:00")
-    private let throughput = NSTextField(labelWithString: "0 bytes/s")
+    private let throughput = NSTextField(labelWithString: "0 items/s")
     private var lastPathRefreshElapsed: TimeInterval?
 
     override init(frame frameRect: NSRect) {
@@ -591,11 +591,11 @@ final class ScanProgressCardView: NSVisualEffectView {
             currentPath.stringValue = progress.currentPathTail
             lastPathRefreshElapsed = progress.elapsed
         }
-        measured.stringValue = formatter.bytes(progress.attributedBytes)
+        measured.stringValue = formatter.bytes(progress.attributedDiskBytes)
         files.stringValue = formatter.count(progress.filesSeen)
         folders.stringValue = formatter.count(progress.directoriesSeen)
         elapsed.stringValue = formatter.elapsed(progress.elapsed)
-        throughput.stringValue = formatter.throughput(progress.bytesPerSecond)
+        throughput.stringValue = formatter.throughput(progress.itemsPerSecond)
 
         if let fraction = progress.approximateFraction {
             progressBar.stopAnimation(nil)
@@ -678,41 +678,78 @@ final class StatusBarViewController: NSViewController {
         view = root
     }
 
+    /// What the status bar is showing, for tests and for the accessibility tree.
+    var summaryText: String { summary.stringValue }
+
     func update(model: ScanPresentationModel) {
-        let shouldShowLegend = (model.root?.subtreeBytes ?? 0) > 0
+        let shouldShowLegend = (model.root?.subtreeDiskBytes ?? 0) > 0
         if legend.isHidden == shouldShowLegend {
             legend.isHidden = !shouldShowLegend
             onHeightChange?(shouldShowLegend ? 52 : 26)
         }
 
-        switch model.phase {
+        summary.stringValue = Self.text(
+            phase: model.phase,
+            root: model.root,
+            progress: model.progress,
+            result: model.result,
+            volumeCapacity: model.volumeCapacity,
+            formatter: formatter
+        ) ?? summary.stringValue
+    }
+
+    /// The status line as data, so what it says about a finished volume scan is
+    /// a unit test rather than a screenshot. `nil` means "leave what is there" —
+    /// a terminal phase with no tree yet.
+    static func text(
+        phase: ScanPhase,
+        root: ScanNode?,
+        progress: ProgressSnapshot?,
+        result: ScanResult?,
+        volumeCapacity: VolumeCapacity?,
+        formatter: DisplayFormatter
+    ) -> String? {
+        switch phase {
         case .empty:
-            summary.stringValue = "Ready"
+            return "Ready"
         case .scanning:
-            let progress = model.progress
-            summary.stringValue = "Scanning  ·  \(formatter.bytes(progress?.attributedBytes ?? 0))  ·  \(formatter.count(progress?.filesSeen ?? 0)) files  ·  \(formatter.count(progress?.directoriesSeen ?? 0)) folders"
+            return "Scanning  ·  \(formatter.bytes(progress?.attributedDiskBytes ?? 0))  ·  \(formatter.count(progress?.filesSeen ?? 0)) files  ·  \(formatter.count(progress?.directoriesSeen ?? 0)) folders"
         case .completed, .cancelled:
-            guard let root = model.root else { return }
+            guard let root = root else { return nil }
             let counts = VisibleTreeCounts.totals(in: root)
-            var pieces = [
-                formatter.bytes(root.subtreeBytes),
-                "\(formatter.count(Int64(counts.files))) files",
-                "\(formatter.count(Int64(counts.folders))) folders",
-            ]
-            if let capacity = model.volumeCapacity {
+            // **The reconciliation line** (ticket 13), and it lives here rather
+            // than in the inspector because it is a statement about the scan
+            // and not about the item the user happens to have selected. It is
+            // shown whenever a finished volume scan has a used figure to
+            // compare against, including — especially — when the two agree:
+            // agreement at a third of a percent is the evidence that the
+            // picture is real, and it can only be read as evidence if it is
+            // there every time. When they *disagree* it is because something
+            // could not be read or was skipped, which is exactly when the user
+            // needs to know the map is incomplete.
+            var pieces: [String] = []
+            if let capacity = volumeCapacity {
+                pieces.append("\(formatter.bytes(root.subtreeDiskBytes)) counted")
+                pieces.append("\(formatter.bytes(capacity.usedBytes)) used")
+            } else {
+                pieces.append(formatter.bytes(root.subtreeDiskBytes))
+            }
+            pieces.append("\(formatter.count(Int64(counts.files))) files")
+            pieces.append("\(formatter.count(Int64(counts.folders))) folders")
+            if let capacity = volumeCapacity {
                 pieces.append("Capacity \(formatter.bytes(capacity.totalBytes))")
                 pieces.append("Free \(formatter.bytes(capacity.availableBytes))")
             }
-            if let result = model.result, result.errors.total > 0 {
+            if let result = result, result.errors.total > 0 {
                 pieces.append("\(formatter.count(Int64(result.errors.total))) errors")
             }
-            if let result = model.result, result.exclusions.total > 0 {
+            if let result = result, result.exclusions.total > 0 {
                 pieces.append("\(formatter.count(Int64(result.exclusions.total))) excluded")
             }
-            if model.phase == .cancelled { pieces.insert("● Incomplete — scan cancelled", at: 0) }
-            summary.stringValue = pieces.joined(separator: "  ·  ")
+            if phase == .cancelled { pieces.insert("● Incomplete — scan cancelled", at: 0) }
+            return pieces.joined(separator: "  ·  ")
         case .failed:
-            summary.stringValue = "The selected source could not be scanned."
+            return "The selected source could not be scanned."
         }
     }
 

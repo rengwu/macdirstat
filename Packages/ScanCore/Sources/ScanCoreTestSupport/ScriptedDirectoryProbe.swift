@@ -51,6 +51,12 @@ public struct ScriptedEntry {
     }
 
     /// - Parameters:
+    ///   - bytes: the **blocks on disk** — the measure, and what the engine
+    ///     attributes. `nil` models a size that could not be read.
+    ///   - contentLength: the length carried beside it. Defaults to `bytes`,
+    ///     which is what an ordinary file does; pass it to stage the cases
+    ///     where the two diverge — a sparse image, a compressed binary, a cloud
+    ///     placeholder that is all length and no blocks (ticket 13).
     ///   - linkCount/identity: the two facts hard-link dedup reads (spec §3.4).
     ///     Scripting them is the only way to stage an inode reached by two
     ///     names, a link count of 1 on colliding identities, or two clones that
@@ -61,6 +67,7 @@ public struct ScriptedEntry {
     public static func file(
         _ name: String,
         bytes: Int64?,
+        contentLength: Int64? = nil,
         volume: FileSystemIdentity? = nil,
         linkCount: Int? = nil,
         identity: FileSystemIdentity? = nil,
@@ -70,7 +77,8 @@ public struct ScriptedEntry {
         ScriptedEntry(meta: EntryMeta(
             name: name,
             isRegularFile: true,
-            fileSize: bytes,
+            diskSize: bytes,
+            contentLength: contentLength ?? bytes,
             linkCount: linkCount,
             fileIdentity: identity,
             volumeIdentifier: volume,
@@ -94,7 +102,10 @@ public struct ScriptedEntry {
                 name: name,
                 isDirectory: looksLikeDirectory,
                 isSymbolicLink: true,
-                fileSize: 1 << 31,  // a link "to" a 2 GiB file: it must still count zero
+                // A link "to" a 2 GiB file, reporting blocks and length alike:
+                // neither may tempt the walk, because a symlink counts zero.
+                diskSize: 1 << 31,
+                contentLength: 1 << 31,
                 volumeIdentifier: volume
             ),
             children: children

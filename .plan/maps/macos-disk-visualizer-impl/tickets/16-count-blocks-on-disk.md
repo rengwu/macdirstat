@@ -2,6 +2,8 @@
 type: task
 blocked_by: [13]
 undermined_by: []
+claimed_by: s4c2b104a35a1
+claimed_at: 2026-08-17T13:05:22Z
 ---
 
 # Count blocks on disk, carry length beside them

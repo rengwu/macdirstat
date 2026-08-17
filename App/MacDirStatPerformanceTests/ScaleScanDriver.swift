@@ -168,7 +168,7 @@ enum ScaleScanDriver {
             directoryCount: manifest.directoryCount,
             fileCount: manifest.fileCount,
             logicalBytes: manifest.logicalBytes,
-            attributedBytes: outcome.result.root.subtreeBytes,
+            attributedDiskBytes: outcome.result.root.subtreeDiskBytes,
             maximumDepth: manifest.maximumDepth,
             listOperations: outcome.operations.listCount,
             metadataOperations: outcome.operations.metadataCount,

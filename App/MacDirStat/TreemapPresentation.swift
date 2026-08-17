@@ -90,7 +90,7 @@ struct TreemapNodeRef: TreemapInputNode, Sendable {
 
     /// The subtree total, which is what the seam asks for — a collapsed package
     /// reports its whole measured content while presenting no children at all.
-    var treemapAttributedBytes: Int64 { node.subtreeBytes }
+    var treemapAttributedBytes: Int64 { node.subtreeDiskBytes }
 
     var treemapPresentedChildren: [TreemapNodeRef] {
         guard isDrilledInto else { return [] }
@@ -101,7 +101,7 @@ struct TreemapNodeRef: TreemapInputNode, Sendable {
     /// what lets the layout fold a subtree away and still say exactly how many
     /// entries it hid, without opening it (spec §6.2, ticket 14).
     var treemapPresentedItemCount: Int {
-        guard isDrilledInto else { return node.subtreeBytes > 0 ? 1 : 0 }
+        guard isDrilledInto else { return node.subtreeDiskBytes > 0 ? 1 : 0 }
         return node.attributedNodeCount
     }
 

@@ -85,7 +85,7 @@ struct RungRecord: Codable, Equatable {
     var directoryCount: Int
     var fileCount: Int
     var logicalBytes: Int64
-    var attributedBytes: Int64
+    var attributedDiskBytes: Int64
     var maximumDepth: Int
 
     var listOperations: Int

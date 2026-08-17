@@ -20,14 +20,14 @@ final class EntrySemanticsTests: XCTestCase {
 
         guard let result = await runScan(probe).result else { return XCTFail("expected a result") }
 
-        XCTAssertEqual(result.root.subtreeBytes, (2 << 30) + 50)
-        XCTAssertEqual(node(result.root, at: ".hidden-large.bin")?.ownBytes, 2 << 30)
-        XCTAssertEqual(node(result.root, at: ".config/settings")?.ownBytes, 40)
+        XCTAssertEqual(result.root.subtreeDiskBytes, (2 << 30) + 50)
+        XCTAssertEqual(node(result.root, at: ".hidden-large.bin")?.ownDiskBytes, 2 << 30)
+        XCTAssertEqual(node(result.root, at: ".config/settings")?.ownDiskBytes, 40)
         XCTAssertEqual(result.root.fileCount, 3)
     }
 
     func test_symbolicLinksAreVisibleZeroByteLeavesAndAreNeverFollowed() async {
-        // The link reports `isDirectory` and a 2 GiB `fileSize`, exactly as a
+        // The link reports `isDirectory` and a 2 GiB `contentLength`, exactly as a
         // link to a large directory-backed target would. Neither may tempt the
         // walk: no bytes, no descent.
         let tree = ScriptedEntry.directory("scan-root", volume: volumeA, children: [
@@ -41,12 +41,12 @@ final class EntrySemanticsTests: XCTestCase {
 
         guard let result = await runScan(probe).result else { return XCTFail("expected a result") }
 
-        XCTAssertEqual(result.root.subtreeBytes, 1_000, "a symlink contributes no content bytes")
+        XCTAssertEqual(result.root.subtreeDiskBytes, 1_000, "a symlink contributes no content bytes")
         for name in ["link-to-file", "link-to-dir"] {
             let link = node(result.root, at: name)
             XCTAssertEqual(link?.kind, .symbolicLink)
-            XCTAssertEqual(link?.ownBytes, 0)
-            XCTAssertEqual(link?.subtreeBytes, 0)
+            XCTAssertEqual(link?.ownDiskBytes, 0)
+            XCTAssertEqual(link?.subtreeDiskBytes, 0)
             XCTAssertTrue(link?.children.isEmpty == true)
         }
         XCTAssertEqual(probe.listedPaths, [""], "no link is ever listed: \(probe.listedPaths)")
@@ -69,7 +69,7 @@ final class EntrySemanticsTests: XCTestCase {
             ScriptedEntry(meta: EntryMeta(
                 name: "broken",
                 isSymbolicLink: true,
-                fileSize: nil,
+                contentLength: nil,
                 volumeIdentifier: volumeA
             ))
         ])
@@ -78,10 +78,10 @@ final class EntrySemanticsTests: XCTestCase {
         guard let result = await runScan(probe).result else { return XCTFail("expected a result") }
 
         XCTAssertEqual(result.reason, .completed)
-        XCTAssertEqual(result.root.subtreeBytes, 64)
+        XCTAssertEqual(result.root.subtreeDiskBytes, 64)
         XCTAssertEqual(probe.listedPaths, ["", "dir"])
         XCTAssertEqual(node(result.root, at: "broken")?.kind, .symbolicLink)
-        XCTAssertEqual(node(result.root, at: "broken")?.ownBytes, 0)
+        XCTAssertEqual(node(result.root, at: "broken")?.ownDiskBytes, 0)
         XCTAssertEqual(result.completeness, .exact,
                        "an unreadable size on a link is not an unreadable entry — links have no bytes to read")
     }

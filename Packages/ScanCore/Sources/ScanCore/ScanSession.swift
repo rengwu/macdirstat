@@ -67,6 +67,9 @@ final class ScanSession {
     private var lastProgressEmit: TimeInterval = -.infinity
     private var lastTreeEmit: TimeInterval = -.infinity
     private var progressSequence: UInt64 = 0
+    /// Sticky: once the counted total has passed the volume's used figure, the
+    /// completion percentage is gone for the rest of the scan.
+    private var fractionWithdrawn = false
     private var treeGeneration: UInt64 = 0
     private var treeDirty = false
     private var entriesSinceClockRead = 0
@@ -395,15 +398,29 @@ final class ScanSession {
         if isRegularFile { filesSeen += 1 }
 
         var bytes: Int64 = 0
+        var contentBytes: Int64 = 0
         if isRegularFile {
-            if let size = meta.fileSize {
+            // **The on-disk figure decides readability** (ticket 13). An entry
+            // whose blocks cannot be read is Unreadable even when its content
+            // length reads perfectly well, and is never given that length as a
+            // substitute: the two are different quantities, and one of them is
+            // not the measure.
+            if let size = meta.diskSize {
                 bytes = max(0, size)
+                // Content length is only ever a figure carried beside the
+                // measure. Where it could not be read, the node carries the
+                // on-disk figure, so the inspector stays silent rather than
+                // claiming a divergence nobody measured.
+                contentBytes = max(0, meta.contentLength ?? size)
                 if case .duplicate(let owner) = hardLinks.claim(meta, for: node) {
                     // Another in-scope name reached this inode first and
                     // already counted its bytes. This name stays visible and
                     // weightless, with the owner's path so the UI can say
-                    // where the bytes went (spec §3.4).
+                    // where the bytes went (spec §3.4). Both measures go to
+                    // zero: the two names genuinely share one set of blocks
+                    // and one set of contents.
                     bytes = 0
+                    contentBytes = 0
                     node.markHardLinkElsewhere(owner: owner.pathComponents())
                 }
             } else {
@@ -415,10 +432,10 @@ final class ScanSession {
             }
         }
 
-        node.attribute(ownBytes: bytes, isRegularFile: isRegularFile)
+        node.attribute(diskBytes: bytes, contentBytes: contentBytes, isRegularFile: isRegularFile)
         node.freeze()
 
-        guard bytes > 0 || isRegularFile else { return }
+        guard bytes > 0 || contentBytes > 0 || isRegularFile else { return }
         // Roll up to every ancestor, so each open directory's total is live at
         // every instant (spec §3.1). A deduplicated name rolls up zero bytes —
         // it is still one entry, just not a second copy of the bytes.
@@ -431,7 +448,12 @@ final class ScanSession {
         var newlyAttributed = bytes > 0 ? 1 : 0
         var ancestor = node.parent
         while let current = ancestor {
-            if current.accumulate(bytes: bytes, files: isRegularFile ? 1 : 0, attributedNodes: newlyAttributed) {
+            if current.accumulate(
+                diskBytes: bytes,
+                contentBytes: contentBytes,
+                files: isRegularFile ? 1 : 0,
+                attributedNodes: newlyAttributed
+            ) {
                 newlyAttributed += 1
             }
             ancestor = current.parent
@@ -529,7 +551,7 @@ final class ScanSession {
         lastTreeEmit = now
         treeDirty = false
         currentPathTail = ""
-        sink.emit(.progress(makeProgress(now: now)))
+        sink.emit(.progress(makeProgress(now: now, isFinal: true)))
         sink.emit(.tree(makeTree()))
     }
 
@@ -541,31 +563,45 @@ final class ScanSession {
         }
     }
 
-    private func makeProgress(now: TimeInterval) -> ProgressSnapshot {
+    private func makeProgress(now: TimeInterval, isFinal: Bool = false) -> ProgressSnapshot {
         progressSequence += 1
         let elapsed = max(0, now - startedAt)
-        let bytes = root.subtreeBytes
+        let bytes = root.subtreeDiskBytes
+        let items = filesSeen + directoriesSeen
         return ProgressSnapshot(
-            attributedBytes: bytes,
+            attributedDiskBytes: bytes,
             filesSeen: filesSeen,
             directoriesSeen: directoriesSeen,
             currentPathTail: currentPathTail,
             elapsed: elapsed,
-            bytesPerSecond: elapsed > 0 ? Double(bytes) / elapsed : 0,
-            approximateFraction: approximateFraction(attributedBytes: bytes),
+            // Items, not bytes: the scanner reads listings and never contents,
+            // so a byte rate here would not be a disk speed even now that the
+            // bytes are real (ticket 13).
+            itemsPerSecond: elapsed > 0 ? Double(items) / elapsed : 0,
+            approximateFraction: approximateFraction(attributedDiskBytes: bytes, isFinal: isFinal),
             sequence: progressSequence
         )
     }
 
-    /// Volume scans only, and explicitly approximate: logical content bytes are
-    /// not physical used bytes, so this is a reassurance bar, never a promise.
-    /// A folder scan has nothing honest to divide by (spec §5.5).
-    private func approximateFraction(attributedBytes: Int64) -> Double? {
+    /// Volume scans only. Blocks counted over the volume's own used figure —
+    /// the same quantity on both sides of the division since ticket 13, and on
+    /// the field machine the two land within 0.3% of each other.
+    ///
+    /// It is still approximate, and it fails in two directions this guards
+    /// against: it must never claim to be finished while it is running, so it
+    /// is capped at 0.99 until the terminal snapshot; and once the counted
+    /// total passes volume-used there is no honest denominator left, so the
+    /// figure is **withdrawn for the rest of the scan** rather than pinned at
+    /// its ceiling. A folder scan has nothing to divide by at all (spec §5.5).
+    private func approximateFraction(attributedDiskBytes: Int64, isFinal: Bool) -> Double? {
         guard request.mode == .volumeRoot,
               let capacity = volumeCapacity,
               capacity.usedBytes > 0
         else { return nil }
-        return min(Double(attributedBytes) / Double(capacity.usedBytes), 1.0)
+        if attributedDiskBytes > capacity.usedBytes { fractionWithdrawn = true }
+        guard !fractionWithdrawn else { return nil }
+        let fraction = Double(attributedDiskBytes) / Double(capacity.usedBytes)
+        return min(fraction, isFinal ? 1.0 : 0.99)
     }
 
     private func makeTree() -> TreeSnapshot {

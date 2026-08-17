@@ -121,7 +121,7 @@ final class MemoryCeilingTests: XCTestCase {
             let outcome = await ScaleScanDriver.run(workload)
             XCTAssertEqual(outcome.result.reason, .completed, "\(workload.manifest.rung)")
             XCTAssertEqual(
-                outcome.result.root.subtreeBytes, workload.manifest.attributedBytes,
+                outcome.result.root.subtreeDiskBytes, workload.manifest.attributedBytes,
                 "\(workload.manifest.rung) attributed the wrong number of bytes"
             )
             peak = outcome.memory.peak.physicalFootprint
@@ -155,7 +155,7 @@ final class MemoryCeilingTests: XCTestCase {
 
             XCTAssertEqual(outcome.result.reason, .cancelled, "\(manifest.rung)")
             XCTAssertLessThanOrEqual(outcome.operations.listCount, cancelAt + 1, "\(manifest.rung)")
-            XCTAssertGreaterThan(outcome.result.root.subtreeBytes, 0, "\(manifest.rung)")
+            XCTAssertGreaterThan(outcome.result.root.subtreeDiskBytes, 0, "\(manifest.rung)")
             XCTAssertEqual(outcome.result.root.readState, .incomplete, "\(manifest.rung)")
             XCTAssertLessThan(
                 outcome.memory.peak.physicalFootprint, ceilingBytes,
@@ -193,7 +193,7 @@ final class MemoryCeilingTests: XCTestCase {
 
             XCTAssertEqual(outcome.result.reason, .completed, "\(manifest.rung)", file: file, line: line)
             XCTAssertEqual(
-                outcome.result.root.subtreeBytes, manifest.attributedBytes,
+                outcome.result.root.subtreeDiskBytes, manifest.attributedBytes,
                 "\(manifest.rung) attributed the wrong number of bytes", file: file, line: line
             )
             let census = outcome.result.root.census()

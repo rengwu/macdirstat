@@ -48,6 +48,100 @@ final class DisplayFormattingTests: XCTestCase {
         XCTAssertEqual(formatter.percentage(100), "100.0%")
         XCTAssertEqual(formatter.share(childBytes: 1, parentBytes: 10_000), "< 0.1%")
     }
+
+    /// The throughput reading is items per second, and no bytes-per-second
+    /// figure survives anywhere (ticket 13). The scanner reads directory
+    /// listings and never file contents, so a byte rate here was never a disk
+    /// speed — before the measure changed it was not even a rate of real bytes.
+    func test_throughputCountsItemsAndNeverBytes() {
+        let formatter = DisplayFormatter(locale: enUS)
+
+        XCTAssertEqual(formatter.throughput(0), "0 items/s")
+        XCTAssertEqual(formatter.throughput(12_345.6), "12,345 items/s")
+        XCTAssertEqual(formatter.throughput(-1), "0 items/s")
+        for reading in [0.0, 1_024.0, 5_000_000.0] {
+            let text = formatter.throughput(reading)
+            XCTAssertFalse(text.contains("KiB"), text)
+            XCTAssertFalse(text.contains("MiB"), text)
+            XCTAssertFalse(text.contains("bytes"), text)
+        }
+    }
+}
+
+/// The status line, as data (ticket 13).
+@MainActor
+final class StatusBarSummaryTests: XCTestCase {
+    private let formatter = DisplayFormatter(locale: Locale(identifier: "en_US"))
+
+    private func text(
+        phase: ScanPhase,
+        root: ScanNode?,
+        volumeCapacity: VolumeCapacity? = nil
+    ) -> String? {
+        StatusBarViewController.text(
+            phase: phase,
+            root: root,
+            progress: nil,
+            result: nil,
+            volumeCapacity: volumeCapacity,
+            formatter: formatter
+        )
+    }
+
+    /// **A finished volume scan reconciles out loud.** Counted against used, in
+    /// that order, so the figure the map is made of is next to the figure the
+    /// volume itself reports.
+    func test_aFinishedVolumeScanShowsItsCountedTotalAgainstVolumeUsed() async throws {
+        let fixture = try await ScannedFixture.make(in: self) { root in
+            try writeFile("payload.bin", bytes: 4_096, in: root)
+        }
+        let counted = fixture.rootNode.subtreeDiskBytes
+
+        let line = try XCTUnwrap(
+            text(
+                phase: .completed,
+                root: fixture.rootNode,
+                volumeCapacity: VolumeCapacity(totalBytes: 1_000_000, availableBytes: 1_000_000 - counted)
+            )
+        )
+
+        XCTAssertTrue(line.contains("\(formatter.bytes(counted)) counted"), line)
+        XCTAssertTrue(line.contains("\(formatter.bytes(counted)) used"), line)
+    }
+
+    /// It appears **even when the two agree** — agreement at a fraction of a
+    /// percent is the evidence that the picture is real, and it can only be
+    /// read as evidence if it is there every time.
+    func test_theReconciliationLineAppearsWhenTheFiguresDisagreeToo() async throws {
+        let fixture = try await ScannedFixture.make(in: self) { root in
+            try writeFile("payload.bin", bytes: 4_096, in: root)
+        }
+
+        let line = try XCTUnwrap(
+            text(
+                phase: .completed,
+                root: fixture.rootNode,
+                volumeCapacity: VolumeCapacity(totalBytes: 100 * 1_024 * 1_024, availableBytes: 0)
+            )
+        )
+
+        XCTAssertTrue(line.contains("counted"), line)
+        XCTAssertTrue(line.contains("100 MiB used"), line)
+    }
+
+    /// A folder scan has no volume to reconcile against, so it says nothing it
+    /// cannot back up.
+    func test_aFolderScanSaysNothingAboutVolumeUsed() async throws {
+        let fixture = try await ScannedFixture.make(in: self) { root in
+            try writeFile("payload.bin", bytes: 4_096, in: root)
+        }
+
+        let line = try XCTUnwrap(text(phase: .completed, root: fixture.rootNode))
+
+        XCTAssertFalse(line.contains("used"), line)
+        XCTAssertFalse(line.contains("counted"), line)
+        XCTAssertTrue(line.hasPrefix(formatter.bytes(fixture.rootNode.subtreeDiskBytes)), line)
+    }
 }
 
 @MainActor
@@ -144,7 +238,11 @@ final class ScanPresentationModelTests: XCTestCase {
             .appendingPathComponent("MacDirStat-AppTest-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
         defer { try? FileManager.default.removeItem(at: folder) }
-        try Data(repeating: 0x4D, count: 1_537).write(to: folder.appendingPathComponent("payload.bin"))
+        let payload = folder.appendingPathComponent("payload.bin")
+        try Data(repeating: 0x4D, count: 1_537).write(to: payload)
+        // What it occupies, not what it is: the app measures blocks on disk
+        // and 1,537 bytes are a whole block of them (ticket 13).
+        let occupied = try payload.resourceValues(forKeys: [.fileAllocatedSizeKey]).fileAllocatedSize ?? -1
 
         let model = ScanPresentationModel()
         let completed = expectation(description: "scan completed")
@@ -154,7 +252,8 @@ final class ScanPresentationModelTests: XCTestCase {
         model.start(root: folder, mode: .folder)
 
         await fulfillment(of: [completed], timeout: 5)
-        XCTAssertEqual(model.root?.subtreeBytes, 1_537)
+        XCTAssertEqual(model.root?.subtreeDiskBytes, Int64(occupied))
+        XCTAssertEqual(model.root?.subtreeContentBytes, 1_537, "the length is carried beside it")
         XCTAssertEqual(model.root?.fileCount, 1)
         XCTAssertEqual(model.result?.reason, .completed)
     }

@@ -54,7 +54,16 @@ final class RealFilesystemSoakTests: XCTestCase {
         let census = scan.root.census()
         XCTAssertEqual(scan.reason, .completed)
         XCTAssertEqual(census.entries, manifest.entryCount, "the materialized tree is not the manifest")
-        XCTAssertEqual(scan.root.subtreeBytes, manifest.attributedBytes, "sparse files lost their length")
+        // **What a materialized rung proves about the two measures.** Every
+        // file here is staged with `ftruncate` and nothing is written, so the
+        // whole tree occupies no blocks whatever — and since ticket 13 that is
+        // exactly what the engine reports, with the manifest's byte total
+        // showing up in the length carried beside it. Two hundred thousand
+        // entries of the case that made the single measure indefensible.
+        XCTAssertEqual(scan.root.subtreeDiskBytes, 0,
+                       "a tree of holes occupies nothing, and the engine now says so")
+        XCTAssertEqual(scan.root.subtreeContentBytes, manifest.attributedBytes,
+                       "sparse files lost their length")
 
         let bytesPerEntry = Double(reading.footprintDelta) / Double(manifest.entryCount)
         print("""
@@ -169,7 +178,8 @@ final class RealFilesystemSoakTests: XCTestCase {
         XCTAssertEqual(scan.reason, .completed)
         XCTAssertEqual(scan.completeness, .exact)
         XCTAssertEqual(scan.root.census().entries, fixture.manifest.entryCount)
-        XCTAssertEqual(scan.root.subtreeBytes, fixture.manifest.attributedBytes)
+        XCTAssertEqual(scan.root.subtreeDiskBytes, 0, "the staged tree is sparse: no blocks, all length")
+        XCTAssertEqual(scan.root.subtreeContentBytes, fixture.manifest.attributedBytes)
 
         let bytesPerEntry = Double(reading.footprintDelta) / Double(fixture.manifest.entryCount)
         print("""

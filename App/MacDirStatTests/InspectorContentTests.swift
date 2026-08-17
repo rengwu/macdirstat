@@ -16,14 +16,20 @@ final class InspectorContentTests: XCTestCase {
             try writeFile("holiday.mp4", bytes: 1_536, in: root)
         }
         let node = try fixture.node(named: "holiday.mp4")
+        // What it occupies, not what it is: 1,536 bytes of content are a whole
+        // block on disk, and the block is the figure the app shows (ticket 13).
+        let occupied = try onDiskBytes(of: fixture.root.appendingPathComponent("holiday.mp4"))
 
         let content = builder.content(for: .node(node), in: context(fixture))
 
         XCTAssertEqual(content.title, "holiday.mp4")
         XCTAssertEqual(content.subtitle, "Video")
-        XCTAssertEqual(content.sizeText, "1.50 KiB")
-        XCTAssertEqual(content.sizeCaption, "logical")
-        XCTAssertEqual(content.exactBytesText, "1,536 bytes")
+        XCTAssertEqual(content.sizeCaption, "on disk")
+        XCTAssertEqual(content.exactBytesText, groupedBytesText(occupied))
+        XCTAssertGreaterThan(occupied, 1_536, "the fixture volume rounds a part-block file up")
+        // The length is a whole display step away from the blocks, so the
+        // inspector says so — and says it once.
+        XCTAssertEqual(content.rows.filter { $0.label == "Content length" }.count, 1)
         XCTAssertEqual(content.path, fixture.root.appendingPathComponent("holiday.mp4").path)
         XCTAssertTrue(content.rows.contains(.init(label: "Kind", value: "Video")))
         XCTAssertTrue(content.showsActions)
@@ -42,12 +48,17 @@ final class InspectorContentTests: XCTestCase {
 
         let content = builder.content(for: .node(inner), in: context(fixture))
 
+        // Three files, each smaller than a block, so each occupies exactly one:
+        // `inner` holds two of the scan's three blocks.
+        let occupied = try onDiskBytes(of: fixture.root.appendingPathComponent("inner/a.bin"))
+            + onDiskBytes(of: fixture.root.appendingPathComponent("inner/deeper/b.bin"))
+
         XCTAssertEqual(content.subtitle, "Folder")
-        XCTAssertEqual(content.sizeCaption, "total")
-        XCTAssertEqual(content.exactBytesText, "400 bytes")
+        XCTAssertEqual(content.sizeCaption, "total on disk")
+        XCTAssertEqual(content.exactBytesText, groupedBytesText(occupied))
         XCTAssertTrue(content.rows.contains(.init(label: "Contains", value: "2 files · 1 folders")))
-        XCTAssertTrue(content.rows.contains(.init(label: "% of scan", value: "40.0%")))
-        XCTAssertTrue(content.rows.contains(.init(label: "% of parent", value: "40.0%")))
+        XCTAssertTrue(content.rows.contains(.init(label: "% of scan", value: "66.7%")))
+        XCTAssertTrue(content.rows.contains(.init(label: "% of parent", value: "66.7%")))
     }
 
     func test_theRootReportsOneHundredPercentOfItsParent() async throws {
@@ -89,8 +100,8 @@ final class InspectorContentTests: XCTestCase {
         // bytes; the other is the non-owner this test is about.
         let first = try fixture.node(named: "first.bin")
         let second = try fixture.node(named: "second.bin")
-        let owner = first.subtreeBytes > 0 ? first : second
-        let nonOwner = first.subtreeBytes > 0 ? second : first
+        let owner = first.subtreeDiskBytes > 0 ? first : second
+        let nonOwner = first.subtreeDiskBytes > 0 ? second : first
         guard case .hardLinkElsewhere = nonOwner.attribution else {
             return XCTFail("the fixture did not produce a hard-link non-owner")
         }
@@ -117,7 +128,7 @@ final class InspectorContentTests: XCTestCase {
         let content = builder.content(for: .node(package), in: context(fixture))
 
         XCTAssertEqual(content.subtitle, "Package")
-        XCTAssertEqual(content.sizeCaption, "total")
+        XCTAssertEqual(content.sizeCaption, "total on disk")
         XCTAssertTrue(content.notes.contains { $0.title == "Package." })
         XCTAssertTrue(content.notes.contains { $0.detail.contains("subdivides its box") })
     }
@@ -182,6 +193,47 @@ final class InspectorContentTests: XCTestCase {
         XCTAssertEqual(content.swatch, .merged)
     }
 
+    // MARK: - The two measures (ticket 13)
+
+    /// The length line appears **when and only when** the two figures differ by
+    /// more than a display step. A file whose length is a whole number of
+    /// blocks gets no second line, because a row repeating the number above it
+    /// is clutter on ~99% of rows.
+    func test_theContentLengthLineAppearsOnlyWhenTheTwoMeasuresDiffer() async throws {
+        let fixture = try await ScannedFixture.make(in: self) { root in
+            try writeFile("aligned.bin", bytes: 4_096, in: root)
+            try writeSparseFile("image.raw", length: 3 * 1_024 * 1_024 * 1_024, in: root)
+        }
+
+        let aligned = builder.content(for: .node(try fixture.node(named: "aligned.bin")), in: context(fixture))
+        XCTAssertFalse(aligned.rows.contains { $0.label == "Content length" },
+                       "a file that occupies what it is has nothing extra to say")
+
+        let sparse = builder.content(for: .node(try fixture.node(named: "image.raw")), in: context(fixture))
+        XCTAssertEqual(sparse.sizeText, "0 bytes")
+        XCTAssertEqual(sparse.sizeCaption, "nothing on disk")
+        XCTAssertTrue(sparse.rows.contains(.init(label: "Content length", value: "3.00 GiB")))
+        XCTAssertTrue(
+            sparse.notes.contains { $0.title == "3.00 GiB in length, nothing on disk." },
+            "the striking case says so in words: \(sparse.notes.map(\.title))"
+        )
+    }
+
+    /// A folder's line is the roll-up of both measures, not one file's — which
+    /// is the whole reason content length is carried up the tree at all.
+    func test_aFolderCarriesTheRolledUpLengthOfEverythingBeneathIt() async throws {
+        let fixture = try await ScannedFixture.make(in: self) { root in
+            let images = try makeDirectory("images", in: root)
+            try writeSparseFile("a.raw", length: 2 * 1_024 * 1_024 * 1_024, in: images)
+            try writeSparseFile("b.raw", length: 1_024 * 1_024 * 1_024, in: images)
+        }
+
+        let content = builder.content(for: .node(try fixture.node(named: "images")), in: context(fixture))
+
+        XCTAssertTrue(content.rows.contains(.init(label: "Content length", value: "3.00 GiB")))
+        XCTAssertEqual(content.sizeText, "0 bytes")
+    }
+
     // MARK: - The tooltip says the same things
 
     func test_theTooltipCarriesNameBothByteFiguresKindAndFullPath() async throws {
@@ -201,13 +253,15 @@ final class InspectorContentTests: XCTestCase {
 
     func test_theAccessibilityLabelCarriesNameSizeAndKind() async throws {
         let fixture = try await ScannedFixture.make(in: self) { root in
-            try writeFile("track.mp3", bytes: 2_048, in: root)
+            // A whole number of 4 KiB blocks, so what it occupies and what it
+            // is are the same figure whatever the volume's block size.
+            try writeFile("track.mp3", bytes: 4_096, in: root)
         }
         let node = try fixture.node(named: "track.mp3")
 
         XCTAssertEqual(
             builder.accessibilityLabel(for: .node(node)),
-            "track.mp3, 2.00 KiB, Audio"
+            "track.mp3, 4.00 KiB, Audio"
         )
         XCTAssertEqual(
             builder.accessibilityLabel(

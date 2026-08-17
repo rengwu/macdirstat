@@ -87,7 +87,7 @@ struct BalancedTreeWorkload: ScaleWorkload {
             // A decoy was listed. Handing back plausible children rather than
             // throwing keeps the failure where it belongs: in the assertion
             // that no decoy is ever listed, not in a mystery scan error.
-            return [EntryMeta(name: "should-never-be-listed.bin", isRegularFile: true, fileSize: 1)]
+            return [EntryMeta(name: "should-never-be-listed.bin", isRegularFile: true, diskSize: 1, contentLength: 1)]
         }
         guard let index = directory else { return [] }
 
@@ -201,7 +201,8 @@ struct BalancedTreeWorkload: ScaleWorkload {
         EntryMeta(
             name: WorkloadNaming.fileName(index),
             isRegularFile: true,
-            fileSize: bytes,
+            diskSize: bytes,
+            contentLength: bytes,
             linkCount: 1,
             volumeIdentifier: rootVolumeIdentity
         )
@@ -246,7 +247,8 @@ struct FlatDirectoryWorkload: ScaleWorkload {
             entries.append(EntryMeta(
                 name: WorkloadNaming.fileName(index),
                 isRegularFile: true,
-                fileSize: composition.size(ofFileAt: index),
+                diskSize: composition.size(ofFileAt: index),
+                contentLength: composition.size(ofFileAt: index),
                 linkCount: 1,
                 volumeIdentifier: rootVolumeIdentity
             ))
@@ -318,7 +320,8 @@ struct DeepChainWorkload: ScaleWorkload {
             entries.append(EntryMeta(
                 name: WorkloadNaming.fileName(index),
                 isRegularFile: true,
-                fileSize: composition.size(ofFileAt: index),
+                diskSize: composition.size(ofFileAt: index),
+                contentLength: composition.size(ofFileAt: index),
                 linkCount: 1,
                 volumeIdentifier: rootVolumeIdentity
             ))
@@ -362,7 +365,8 @@ struct HugeFileWorkload: ScaleWorkload {
         entries.append(EntryMeta(
             name: "one-enormous-archive.dmg",
             isRegularFile: true,
-            fileSize: hugeBytes,
+            diskSize: hugeBytes,
+            contentLength: hugeBytes,
             linkCount: 1,
             volumeIdentifier: rootVolumeIdentity
         ))
@@ -370,7 +374,8 @@ struct HugeFileWorkload: ScaleWorkload {
             entries.append(EntryMeta(
                 name: WorkloadNaming.fileName(index),
                 isRegularFile: true,
-                fileSize: tinyBytes,
+                diskSize: tinyBytes,
+                contentLength: tinyBytes,
                 linkCount: 1,
                 volumeIdentifier: rootVolumeIdentity
             ))
@@ -440,7 +445,8 @@ struct HardLinkWorkload: ScaleWorkload {
                 entries.append(EntryMeta(
                     name: String(format: "linked-%07d-%03d.bin", inode, copy),
                     isRegularFile: true,
-                    fileSize: linkedBytes,
+                    diskSize: linkedBytes,
+                    contentLength: linkedBytes,
                     linkCount: namesPerInode,
                     fileIdentity: FileSystemIdentity("inode-\(inode)"),
                     volumeIdentifier: rootVolumeIdentity
@@ -451,7 +457,8 @@ struct HardLinkWorkload: ScaleWorkload {
             entries.append(EntryMeta(
                 name: String(format: "ordinary-%07d.bin", index),
                 isRegularFile: true,
-                fileSize: ordinaryBytes,
+                diskSize: ordinaryBytes,
+                contentLength: ordinaryBytes,
                 linkCount: 1,
                 fileIdentity: FileSystemIdentity("inode-ordinary-\(index)"),
                 volumeIdentifier: rootVolumeIdentity
@@ -462,7 +469,8 @@ struct HardLinkWorkload: ScaleWorkload {
                 entries.append(EntryMeta(
                     name: String(format: "unlinked-collision-%05d-\(side).bin", pair),
                     isRegularFile: true,
-                    fileSize: ordinaryBytes,
+                    diskSize: ordinaryBytes,
+                    contentLength: ordinaryBytes,
                     linkCount: 1,
                     fileIdentity: FileSystemIdentity("inode-collision-\(pair)"),
                     volumeIdentifier: rootVolumeIdentity
@@ -526,8 +534,10 @@ struct InjectedFailureWorkload: ScaleWorkload {
                 name: String(format: "size-unreadable-%05d.bin", index),
                 isRegularFile: true,
                 // A size that could not be read is `nil` and is never guessed
-                // (spec §3.1, §3.5).
-                fileSize: nil,
+                // (spec §3.1, §3.5). It is the **on-disk** figure that decides
+                // readability, so both are absent here (ticket 13).
+                diskSize: nil,
+                contentLength: nil,
                 linkCount: 1,
                 volumeIdentifier: rootVolumeIdentity
             ))
@@ -536,7 +546,8 @@ struct InjectedFailureWorkload: ScaleWorkload {
             entries.append(EntryMeta(
                 name: WorkloadNaming.fileName(index),
                 isRegularFile: true,
-                fileSize: ordinaryBytes,
+                diskSize: ordinaryBytes,
+                contentLength: ordinaryBytes,
                 linkCount: 1,
                 volumeIdentifier: rootVolumeIdentity
             ))

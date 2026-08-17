@@ -30,6 +30,12 @@ public struct FileManagerDirectoryProbe: DirectoryProbe {
         .isRegularFileKey,
         .isSymbolicLinkKey,
         .isPackageKey,
+        // The measure, and the one carried beside it. Both ride the same
+        // batched prefetch: three alternating warm passes over
+        // `/System/Library/Frameworks` measured ten keys at 5.153 s and these
+        // eleven plus the extra read at 5.160 s — 0.1%, inside the noise
+        // (ticket 13).
+        .fileAllocatedSizeKey,
         .fileSizeKey,
         .linkCountKey,
         .fileResourceIdentifierKey,
@@ -54,7 +60,7 @@ public struct FileManagerDirectoryProbe: DirectoryProbe {
         // measured *through* and only presented collapsed (spec §3.4).
         //
         // **The pool is the memory ceiling.** `contentsOfDirectory` returns one
-        // `URL` per entry, each carrying the ten prefetched resource values as
+        // `URL` per entry, each carrying the eleven prefetched resource values as
         // Foundation objects, and every one of them is autoreleased. The
         // traversal is a single long synchronous run inside a detached task
         // with no suspension point in it, so it is one job on the cooperative
@@ -145,12 +151,13 @@ public struct FileManagerDirectoryProbe: DirectoryProbe {
             isRegularFile: values.isRegularFile ?? false,
             isSymbolicLink: values.isSymbolicLink ?? false,
             isPackage: values.isPackage ?? false,
-            // `fileSizeKey` is the logical content length — the one measure
+            // `fileAllocatedSizeKey` is the blocks on disk — the measure
             // (spec §3.1). It is absent for a directory, and absent rather
-            // than guessed when it could not be read (spec §3.5). Extended
-            // attributes and resource forks are not content and are not in it;
-            // neither is allocated size.
-            fileSize: values.fileSize.map(Int64.init),
+            // than guessed when it could not be read (spec §3.5).
+            diskSize: values.fileAllocatedSize.map(Int64.init),
+            // `fileSizeKey`, carried beside it and driving nothing. Extended
+            // attributes and resource forks are not content and are not in it.
+            contentLength: values.fileSize.map(Int64.init),
             linkCount: values.linkCount,
             fileIdentity: (values.fileResourceIdentifier as? NSObject).map { FileSystemIdentity($0) },
             volumeIdentifier: (values.volumeIdentifier as? NSObject).map { FileSystemIdentity($0) },
@@ -181,7 +188,11 @@ public struct FileManagerDirectoryProbe: DirectoryProbe {
             isDirectory: format == S_IFDIR,
             isRegularFile: isRegularFile,
             isSymbolicLink: format == S_IFLNK,
-            fileSize: isRegularFile ? Int64(status.st_size) : nil
+            // `st_blocks` is counted in 512-byte units by definition, whatever
+            // the filesystem's own block size — the same quantity
+            // `fileAllocatedSizeKey` reports, reached the other way.
+            diskSize: isRegularFile ? Int64(status.st_blocks) * 512 : nil,
+            contentLength: isRegularFile ? Int64(status.st_size) : nil
         )
     }
 

@@ -49,14 +49,21 @@ public enum CloudDownloadingStatus: Sendable, Equatable {
 /// One directory entry's metadata, as prefetched by a single shallow listing.
 ///
 /// This mirrors the engine's prefetch key set (`isDirectoryKey`,
-/// `isRegularFileKey`, `isSymbolicLinkKey`, `isPackageKey`, `fileSizeKey`,
-/// `linkCountKey`, `fileResourceIdentifierKey`, `volumeIdentifierKey`,
-/// `isUbiquitousItemKey`, `ubiquitousItemDownloadingStatusKey`), so a listing
-/// costs one batched metadata fetch per directory and the traversal never
-/// re-reads an entry it has already seen (spec §5.4, §8.2).
+/// `isRegularFileKey`, `isSymbolicLinkKey`, `isPackageKey`,
+/// `fileAllocatedSizeKey`, `fileSizeKey`, `linkCountKey`,
+/// `fileResourceIdentifierKey`, `volumeIdentifierKey`, `isUbiquitousItemKey`,
+/// `ubiquitousItemDownloadingStatusKey`), so a listing costs one batched
+/// metadata fetch per directory and the traversal never re-reads an entry it
+/// has already seen (spec §5.4, §8.2).
 ///
-/// `fileSize` is optional on purpose: a size that could not be read is
-/// **never** guessed (spec §3.1, §3.5).
+/// **Two measures, and only one of them decides anything.** `diskSize` is what
+/// the entry occupies; `contentLength` is what its contents are. They diverge
+/// by more than a rounding error on exactly the files a user goes looking for —
+/// a sparse VM image is a terabyte of length on 34 GiB of disk, and a macOS
+/// binary is the other way round (ticket 13).
+///
+/// `diskSize` is optional on purpose: a size that could not be read is **never**
+/// guessed, and never substituted from the other measure (spec §3.1, §3.5).
 public struct EntryMeta: Sendable, Equatable {
     /// Last path component only. Absolute URLs are rebuilt from the parent
     /// chain on demand (spec §5.2).
@@ -65,9 +72,17 @@ public struct EntryMeta: Sendable, Equatable {
     public var isRegularFile: Bool
     public var isSymbolicLink: Bool
     public var isPackage: Bool
-    /// `fileSizeKey` — the logical content length, the engine's one measure.
-    /// `nil` means unreadable; it is never replaced with an estimate.
-    public var fileSize: Int64?
+    /// `fileAllocatedSizeKey` — the blocks this entry occupies, and **the
+    /// measure** (spec §3.1). `nil` means unreadable; it is never replaced with
+    /// an estimate and never with `contentLength`.
+    ///
+    /// Directories return no allocated size at all, which is why a folder's own
+    /// bytes stay zero and its total is its descendants' and nothing else.
+    public var diskSize: Int64?
+    /// `fileSizeKey` — how many bytes the contents *are*. Carried beside
+    /// `diskSize`, rolled up the same way, and shown only where the two differ
+    /// (spec §3.1). Drives nothing: not the treemap, not a total, not progress.
+    public var contentLength: Int64?
     /// `linkCountKey`. Only `> 1` enters the hard-link identity index; `1`
     /// cannot be a hard link (spec §3.4).
     public var linkCount: Int?
@@ -85,7 +100,8 @@ public struct EntryMeta: Sendable, Equatable {
         isRegularFile: Bool = false,
         isSymbolicLink: Bool = false,
         isPackage: Bool = false,
-        fileSize: Int64? = nil,
+        diskSize: Int64? = nil,
+        contentLength: Int64? = nil,
         linkCount: Int? = nil,
         fileIdentity: FileSystemIdentity? = nil,
         volumeIdentifier: FileSystemIdentity? = nil,
@@ -97,7 +113,8 @@ public struct EntryMeta: Sendable, Equatable {
         self.isRegularFile = isRegularFile
         self.isSymbolicLink = isSymbolicLink
         self.isPackage = isPackage
-        self.fileSize = fileSize
+        self.diskSize = diskSize
+        self.contentLength = contentLength
         self.linkCount = linkCount
         self.fileIdentity = fileIdentity
         self.volumeIdentifier = volumeIdentifier
@@ -136,8 +153,9 @@ public struct VolumeCapacity: Sendable, Equatable {
         self.availableBytes = availableBytes
     }
 
-    /// The denominator of a whole-volume scan's explicitly approximate
-    /// completion fraction (spec §5.5).
+    /// The denominator of a whole-volume scan's approximate completion
+    /// fraction, and the figure a finished volume scan reconciles its counted
+    /// total against — "333 GiB counted · 332 GiB used" (spec §5.5).
     public var usedBytes: Int64 {
         max(0, totalBytes - availableBytes)
     }

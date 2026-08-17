@@ -149,7 +149,7 @@ final class ScaleGeneratorTests: XCTestCase {
 
         XCTAssertEqual(outcome.result.reason, .completed)
         XCTAssertEqual(outcome.result.completeness, .exact)
-        XCTAssertEqual(outcome.result.root.subtreeBytes, manifest.attributedBytes)
+        XCTAssertEqual(outcome.result.root.subtreeDiskBytes, manifest.attributedBytes)
         XCTAssertEqual(outcome.result.root.fileCount, Int64(manifest.fileCount))
 
         let census = outcome.result.root.census()

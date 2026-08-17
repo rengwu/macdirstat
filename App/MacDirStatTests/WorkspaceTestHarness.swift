@@ -109,10 +109,78 @@ final class ScannedFixture {
     }
 }
 
-/// Writes a file of exactly `bytes` bytes — the sizes the layout is asserted
-/// against have to be exact, not approximate.
+/// Writes a file of exactly `bytes` bytes of content.
+///
+/// What it *occupies* is a different number, and the volume decides it: since
+/// ticket 13 the app measures blocks on disk, and a 300-byte file is a whole
+/// block. Tests that need the figure the app will show read it back with
+/// ``onDiskBytes(of:)`` rather than predicting it, because a block size is not
+/// ours to assume.
 func writeFile(_ name: String, bytes: Int, in directory: URL) throws {
     try Data(repeating: 0x2A, count: bytes).write(to: directory.appendingPathComponent(name))
+}
+
+/// Writes a file with `length` bytes of content occupying no blocks at all —
+/// the sparse case, where the two measures part company by gigabytes.
+func writeSparseFile(_ name: String, length: Int64, in directory: URL) throws {
+    let path = directory.appendingPathComponent(name).path
+    let descriptor = open(path, O_CREAT | O_RDWR | O_EXCL, 0o644)
+    guard descriptor >= 0, ftruncate(descriptor, off_t(length)) == 0 else {
+        close(descriptor)
+        throw CocoaError(.fileWriteUnknown)
+    }
+    close(descriptor)
+}
+
+/// Stages a file that **occupies** `bytes` on disk without writing any of them.
+///
+/// `F_PREALLOCATE` reserves real blocks — they are counted in `st_blocks` and
+/// reported by `fileAllocatedSizeKey` — so a fixture can hold a half-gigabyte
+/// file in a millisecond. It is the mirror of ``writeSparseFile(_:length:in:)``,
+/// and it is what makes the merge bucket stageable at all now that the app
+/// measures blocks: every real file occupies at least one, so a tail folds into
+/// an aggregate only beside something genuinely enormous (ticket 13).
+func writeAllocatedFile(_ name: String, bytes: Int64, in directory: URL) throws {
+    let path = directory.appendingPathComponent(name).path
+    let descriptor = open(path, O_CREAT | O_RDWR | O_EXCL, 0o644)
+    guard descriptor >= 0 else { throw CocoaError(.fileWriteUnknown) }
+    defer { close(descriptor) }
+    var request = fstore_t(
+        fst_flags: UInt32(F_ALLOCATEALL),
+        fst_posmode: F_PEOFPOSMODE,
+        fst_offset: 0,
+        fst_length: off_t(bytes),
+        fst_bytesalloc: 0
+    )
+    guard fcntl(descriptor, F_PREALLOCATE, &request) == 0,
+          ftruncate(descriptor, off_t(bytes)) == 0
+    else { throw CocoaError(.fileWriteUnknown) }
+}
+
+/// What a staged file actually occupies, read from the filesystem.
+///
+/// The oracle for every size the app now shows. Read rather than predicted: how
+/// many blocks a 300-byte file costs is the host volume's business, and a test
+/// that hard-codes 4,096 is asserting the machine it was written on.
+func onDiskBytes(of url: URL) throws -> Int64 {
+    let values = try url.resourceValues(forKeys: [.fileAllocatedSizeKey])
+    guard let allocated = values.fileAllocatedSize else { throw CocoaError(.fileReadUnknown) }
+    return Int64(allocated)
+}
+
+/// The sum of what several staged files occupy.
+func onDiskBytes(of names: [String], in directory: URL) throws -> Int64 {
+    try names.reduce(0) { try $0 + onDiskBytes(of: directory.appendingPathComponent($1)) }
+}
+
+/// A byte count grouped the way the inspector writes it, so a test can assert a
+/// literal string against a figure the volume decided.
+func groupedBytesText(_ value: Int64) -> String {
+    let formatter = NumberFormatter()
+    formatter.locale = Locale(identifier: "en_US")
+    formatter.numberStyle = .decimal
+    formatter.usesGroupingSeparator = true
+    return "\(formatter.string(from: NSNumber(value: value)) ?? String(value)) bytes"
 }
 
 func makeDirectory(_ name: String, in directory: URL) throws -> URL {

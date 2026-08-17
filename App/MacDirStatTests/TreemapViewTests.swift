@@ -177,8 +177,13 @@ final class TreemapRenderingTests: XCTestCase {
         // rather than a small one: each entry must be under 2×2 pt on its own
         // (so it merges), while the 2,000 of them together take a few percent
         // of the viewport (so the box they land in is wider than a pixel).
+        //
+        // The dominant file is preallocated rather than written, and is a
+        // quarter of a gigabyte rather than six megabytes: since ticket 13 a
+        // 100-byte file occupies a whole block, so the tail is 2,000 blocks and
+        // only something this large pushes each of them under 2 pt.
         let fixture = try await ScannedFixture.make(in: self) { root in
-            try writeFile("dominant.mp4", bytes: 5_800_000, in: root)
+            try writeAllocatedFile("dominant.mp4", bytes: 256 * 1_024 * 1_024, in: root)
             for index in 1...2_000 {
                 try writeFile("tiny-\(index).png", bytes: 100, in: root)
             }
@@ -277,7 +282,9 @@ final class TreemapRenderingTests: XCTestCase {
 
         let tooltip = try XCTUnwrap(view.toolTip)
         XCTAssertTrue(tooltip.contains("movie.mp4"))
-        XCTAssertTrue(tooltip.contains("750,000 bytes"), "the tooltip carries the exact grouped bytes too")
+        let occupied = try onDiskBytes(of: fixture.root.appendingPathComponent("movie.mp4"))
+        XCTAssertTrue(tooltip.contains(groupedBytesText(occupied)),
+                      "the tooltip carries the exact grouped bytes too: \(tooltip)")
         XCTAssertTrue(tooltip.contains(fixture.root.appendingPathComponent("movie.mp4").path))
     }
 

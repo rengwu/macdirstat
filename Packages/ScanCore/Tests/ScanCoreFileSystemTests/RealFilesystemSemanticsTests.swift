@@ -21,16 +21,33 @@ final class RealFilesystemSemanticsTests: RealFixtureTestCase {
         root = result.root
     }
 
+    /// What the manifest says one staged file occupies. Block counts are the
+    /// host volume's business — a 5-byte file is a whole block on APFS and
+    /// might not be somewhere else — so the fixture reads them once and every
+    /// expectation here comes from that reading rather than from a constant.
+    private func blocks(_ path: String) -> Int64 {
+        manifest.attributedDiskBytesByPath[path] ?? -1
+    }
+
     // MARK: - Totals
 
     func test_theScanTotalsMatchTheManifestExactly() async throws {
         try await scan()
 
-        XCTAssertEqual(root.subtreeBytes, manifest.expectedAttributedBytes)
+        XCTAssertEqual(root.subtreeDiskBytes, manifest.expectedAttributedDiskBytes)
+        XCTAssertEqual(root.subtreeContentBytes, manifest.expectedAttributedContentBytes)
         XCTAssertEqual(root.fileCount, manifest.expectedFileCount)
 
+        // The two are not close, and that is the point of this fixture: four
+        // gigabytes of the content figure is two files occupying nothing.
+        XCTAssertGreaterThan(
+            root.subtreeContentBytes - root.subtreeDiskBytes,
+            RealFixtureManifest.hiddenSparseBytes,
+            "the sparse files stopped diverging from what they occupy"
+        )
+
         let final = try XCTUnwrap(events.progressSnapshots.last)
-        XCTAssertEqual(final.attributedBytes, manifest.expectedAttributedBytes)
+        XCTAssertEqual(final.attributedDiskBytes, manifest.expectedAttributedDiskBytes)
         XCTAssertEqual(final.filesSeen, manifest.expectedFileCount)
         XCTAssertEqual(final.directoriesSeen, manifest.expectedDirectoryCount)
         XCTAssertEqual(final.currentPathTail, "", "the last snapshot is not still scanning something")
@@ -66,28 +83,40 @@ final class RealFilesystemSemanticsTests: RealFixtureTestCase {
         let a = try XCTUnwrap(names.firstIndex(of: "equal-a.bin"))
         let b = try XCTUnwrap(names.firstIndex(of: "equal-b.bin"))
         XCTAssertLessThan(a, b)
-        XCTAssertEqual(node(root, at: "equal-a.bin")?.ownBytes,
-                       node(root, at: "equal-b.bin")?.ownBytes)
+        XCTAssertEqual(node(root, at: "equal-a.bin")?.ownDiskBytes,
+                       node(root, at: "equal-b.bin")?.ownDiskBytes)
     }
 
     // MARK: - Sizes
 
-    func test_aSparseHiddenFileContributesItsFullLogicalLength() async throws {
+    /// **The fixture's headline case, pinned** (ticket 13). Three gigabytes of
+    /// content length on however many blocks `ftruncate` actually allocated —
+    /// zero, on every filesystem that supports sparse files. The attributed
+    /// figure is asserted against the manifest's own reading of the staged
+    /// file, so a later change to what the engine measures cannot move it
+    /// quietly.
+    func test_aSparseHiddenFileIsCountedAtItsBlocksAndCarriesItsLengthBeside() async throws {
         try await scan()
 
         let hidden = try XCTUnwrap(node(root, at: ".hidden.bin"))
-        XCTAssertEqual(hidden.ownBytes, RealFixtureManifest.hiddenSparseBytes)
+        XCTAssertEqual(hidden.ownDiskBytes, manifest.hiddenSparseDiskBytes,
+                       "the sparse file is attributed its allocated size and nothing else")
+        XCTAssertEqual(hidden.ownContentBytes, RealFixtureManifest.hiddenSparseBytes,
+                       "and its length is carried beside it, unchanged")
+        XCTAssertLessThan(hidden.ownDiskBytes, RealFixtureManifest.hiddenSparseBytes / 1_000,
+                          "a 3 GiB sparse file that occupies megabytes is not sparse")
         XCTAssertEqual(hidden.kind, .file)
-        XCTAssertEqual(hidden.readState, .complete)
+        XCTAssertEqual(hidden.readState, .complete, "nothing went wrong: it is simply not on the disk")
         XCTAssertGreaterThan(RealFixtureManifest.hiddenSparseBytes, Int64(Int32.max),
-                             "and it does not fit in 32 bits")
+                             "and its length does not fit in 32 bits")
     }
 
     func test_anEmptyFileIsOneItemOfZeroBytes() async throws {
         try await scan()
 
         let empty = try XCTUnwrap(node(root, at: "empty.bin"))
-        XCTAssertEqual(empty.ownBytes, 0)
+        XCTAssertEqual(empty.ownDiskBytes, 0)
+        XCTAssertEqual(empty.ownContentBytes, 0)
         XCTAssertEqual(empty.fileCount, 1)
     }
 
@@ -96,15 +125,20 @@ final class RealFilesystemSemanticsTests: RealFixtureTestCase {
 
         let alias = try XCTUnwrap(node(root, at: "legacy.alias"))
         XCTAssertEqual(alias.kind, .file)
-        XCTAssertEqual(alias.ownBytes, RealFixtureManifest.aliasBytes)
+        XCTAssertEqual(alias.ownDiskBytes, blocks("legacy.alias"))
+        XCTAssertEqual(alias.ownContentBytes, RealFixtureManifest.aliasBytes)
     }
 
     func test_extendedAttributeBytesAreNotContentBytes() async throws {
         try await scan()
 
         let file = try XCTUnwrap(node(root, at: "xattr.bin"))
-        XCTAssertEqual(file.ownBytes, RealFixtureManifest.xattrDataForkBytes,
+        XCTAssertEqual(file.ownContentBytes, RealFixtureManifest.xattrDataForkBytes,
                        "a resource fork is metadata, not content (spec §3.1)")
+        XCTAssertEqual(file.ownDiskBytes, blocks("xattr.bin"))
+        XCTAssertLessThan(file.ownDiskBytes,
+                          Int64(RealFixtureManifest.resourceForkBytes) + 4_096,
+                          "a resource fork stored as an extended attribute is not blocks of the data fork")
     }
 
     // MARK: - Symlinks
@@ -115,15 +149,15 @@ final class RealFilesystemSemanticsTests: RealFixtureTestCase {
         for name in ["link-to-hidden", "broken-link", "loop-link"] {
             let link = try XCTUnwrap(node(root, at: name), name)
             XCTAssertEqual(link.kind, .symbolicLink, name)
-            XCTAssertEqual(link.ownBytes, 0, name)
-            XCTAssertEqual(link.subtreeBytes, 0, name)
+            XCTAssertEqual(link.ownDiskBytes, 0, name)
+            XCTAssertEqual(link.subtreeDiskBytes, 0, name)
             XCTAssertEqual(link.fileCount, 0, name)
             XCTAssertTrue(link.children.isEmpty, name)
         }
 
         // The link to a 3 GiB file contributes nothing, even though the file it
         // points at is the largest thing in the tree.
-        XCTAssertEqual(root.subtreeBytes, manifest.expectedAttributedBytes)
+        XCTAssertEqual(root.subtreeDiskBytes, manifest.expectedAttributedDiskBytes)
     }
 
     /// `loop-link` points at its own ancestor. That the scan terminated at all,
@@ -143,11 +177,14 @@ final class RealFilesystemSemanticsTests: RealFixtureTestCase {
         try await scan()
 
         let owner = try XCTUnwrap(node(root, at: "a-owner.bin"))
-        XCTAssertEqual(owner.ownBytes, RealFixtureManifest.hardLinkBytes)
+        XCTAssertEqual(owner.ownDiskBytes, blocks("a-owner.bin"))
+        XCTAssertEqual(owner.ownContentBytes, RealFixtureManifest.hardLinkBytes)
         XCTAssertEqual(owner.attribution, .owned)
 
         let duplicate = try XCTUnwrap(node(root, at: "z-duplicate.bin"))
-        XCTAssertEqual(duplicate.ownBytes, 0)
+        XCTAssertEqual(duplicate.ownDiskBytes, 0)
+        XCTAssertEqual(duplicate.ownContentBytes, 0,
+                       "two names share one set of blocks and one set of contents")
         XCTAssertEqual(duplicate.attribution, .hardLinkElsewhere(owner: manifest.hardLinkOwnerPath))
         XCTAssertEqual(duplicate.fileCount, 1, "a deduplicated name is still one item (ticket 04)")
     }
@@ -167,8 +204,14 @@ final class RealFilesystemSemanticsTests: RealFixtureTestCase {
         try await scan()
 
         let clone = try XCTUnwrap(node(root, at: "clone.bin"))
-        XCTAssertEqual(clone.ownBytes, RealFixtureManifest.hardLinkBytes)
+        XCTAssertEqual(clone.ownDiskBytes, blocks("clone.bin"))
+        XCTAssertEqual(clone.ownContentBytes, RealFixtureManifest.hardLinkBytes)
         XCTAssertEqual(clone.attribution, .owned, "distinct identities are not deduplicated (spec §3.4)")
+        // Ticket 13 accepted this direction of error out loud: a clone shares
+        // its source's blocks and both report them in full, so a clone-heavy
+        // volume over-reports where content length under-reported it.
+        XCTAssertEqual(clone.ownDiskBytes, node(root, at: "a-owner.bin")?.ownDiskBytes,
+                       "a clone reports the same blocks as its source, and both are counted")
     }
 
     // MARK: - Packages
@@ -178,14 +221,22 @@ final class RealFilesystemSemanticsTests: RealFixtureTestCase {
 
         let package = try XCTUnwrap(node(root, at: "Fixture.app"))
         XCTAssertEqual(package.kind, .package)
-        XCTAssertEqual(package.subtreeBytes,
-                       manifest.infoPlistBytes + RealFixtureManifest.packageSparseBytes,
+        XCTAssertEqual(package.subtreeDiskBytes,
+                       blocks("Fixture.app/Contents/Info.plist")
+                           + blocks("Fixture.app/Contents/Resources/Sparse.bin"),
                        "the rollup is exact at scan time")
+        XCTAssertEqual(package.subtreeContentBytes,
+                       manifest.infoPlistBytes + RealFixtureManifest.packageSparseBytes,
+                       "and the length beside it is measured through the package too")
         XCTAssertEqual(package.fileCount, 2)
         XCTAssertFalse(package.children.isEmpty, "its real children are in the tree")
         XCTAssertTrue(package.initiallyPresentedChildren.isEmpty, "and it presents as one box")
-        XCTAssertEqual(node(root, at: "Fixture.app/Contents/Resources/Sparse.bin")?.ownBytes,
-                       RealFixtureManifest.packageSparseBytes)
+
+        // The second sparse file: a gigabyte of length one level inside a
+        // package that is measured through.
+        let sparse = try XCTUnwrap(node(root, at: "Fixture.app/Contents/Resources/Sparse.bin"))
+        XCTAssertEqual(sparse.ownDiskBytes, manifest.packageSparseDiskBytes)
+        XCTAssertEqual(sparse.ownContentBytes, RealFixtureManifest.packageSparseBytes)
     }
 
     // MARK: - Depth
@@ -194,10 +245,15 @@ final class RealFilesystemSemanticsTests: RealFixtureTestCase {
         try await scan()
 
         let leaf = try XCTUnwrap(node(root, at: manifest.chainLeafRelativePath))
-        XCTAssertEqual(leaf.ownBytes, RealFixtureManifest.chainLeafBytes)
+        XCTAssertEqual(leaf.ownDiskBytes, blocks(manifest.chainLeafRelativePath))
+        XCTAssertEqual(leaf.ownContentBytes, RealFixtureManifest.chainLeafBytes)
         // root + 64 chain directories + the leaf file.
         XCTAssertEqual(depth(of: root), RealFixtureManifest.chainDepth + 2)
-        XCTAssertEqual(node(root, at: "chain-01")?.subtreeBytes, RealFixtureManifest.chainLeafBytes)
+        XCTAssertEqual(node(root, at: "chain-01")?.subtreeDiskBytes,
+                       blocks(manifest.chainLeafRelativePath),
+                       "64 levels of roll-up carry the leaf's blocks to the top of the chain")
+        XCTAssertEqual(node(root, at: "chain-01")?.subtreeContentBytes,
+                       RealFixtureManifest.chainLeafBytes)
     }
 
     // MARK: - Resilience
@@ -213,7 +269,7 @@ final class RealFilesystemSemanticsTests: RealFixtureTestCase {
 
         let locked = try XCTUnwrap(node(root, at: "locked"))
         XCTAssertEqual(locked.readState, .unreadable)
-        XCTAssertEqual(locked.subtreeBytes, 0, "its real bytes are not guessed (spec §3.5)")
+        XCTAssertEqual(locked.subtreeDiskBytes, 0, "its real bytes are not guessed (spec §3.5)")
         XCTAssertTrue(locked.children.isEmpty)
 
         // Its ancestor says so, and the result says so.
@@ -221,8 +277,8 @@ final class RealFilesystemSemanticsTests: RealFixtureTestCase {
         XCTAssertEqual(result.completeness, .incomplete(cancelled: false, unreadableEntries: 1))
 
         // The readable sibling was scanned anyway.
-        XCTAssertEqual(node(root, at: "readable-sibling/sibling.bin")?.ownBytes,
-                       RealFixtureManifest.readableSiblingBytes)
+        XCTAssertEqual(node(root, at: "readable-sibling/sibling.bin")?.ownDiskBytes,
+                       blocks("readable-sibling/sibling.bin"))
     }
 
     func test_theUnreadableDirectoryIsCountedOnceAsAPermissionProblem() async throws {
@@ -244,7 +300,11 @@ final class RealFilesystemSemanticsTests: RealFixtureTestCase {
 
         let kinds = try XCTUnwrap(node(root, at: "kinds"))
         XCTAssertEqual(kinds.children.map(\.name), RealFixtureManifest.paletteFileNames.sorted())
-        XCTAssertEqual(kinds.subtreeBytes, RealFixtureManifest.paletteTotalBytes)
+        XCTAssertEqual(
+            kinds.subtreeDiskBytes,
+            RealFixtureManifest.paletteFileNames.reduce(0) { $0 + blocks("kinds/\($1)") }
+        )
+        XCTAssertEqual(kinds.subtreeContentBytes, RealFixtureManifest.paletteTotalBytes)
         XCTAssertEqual(kinds.fileCount, Int64(RealFixtureManifest.paletteFileNames.count))
         XCTAssertTrue(kinds.children.allSatisfy { $0.kind == .file },
                       "a fixed extension does not make an entry anything but a file")
@@ -302,18 +362,19 @@ final class RealFilesystemSemanticsTests: RealFixtureTestCase {
         // as a permission problem.
         let vanished = try XCTUnwrap(node(root, at: "readable-sibling"))
         XCTAssertEqual(vanished.readState, .unreadable)
-        XCTAssertEqual(vanished.subtreeBytes, 0)
+        XCTAssertEqual(vanished.subtreeDiskBytes, 0)
         XCTAssertEqual(result.errors.byCategory[.disappeared], 1)
 
         // The file: not caught, and still carrying the size the listing gave.
         let stale = try XCTUnwrap(node(root, at: "xattr.bin"))
-        XCTAssertEqual(stale.ownBytes, RealFixtureManifest.xattrDataForkBytes)
+        XCTAssertEqual(stale.ownDiskBytes, blocks("xattr.bin"))
+        XCTAssertEqual(stale.ownContentBytes, RealFixtureManifest.xattrDataForkBytes)
         XCTAssertEqual(stale.readState, .complete)
 
         // The scan still completes; only the sibling's bytes are missing.
         XCTAssertEqual(result.reason, .completed)
-        XCTAssertEqual(root.subtreeBytes,
-                       manifest.expectedAttributedBytes - RealFixtureManifest.readableSiblingBytes)
+        XCTAssertEqual(root.subtreeDiskBytes,
+                       manifest.expectedAttributedDiskBytes - blocks("readable-sibling/sibling.bin"))
         XCTAssertEqual(result.errors.total, 2, "the unreadable directory and the vanished one")
         XCTAssertEqual(result.completeness, .incomplete(cancelled: false, unreadableEntries: 2))
     }

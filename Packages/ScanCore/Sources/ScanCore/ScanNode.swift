@@ -70,17 +70,37 @@ public final class ScanNode: @unchecked Sendable {
     public private(set) unowned var parent: ScanNode?
     public private(set) var children: [ScanNode]
 
-    /// This entry's own logical `fileSizeKey` bytes. Zero for directories,
-    /// symlinks and anything whose size could not be read.
-    public private(set) var ownBytes: Int64
-    /// `ownBytes` plus every descendant's — rolled up incrementally, so this
-    /// is live and correct at every instant during the scan (spec §3.1).
-    public private(set) var subtreeBytes: Int64
+    /// This entry's own blocks on disk (`fileAllocatedSizeKey`) — **the
+    /// measure** (spec §3.1). Zero for directories, symlinks, a second name for
+    /// an inode already counted, and anything whose size could not be read.
+    public private(set) var ownDiskBytes: Int64
+    /// `ownDiskBytes` plus every descendant's — rolled up incrementally, so this
+    /// is live and correct at every instant during the scan (spec §3.1). This
+    /// is what the treemap draws, what the tree's Size column reads, and what
+    /// every total the app reports is made of.
+    public private(set) var subtreeDiskBytes: Int64
+    /// This entry's own content length (`fileSizeKey`), charged wherever
+    /// `ownDiskBytes` is charged and zero wherever that is zero.
+    ///
+    /// It drives nothing. It exists so the inspector can explain the visible
+    /// figure on the entries where the two diverge — a sparse VM image, a
+    /// compressed system binary, a cloud placeholder that is length and no
+    /// blocks at all (ticket 13).
+    public private(set) var ownContentBytes: Int64
+    /// `ownContentBytes` rolled up, on the same ancestor walk as
+    /// `subtreeDiskBytes`.
+    ///
+    /// Rolled up rather than kept per file because the divergence is a *folder*
+    /// story: `~/Library` is 1.05 TiB of content length on a few dozen GB of
+    /// disk, and a file-only pair can only ever tell that one file at a time.
+    public private(set) var subtreeContentBytes: Int64
     /// Regular files in this subtree, `1` for a regular file itself.
     public private(set) var fileCount: Int64
-    /// This entry and every descendant whose subtree carries attributed bytes.
+    /// This entry and every descendant whose subtree carries attributed bytes
+    /// **on disk** — the visible measure, because that is the one with a
+    /// rectangle to lose.
     ///
-    /// Rolled up on the same walk as `subtreeBytes`, for one reason: it is the
+    /// Rolled up on the same walk as `subtreeDiskBytes`, for one reason: it is the
     /// count a treemap aggregate reports as *"N items below individual size"*,
     /// and a layout that has pruned a subtree by area must be able to say how
     /// many entries it folded **without walking it**. Computing it at draw time
@@ -103,8 +123,10 @@ public final class ScanNode: @unchecked Sendable {
         self.kind = kind
         self.parent = parent
         self.children = []
-        self.ownBytes = 0
-        self.subtreeBytes = 0
+        self.ownDiskBytes = 0
+        self.subtreeDiskBytes = 0
+        self.ownContentBytes = 0
+        self.subtreeContentBytes = 0
         self.fileCount = 0
         self.attributedNodeCount = 0
         self.attribution = .owned
@@ -159,11 +181,16 @@ public final class ScanNode: @unchecked Sendable {
         children.append(child)
     }
 
-    func attribute(ownBytes bytes: Int64, isRegularFile: Bool) {
-        ownBytes = bytes
-        subtreeBytes = bytes
+    func attribute(diskBytes: Int64, contentBytes: Int64, isRegularFile: Bool) {
+        ownDiskBytes = diskBytes
+        subtreeDiskBytes = diskBytes
+        ownContentBytes = contentBytes
+        subtreeContentBytes = contentBytes
         fileCount = isRegularFile ? 1 : 0
-        attributedNodeCount = bytes > 0 ? 1 : 0
+        // The count keys on the visible measure: an entry that is content
+        // length and no blocks — a cloud placeholder — has no rectangle, so
+        // folding it into an aggregate hides nothing.
+        attributedNodeCount = diskBytes > 0 ? 1 : 0
     }
 
     /// Adds a leaf's contribution to this ancestor. The roll-up walks the
@@ -177,12 +204,13 @@ public final class ScanNode: @unchecked Sendable {
     /// whole of the count's maintenance: no second walk, and no per-node state
     /// beyond the counter itself.
     @discardableResult
-    func accumulate(bytes: Int64, files: Int64, attributedNodes: Int = 0) -> Bool {
-        let wasAttributed = subtreeBytes > 0
-        subtreeBytes += bytes
+    func accumulate(diskBytes: Int64, contentBytes: Int64, files: Int64, attributedNodes: Int = 0) -> Bool {
+        let wasAttributed = subtreeDiskBytes > 0
+        subtreeDiskBytes += diskBytes
+        subtreeContentBytes += contentBytes
         fileCount += files
         attributedNodeCount += attributedNodes
-        guard !wasAttributed, subtreeBytes > 0 else { return false }
+        guard !wasAttributed, subtreeDiskBytes > 0 else { return false }
         attributedNodeCount += 1
         return true
     }
@@ -226,8 +254,10 @@ public final class ScanNode: @unchecked Sendable {
     func frozenSnapshot(parent snapshotParent: ScanNode?) -> ScanNode {
         if isFrozen { return self }
         let copy = ScanNode(name: name, kind: kind, parent: snapshotParent)
-        copy.ownBytes = ownBytes
-        copy.subtreeBytes = subtreeBytes
+        copy.ownDiskBytes = ownDiskBytes
+        copy.subtreeDiskBytes = subtreeDiskBytes
+        copy.ownContentBytes = ownContentBytes
+        copy.subtreeContentBytes = subtreeContentBytes
         copy.fileCount = fileCount
         copy.attributedNodeCount = attributedNodeCount
         copy.attribution = attribution

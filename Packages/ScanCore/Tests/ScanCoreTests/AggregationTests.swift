@@ -35,10 +35,10 @@ final class AggregationTests: XCTestCase {
         let events = await runScan(probe)
 
         guard let result = events.result else { return XCTFail("expected a result") }
-        XCTAssertEqual(result.root.subtreeBytes, expectedBytes(tree, rootVolume: volumeA))
-        XCTAssertEqual(result.root.subtreeBytes, 1_855)
+        XCTAssertEqual(result.root.subtreeDiskBytes, expectedBytes(tree, rootVolume: volumeA))
+        XCTAssertEqual(result.root.subtreeDiskBytes, 1_855)
         XCTAssertEqual(result.root.fileCount, expectedFileCount(tree, rootVolume: volumeA))
-        XCTAssertEqual(result.root.subtreeBytes, foldOwnBytes(result.root))
+        XCTAssertEqual(result.root.subtreeDiskBytes, foldOwnDiskBytes(result.root))
     }
 
     func test_everyDirectoryTotalEqualsItsOwnDescendants() async {
@@ -46,10 +46,10 @@ final class AggregationTests: XCTestCase {
 
         guard let result = await runScan(probe).result else { return XCTFail("expected a result") }
 
-        XCTAssertEqual(node(result.root, at: "docs")?.subtreeBytes, 330)
-        XCTAssertEqual(node(result.root, at: "docs/nested")?.subtreeBytes, 300)
-        XCTAssertEqual(node(result.root, at: "empty")?.subtreeBytes, 0)
-        XCTAssertEqual(node(result.root, at: "media.app")?.subtreeBytes, 525,
+        XCTAssertEqual(node(result.root, at: "docs")?.subtreeDiskBytes, 330)
+        XCTAssertEqual(node(result.root, at: "docs/nested")?.subtreeDiskBytes, 300)
+        XCTAssertEqual(node(result.root, at: "empty")?.subtreeDiskBytes, 0)
+        XCTAssertEqual(node(result.root, at: "media.app")?.subtreeDiskBytes, 525,
                        "a package is measured through, however it is later presented")
         XCTAssertEqual(node(result.root, at: "media.app")?.kind, .package)
 
@@ -57,7 +57,7 @@ final class AggregationTests: XCTestCase {
         var stack: [ScanNode] = [result.root]
         while let node = stack.popLast() {
             if node.isDirectoryLike {
-                XCTAssertEqual(node.subtreeBytes, foldOwnBytes(node), "\(node.name) total disagrees with its leaves")
+                XCTAssertEqual(node.subtreeDiskBytes, foldOwnDiskBytes(node), "\(node.name) total disagrees with its leaves")
             }
             stack.append(contentsOf: node.children)
         }
@@ -78,7 +78,7 @@ final class AggregationTests: XCTestCase {
 
         for snapshot in events.treeSnapshots {
             // Exact: the rolled-up total is never ahead of what was attributed.
-            XCTAssertEqual(snapshot.root.subtreeBytes, foldOwnBytes(snapshot.root))
+            XCTAssertEqual(snapshot.root.subtreeDiskBytes, foldOwnDiskBytes(snapshot.root))
 
             let totals = subtreeTotals(snapshot.root)
             for (path, total) in previousTotals {
@@ -90,7 +90,7 @@ final class AggregationTests: XCTestCase {
             previousTotals = totals
         }
 
-        XCTAssertEqual(events.result?.root.subtreeBytes, 1_855)
+        XCTAssertEqual(events.result?.root.subtreeDiskBytes, 1_855)
     }
 
     func test_sizesThatCannotBeReadAreNeverGuessed() async {
@@ -102,8 +102,8 @@ final class AggregationTests: XCTestCase {
 
         guard let result = await runScan(probe).result else { return XCTFail("expected a result") }
 
-        XCTAssertEqual(result.root.subtreeBytes, 700)
-        XCTAssertEqual(node(result.root, at: "malformed.bin")?.ownBytes, 0)
+        XCTAssertEqual(result.root.subtreeDiskBytes, 700)
+        XCTAssertEqual(node(result.root, at: "malformed.bin")?.ownDiskBytes, 0)
         XCTAssertEqual(node(result.root, at: "malformed.bin")?.readState, .unreadable)
         XCTAssertEqual(result.root.readState, .incomplete)
         XCTAssertEqual(result.completeness, .incomplete(cancelled: false, unreadableEntries: 1))

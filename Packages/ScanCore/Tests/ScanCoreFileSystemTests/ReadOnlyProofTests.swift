@@ -20,7 +20,7 @@ final class ReadOnlyProofTests: RealFixtureTestCase {
 
         // The proof is only worth something if the scan actually did the work.
         XCTAssertEqual(result.reason, .completed)
-        XCTAssertEqual(result.root.subtreeBytes, manifest.expectedAttributedBytes)
+        XCTAssertEqual(result.root.subtreeDiskBytes, manifest.expectedAttributedDiskBytes)
         XCTAssertGreaterThan(before.entries.count, 100, "the fixture did not stage")
 
         let after = try fixture.fingerprint()

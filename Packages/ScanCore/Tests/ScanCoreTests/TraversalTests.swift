@@ -80,7 +80,7 @@ final class TraversalTests: XCTestCase {
 
         guard let result = events.result else { return XCTFail("expected a result") }
         XCTAssertEqual(result.reason, .completed)
-        XCTAssertEqual(result.root.subtreeBytes, 7)
+        XCTAssertEqual(result.root.subtreeDiskBytes, 7)
         XCTAssertEqual(result.root.fileCount, 1)
         XCTAssertEqual(probe.listedPaths.count, depth + 1, "one listing per directory, root included")
 
@@ -115,12 +115,12 @@ final class TraversalTests: XCTestCase {
         XCTAssertFalse(probe.listedPaths.contains { $0.hasPrefix("mounted") },
                        "the nested mount must never be listed: \(probe.listedPaths)")
         XCTAssertEqual(probe.listedPaths, ["", "ours"])
-        XCTAssertEqual(result.root.subtreeBytes, 105, "no attributed descendants beyond the boundary")
+        XCTAssertEqual(result.root.subtreeDiskBytes, 105, "no attributed descendants beyond the boundary")
         let boundary = node(result.root, at: "mounted")
         XCTAssertNotNil(boundary, "the boundary directory stays visible")
         XCTAssertEqual(boundary?.children.count, 0)
-        XCTAssertEqual(boundary?.subtreeBytes, 0)
-        XCTAssertEqual(result.root.subtreeBytes, expectedBytes(tree, rootVolume: volumeA))
+        XCTAssertEqual(boundary?.subtreeDiskBytes, 0)
+        XCTAssertEqual(result.root.subtreeDiskBytes, expectedBytes(tree, rootVolume: volumeA))
     }
 
     func test_noEntryIsReadTwice() async {

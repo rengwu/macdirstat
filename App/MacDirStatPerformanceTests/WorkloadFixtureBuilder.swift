@@ -14,8 +14,14 @@ import ScanCore
 /// Hence this: the same manifest, on the same generator and seed, written to a
 /// directory the caller **explicitly supplies**, and scanned through the
 /// production `FileManagerDirectoryProbe`. Sparse files give multi-gigabyte
-/// logical lengths for no allocated blocks (spec §9.2), so the disk cost is
+/// content lengths for no allocated blocks (spec §9.2), so the disk cost is
 /// inodes and directory entries rather than bytes.
+///
+/// Since ticket 13 that has a second consequence worth stating: a materialized
+/// rung is a tree that **occupies nothing**. The engine measures blocks, so its
+/// attributed total here is zero by construction and the manifest's byte total
+/// appears in the content length carried beside it. That is not a limitation of
+/// the fixture — it is the sparse case at two hundred thousand entries.
 ///
 /// It is opt-in and out of the normal loop, because it writes to a disk and a
 /// test suite that writes to a disk should have been asked to.
@@ -96,7 +102,7 @@ enum WorkloadFixtureBuilder {
                     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
                     stack.append(components + [entry.name])
                 } else {
-                    try createSparseFile(at: url, logicalLength: entry.fileSize ?? 0)
+                    try createSparseFile(at: url, logicalLength: entry.contentLength ?? 0)
                 }
             }
         }
@@ -104,10 +110,10 @@ enum WorkloadFixtureBuilder {
         return Fixture(container: container, root: root, sentinel: sentinel, manifest: manifest)
     }
 
-    /// A file with a logical length and (on a filesystem that supports holes)
-    /// no allocated content. `ftruncate` is the whole mechanism: nothing is
-    /// written, so nothing is stored, and `fileSizeKey` still reports the
-    /// length the manifest declared.
+    /// A file with a content length and (on a filesystem that supports holes)
+    /// no allocated blocks. `ftruncate` is the whole mechanism: nothing is
+    /// written, so nothing is stored, `fileSizeKey` still reports the length the
+    /// manifest declared, and `fileAllocatedSizeKey` reports zero.
     private static func createSparseFile(at url: URL, logicalLength: Int64) throws {
         let descriptor = url.withUnsafeFileSystemRepresentation { path -> Int32 in
             guard let path else { return -1 }

@@ -63,8 +63,14 @@ struct DisplayFormatter {
         return String(format: "%d:%02d", total / 60, total % 60)
     }
 
-    func throughput(_ bytesPerSecond: Double) -> String {
-        "\(bytes(Int64(max(0, bytesPerSecond))))/s"
+    /// Items per second, and deliberately not bytes per second.
+    ///
+    /// The scanner reads directory listings and never file contents, so a byte
+    /// rate here was never a disk speed — before ticket 13 it was not even a
+    /// rate of real bytes. Entries met over elapsed time is the only figure on
+    /// that card that measures anything.
+    func throughput(_ itemsPerSecond: Double) -> String {
+        "\(count(Int64(max(0, itemsPerSecond)))) items/s"
     }
 
     private func integer(_ value: Int64) -> String {

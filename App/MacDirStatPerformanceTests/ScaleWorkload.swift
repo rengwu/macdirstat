@@ -47,6 +47,13 @@ struct WorkloadManifest: Equatable {
     let logicalBytes: Int64
     /// What the scan should attribute — `logicalBytes` less the bytes a
     /// hard-link non-owner gives up (spec §3.4).
+    ///
+    /// **One number for both measures**, on purpose: a generated entry reports
+    /// the same figure for blocks on disk and for content length, because
+    /// nothing the generator can describe is sparse or compressed. The one
+    /// place they part company is a *materialized* rung, whose files are staged
+    /// with `ftruncate` and therefore occupy nothing at all — see
+    /// `RealFilesystemSoakTests`.
     let attributedBytes: Int64
     /// Entries the scan should report as unreadable (spec §3.5).
     let unreadableEntries: Int

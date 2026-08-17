@@ -97,7 +97,7 @@ final class ScannerLifecycleTests: XCTestCase {
         guard let result = events.result else { return XCTFail("expected a result") }
         XCTAssertEqual(result.reason, .completed)
         XCTAssertEqual(result.completeness, .incomplete(cancelled: false, unreadableEntries: 1))
-        XCTAssertEqual(result.root.subtreeBytes, 100, "the unreadable subtree's size is never guessed")
+        XCTAssertEqual(result.root.subtreeDiskBytes, 100, "the unreadable subtree's size is never guessed")
         XCTAssertEqual(result.root.readState, .incomplete)
         XCTAssertEqual(node(result.root, at: "locked")?.readState, .unreadable)
         XCTAssertEqual(node(result.root, at: "readable.bin")?.readState, .complete)
@@ -139,7 +139,7 @@ final class ScannerLifecycleTests: XCTestCase {
         }
         XCTAssertEqual(reported, capacity)
         XCTAssertEqual(events.result?.volumeCapacity, capacity)
-        XCTAssertEqual(events.result?.root.subtreeBytes, 150, "capacity never becomes attributed bytes")
+        XCTAssertEqual(events.result?.root.subtreeDiskBytes, 150, "capacity never becomes attributed bytes")
     }
 
     func test_snapshotsAreMonotonicAndInterleaveBeforeTheTerminalEvent() async {
@@ -153,9 +153,9 @@ final class ScannerLifecycleTests: XCTestCase {
         var lastBytes: Int64 = -1
         var lastSequence: UInt64 = 0
         for snapshot in events.progressSnapshots {
-            XCTAssertGreaterThanOrEqual(snapshot.attributedBytes, lastBytes)
+            XCTAssertGreaterThanOrEqual(snapshot.attributedDiskBytes, lastBytes)
             XCTAssertGreaterThan(snapshot.sequence, lastSequence)
-            lastBytes = snapshot.attributedBytes
+            lastBytes = snapshot.attributedDiskBytes
             lastSequence = snapshot.sequence
         }
 
@@ -209,7 +209,7 @@ final class ScannerLifecycleTests: XCTestCase {
         XCTAssertEqual(first.result?.reason, .cancelled, "the replaced scan ends cancelled")
         XCTAssertEqual(first.terminalEvents.count, 1)
         XCTAssertEqual(second.result?.reason, .completed, "the replacement runs to completion")
-        XCTAssertEqual(second.result?.root.subtreeBytes, 150)
+        XCTAssertEqual(second.result?.root.subtreeDiskBytes, 150)
 
         let lines = log.entries
         let lastFirst = lines.lastIndex(where: { $0.hasPrefix("A:") })

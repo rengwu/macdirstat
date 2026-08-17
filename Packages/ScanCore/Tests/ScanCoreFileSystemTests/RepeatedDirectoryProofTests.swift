@@ -114,10 +114,10 @@ final class RepeatedDirectoryProofTests: RealFixtureTestCase {
         let grafted = try XCTUnwrap(graftedEvents.result)
 
         XCTAssertEqual(
-            grafted.root.subtreeBytes, manifest.expectedAttributedBytes,
+            grafted.root.subtreeDiskBytes, manifest.expectedAttributedDiskBytes,
             "the second name added no bytes"
         )
-        XCTAssertEqual(grafted.root.subtreeBytes, plain.root.subtreeBytes)
+        XCTAssertEqual(grafted.root.subtreeDiskBytes, plain.root.subtreeDiskBytes)
         XCTAssertEqual(grafted.root.fileCount, plain.root.fileCount, "and no files")
         XCTAssertEqual(
             flatten(grafted.root).count, flatten(plain.root).count + 1,
@@ -126,7 +126,7 @@ final class RepeatedDirectoryProofTests: RealFixtureTestCase {
 
         let graft = try XCTUnwrap(node(grafted.root, at: "zz-graft"))
         XCTAssertTrue(graft.children.isEmpty, "nothing beneath the second name was walked")
-        XCTAssertEqual(graft.subtreeBytes, 0)
+        XCTAssertEqual(graft.subtreeDiskBytes, 0)
         XCTAssertEqual(graft.attribution, .directoryCountedElsewhere(owner: [scanRoot.lastPathComponent, "kinds"]))
 
         // An exclusion, not an error: nothing went wrong.
@@ -149,9 +149,12 @@ final class RepeatedDirectoryProofTests: RealFixtureTestCase {
         let events = await runProductionScan(root: scanRoot, probe: graftedProbe, options: options)
         let doubled = try XCTUnwrap(events.result)
 
+        let paletteBlocks = RealFixtureManifest.paletteFileNames.reduce(Int64(0)) {
+            $0 + (manifest.attributedDiskBytesByPath["kinds/\($1)"] ?? -1)
+        }
         XCTAssertEqual(
-            doubled.root.subtreeBytes,
-            manifest.expectedAttributedBytes + RealFixtureManifest.paletteTotalBytes,
+            doubled.root.subtreeDiskBytes,
+            manifest.expectedAttributedDiskBytes + paletteBlocks,
             "without the guard the grafted directory's bytes land twice"
         )
         XCTAssertEqual(

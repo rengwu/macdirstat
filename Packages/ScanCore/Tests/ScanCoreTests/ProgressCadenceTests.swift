@@ -87,9 +87,9 @@ final class ProgressCadenceTests: XCTestCase {
         XCTAssertEqual(events.treeSnapshots.count, 1)
         XCTAssertEqual(events.progressSnapshots.first?.sequence, 1)
         XCTAssertEqual(events.treeSnapshots.first?.generation, 1)
-        XCTAssertEqual(events.progressSnapshots.first?.attributedBytes, expectedWideTotal)
-        XCTAssertEqual(events.treeSnapshots.first?.root.subtreeBytes, expectedWideTotal)
-        XCTAssertEqual(events.result?.root.subtreeBytes, expectedWideTotal)
+        XCTAssertEqual(events.progressSnapshots.first?.attributedDiskBytes, expectedWideTotal)
+        XCTAssertEqual(events.treeSnapshots.first?.root.subtreeDiskBytes, expectedWideTotal)
+        XCTAssertEqual(events.result?.root.subtreeDiskBytes, expectedWideTotal)
     }
 
     func test_theFinalSnapshotIsExactWhateverTheCadence() async {
@@ -107,10 +107,10 @@ final class ProgressCadenceTests: XCTestCase {
         )
 
         guard let result = events.result else { return XCTFail("expected a result") }
-        XCTAssertEqual(events.progressSnapshots.last?.attributedBytes, result.root.subtreeBytes)
+        XCTAssertEqual(events.progressSnapshots.last?.attributedDiskBytes, result.root.subtreeDiskBytes)
         XCTAssertEqual(events.progressSnapshots.last?.filesSeen, 60)
         XCTAssertEqual(events.progressSnapshots.last?.directoriesSeen, 61)
-        XCTAssertEqual(events.treeSnapshots.last?.root.subtreeBytes, result.root.subtreeBytes)
+        XCTAssertEqual(events.treeSnapshots.last?.root.subtreeDiskBytes, result.root.subtreeDiskBytes)
         XCTAssertEqual(events.treeSnapshots.last?.root.fileCount, 60)
     }
 
@@ -136,7 +136,7 @@ final class ProgressCadenceTests: XCTestCase {
             events.progressSnapshots.count, Int(lastProgress.sequence),
             "the engine emitted \(lastProgress.sequence) snapshots; a backlog would have delivered all of them"
         )
-        XCTAssertEqual(lastProgress.attributedBytes, expectedWideTotal, "what survives is the newest, and it is exact")
+        XCTAssertEqual(lastProgress.attributedDiskBytes, expectedWideTotal, "what survives is the newest, and it is exact")
 
         let sequences = events.progressSnapshots.map(\.sequence)
         XCTAssertEqual(sequences, sequences.sorted(), "no stale snapshot arrives after a newer one")
@@ -161,7 +161,38 @@ final class ProgressCadenceTests: XCTestCase {
         XCTAssertNil(events.result?.volumeCapacity)
     }
 
-    func test_aVolumeScanCarriesAnApproximateClampedFraction() async {
+    /// Blocks counted over volume-used, and **never 100% until the scan has
+    /// ended** (ticket 13). The fixture's total is exactly the used figure, so
+    /// the last running snapshot would read 1.0 without the cap.
+    func test_aRunningVolumeScanIsCappedBelowOneAndOnlyItsFinalSnapshotMayReachIt() async {
+        let probe = ScriptedDirectoryProbe(
+            rootURL: scanRootURL,
+            root: wideTree(),
+            volumeInfo: VolumeInfo(
+                isLocal: true,
+                capacity: VolumeCapacity(totalBytes: 2_000, availableBytes: 2_000 - 1_830)
+            )
+        )
+
+        let events = await runScan(probe, mode: .volumeRoot)
+        let snapshots = events.progressSnapshots
+        let fractions = snapshots.compactMap(\.approximateFraction)
+
+        XCTAssertEqual(fractions.count, snapshots.count, "an in-budget volume scan always has a fraction")
+        for fraction in fractions.dropLast() {
+            XCTAssertGreaterThanOrEqual(fraction, 0)
+            XCTAssertLessThanOrEqual(fraction, 0.99, "a running scan claimed to be finished")
+        }
+        XCTAssertEqual(fractions.last, 1.0, "the terminal snapshot is the one that may say 100%")
+        XCTAssertEqual(events.result?.root.subtreeDiskBytes, expectedWideTotal,
+                       "the fraction is derived; no synthetic byte figure enters the tree")
+    }
+
+    /// The other failure direction: counted blocks pass the volume's used
+    /// figure, so the percentage has no honest denominator left and is
+    /// **withdrawn for the rest of the scan** rather than pinned at its ceiling
+    /// (ticket 13). 1,830 bytes against 100 used.
+    func test_aVolumeScanThatPassesVolumeUsedWithdrawsTheFractionForGood() async {
         let probe = ScriptedDirectoryProbe(
             rootURL: scanRootURL,
             root: wideTree(),
@@ -172,17 +203,48 @@ final class ProgressCadenceTests: XCTestCase {
         )
 
         let events = await runScan(probe, mode: .volumeRoot)
+        let snapshots = events.progressSnapshots
 
-        let fractions = events.progressSnapshots.compactMap(\.approximateFraction)
-        XCTAssertEqual(fractions.count, events.progressSnapshots.count)
-        for fraction in fractions {
-            XCTAssertGreaterThanOrEqual(fraction, 0)
-            XCTAssertLessThanOrEqual(fraction, 1.0, "the approximation is clamped, never over 100%")
+        XCTAssertFalse(snapshots.isEmpty)
+        for snapshot in snapshots {
+            if let fraction = snapshot.approximateFraction {
+                XCTAssertLessThanOrEqual(fraction, 0.99,
+                                         "no snapshot before the withdrawal may claim to be finished")
+            }
         }
-        // 1,830 logical bytes against 100 "used" bytes — the drift the spec
-        // calls out, absorbed by the clamp rather than shown as 1,830%.
-        XCTAssertEqual(fractions.last, 1.0)
-        XCTAssertEqual(events.result?.root.subtreeBytes, expectedWideTotal,
-                       "the fraction is derived; no synthetic byte figure enters the tree")
+        XCTAssertNil(snapshots.last?.approximateFraction,
+                     "the withdrawal is for the rest of the scan, terminal snapshot included")
+
+        // Withdrawn once, withdrawn thereafter: no snapshot carries a fraction
+        // after the first one that does not.
+        let withdrawnAt = snapshots.firstIndex { $0.approximateFraction == nil } ?? snapshots.startIndex
+        for snapshot in snapshots[withdrawnAt...] {
+            XCTAssertNil(snapshot.approximateFraction, "the fraction came back after being withdrawn")
+        }
+
+        XCTAssertEqual(events.result?.root.subtreeDiskBytes, expectedWideTotal,
+                       "withdrawing the percentage changes nothing about what was counted")
+    }
+
+    /// The throughput reading is items per second, and it is a measurement:
+    /// files plus directories over elapsed time (ticket 13).
+    func test_throughputCountsItemsAndNotBytes() async {
+        let clock = VirtualClock()
+        let probe = ScriptedDirectoryProbe(
+            rootURL: scanRootURL,
+            root: wideTree(),
+            clock: clock,
+            advancePerRequest: 0.02
+        )
+
+        let events = await runScan(probe, options: ScanOptions(clock: clock))
+
+        guard let last = events.progressSnapshots.last else { return XCTFail("expected snapshots") }
+        XCTAssertGreaterThan(last.elapsed, 0)
+        XCTAssertEqual(
+            last.itemsPerSecond,
+            Double(last.filesSeen + last.directoriesSeen) / last.elapsed,
+            accuracy: 0.000_001
+        )
     }
 }

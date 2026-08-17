@@ -7,7 +7,7 @@ import ScanCoreTestSupport
 ///
 /// The claim is narrow and exact: **the number of entries in a subtree that
 /// carry attributed bytes**, maintained on the same ancestor walk as
-/// `subtreeBytes`, live at every instant. Every assertion here compares it
+/// `subtreeDiskBytes`, live at every instant. Every assertion here compares it
 /// against a second, independent implementation — a plain recursive count over
 /// the finished tree — because a roll-up that is wrong in the same way as its
 /// oracle proves nothing.
@@ -18,7 +18,7 @@ final class AttributedNodeCountTests: XCTestCase {
     /// engine's incremental arithmetic: it asks each node the only question
     /// that matters — does this entry have a rectangle? — and adds them up.
     private func foldAttributedNodes(_ node: ScanNode) -> Int {
-        var count = node.subtreeBytes > 0 ? 1 : 0
+        var count = node.subtreeDiskBytes > 0 ? 1 : 0
         for child in node.children { count += foldAttributedNodes(child) }
         return count
     }
@@ -130,7 +130,7 @@ final class AttributedNodeCountTests: XCTestCase {
         assertCountsFold(result.root)
     }
 
-    /// Live at every instant, like `subtreeBytes` (spec §3.1) — the property
+    /// Live at every instant, like `subtreeDiskBytes` (spec §3.1) — the property
     /// that lets a treemap lay out a snapshot taken mid-scan and still report
     /// exact aggregate counts.
     func test_atCadenceZeroTheCountIsMonotonicAndExactAtEverySnapshot() async {

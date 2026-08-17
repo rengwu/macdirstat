@@ -33,7 +33,7 @@ final class PhaseLog {
     struct Observation {
         var treeSnapshots = 0
         var progressSnapshots = 0
-        var greatestAttributedBytes: Int64 = 0
+        var greatestAttributedDiskBytes: Int64 = 0
         var greatestFilesSeen: Int64 = 0
         var greatestRootChildCount = 0
     }
@@ -45,7 +45,7 @@ final class PhaseLog {
     struct PickedNode {
         var node: ScanNode
         var pathComponents: [String]
-        var subtreeBytes: Int64
+        var subtreeDiskBytes: Int64
         var fileCount: Int64
         var childCount: Int
     }
@@ -61,8 +61,8 @@ final class PhaseLog {
         switch event {
         case .progress(let snapshot):
             observation.progressSnapshots += 1
-            observation.greatestAttributedBytes = max(
-                observation.greatestAttributedBytes, snapshot.attributedBytes
+            observation.greatestAttributedDiskBytes = max(
+                observation.greatestAttributedDiskBytes, snapshot.attributedDiskBytes
             )
             observation.greatestFilesSeen = max(observation.greatestFilesSeen, snapshot.filesSeen)
         case .tree(let snapshot):
@@ -87,7 +87,7 @@ final class PhaseLog {
                 pickedMidScan = PickedNode(
                     node: frozen,
                     pathComponents: frozen.pathComponents(),
-                    subtreeBytes: frozen.subtreeBytes,
+                    subtreeDiskBytes: frozen.subtreeDiskBytes,
                     fileCount: frozen.fileCount,
                     childCount: frozen.children.count
                 )
@@ -176,7 +176,7 @@ final class IncrementalResultTests: XCTestCase {
                 "no progress at \(quarter * 25)%", file: file, line: line
             )
             XCTAssertGreaterThan(
-                observation.greatestAttributedBytes, 0,
+                observation.greatestAttributedDiskBytes, 0,
                 "the \(quarter * 25)% tree had no bytes in it", file: file, line: line
             )
             XCTAssertGreaterThan(
@@ -187,7 +187,7 @@ final class IncrementalResultTests: XCTestCase {
 
         // Useful, not merely present: each quarter has seen strictly more than
         // the one before it.
-        let bytes = (1...3).map { log.byPhase[$0]?.greatestAttributedBytes ?? 0 }
+        let bytes = (1...3).map { log.byPhase[$0]?.greatestAttributedDiskBytes ?? 0 }
         let files = (1...3).map { log.byPhase[$0]?.greatestFilesSeen ?? 0 }
         XCTAssertLessThan(bytes[0], bytes[1], file: file, line: line)
         XCTAssertLessThan(bytes[1], bytes[2], file: file, line: line)
@@ -196,7 +196,7 @@ final class IncrementalResultTests: XCTestCase {
 
         // And every one of them arrived before the scan was over.
         XCTAssertEqual(log.treeSnapshotsAfterTerminal, 0, file: file, line: line)
-        XCTAssertEqual(outcome.result.root.subtreeBytes, manifest.attributedBytes, file: file, line: line)
+        XCTAssertEqual(outcome.result.root.subtreeDiskBytes, manifest.attributedBytes, file: file, line: line)
         XCTAssertLessThan(
             bytes[2], manifest.attributedBytes,
             "the 75% window saw the finished total — the phases are not separating the walk from its end",
@@ -204,7 +204,7 @@ final class IncrementalResultTests: XCTestCase {
         )
         // The fourth phase is the tail, and it carries the exact final snapshot.
         XCTAssertEqual(
-            log.byPhase[4]?.greatestAttributedBytes, manifest.attributedBytes,
+            log.byPhase[4]?.greatestAttributedDiskBytes, manifest.attributedBytes,
             file: file, line: line
         )
     }
@@ -281,8 +281,17 @@ final class IncrementalResultTests: XCTestCase {
         // walking them, and the count has to be maintained where the bytes are.
         // One `Int` per node against a per-node budget measured in dozens of
         // bytes is the trade that bought a relayout bounded by rendered boxes.
+        //
+        // **Thirteen since ticket 16**, and the two are `ownContentBytes` and
+        // `subtreeContentBytes`. The app measures blocks on disk and carries
+        // content length beside them, rolled up, because the divergence between
+        // the two is a *folder* story — `~/Library` is 1.05 TiB of length on a
+        // few dozen GB of disk, and a per-file pair could only ever tell that
+        // one file at a time. The price is 16 bytes per node: ~58 MB on the
+        // 3.63 M-node scan of `/`, against a 695 MB measured peak and an 8 GiB
+        // ceiling, and `MemoryCeilingTests` re-measures it at the Large rung.
         XCTAssertLessThanOrEqual(
-            labels.count, 11,
+            labels.count, 13,
             "ScanNode grew a stored property; every one of them is multiplied by two million at Large"
         )
 
@@ -320,7 +329,7 @@ final class IncrementalResultTests: XCTestCase {
 
         XCTAssertEqual(census.files, manifest.fileCount)
         XCTAssertEqual(census.hardLinkDuplicates, manifest.hardLinkDuplicates)
-        XCTAssertEqual(outcome.result.root.subtreeBytes, manifest.attributedBytes)
+        XCTAssertEqual(outcome.result.root.subtreeDiskBytes, manifest.attributedBytes)
         // Deduplicated names are still entries: one item each, zero bytes.
         XCTAssertEqual(outcome.result.root.fileCount, Int64(manifest.fileCount))
 
@@ -333,7 +342,7 @@ final class IncrementalResultTests: XCTestCase {
         XCTAssertEqual(colliding.count, workload.collidingNameCount)
         for node in colliding {
             XCTAssertEqual(node.attribution, .owned, "\(node.name) was deduplicated on a link count of 1")
-            XCTAssertEqual(node.ownBytes, workload.ordinaryBytes)
+            XCTAssertEqual(node.ownDiskBytes, workload.ordinaryBytes)
         }
 
         // Every duplicate points at the owner it was deduplicated against, and
@@ -349,7 +358,7 @@ final class IncrementalResultTests: XCTestCase {
             }
             let ownerName = try XCTUnwrap(owner?.last)
             XCTAssertTrue(ownerName.hasSuffix("-000.bin"), "\(duplicate.name) points at \(ownerName)")
-            XCTAssertEqual(duplicate.ownBytes, 0)
+            XCTAssertEqual(duplicate.ownDiskBytes, 0)
         }
     }
 
@@ -373,7 +382,7 @@ final class IncrementalResultTests: XCTestCase {
         // afterwards, is the whole "still usable" claim — minus the wall clock
         // §8.3 declines to bar.
         XCTAssertEqual(picked.node.pathComponents(), picked.pathComponents)
-        XCTAssertEqual(picked.node.subtreeBytes, picked.subtreeBytes)
+        XCTAssertEqual(picked.node.subtreeDiskBytes, picked.subtreeDiskBytes)
         XCTAssertEqual(picked.node.fileCount, picked.fileCount)
         XCTAssertEqual(picked.node.children.count, picked.childCount)
 
@@ -427,8 +436,8 @@ final class IncrementalResultTests: XCTestCase {
         let census = outcome.result.root.census()
         XCTAssertGreaterThan(census.entries, 1)
         XCTAssertLessThan(census.entries, manifest.entryCount)
-        XCTAssertGreaterThan(outcome.result.root.subtreeBytes, 0)
-        XCTAssertLessThan(outcome.result.root.subtreeBytes, manifest.attributedBytes)
+        XCTAssertGreaterThan(outcome.result.root.subtreeDiskBytes, 0)
+        XCTAssertLessThan(outcome.result.root.subtreeDiskBytes, manifest.attributedBytes)
         XCTAssertEqual(outcome.result.root.readState, .incomplete)
         XCTAssertEqual(outcome.result.errors.total, 0, "cancelling is not an error")
 
@@ -495,7 +504,7 @@ final class IncrementalResultTests: XCTestCase {
         XCTAssertEqual(outcome.result.errors.byCategory[.unreadableEntry], 1_250)
         XCTAssertNil(outcome.result.errors.byCategory[.disappeared])
         XCTAssertEqual(outcome.result.completeness, .incomplete(cancelled: false, unreadableEntries: 2_500))
-        XCTAssertEqual(outcome.result.root.subtreeBytes, workload.manifest.attributedBytes)
+        XCTAssertEqual(outcome.result.root.subtreeDiskBytes, workload.manifest.attributedBytes)
     }
 
     // MARK: - Helpers

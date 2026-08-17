@@ -28,10 +28,10 @@ final class ExclusionTests: XCTestCase {
 
         guard let result = await runScan(probe).result else { return XCTFail("expected a result") }
 
-        XCTAssertEqual(result.root.subtreeBytes, 350, "the placeholder's advertised size is not counted")
-        XCTAssertEqual(node(result.root, at: "current.bin")?.ownBytes, 100)
-        XCTAssertEqual(node(result.root, at: "downloaded.bin")?.ownBytes, 200)
-        XCTAssertEqual(node(result.root, at: "unavailable.bin")?.ownBytes, 50)
+        XCTAssertEqual(result.root.subtreeDiskBytes, 350, "the placeholder's advertised size is not counted")
+        XCTAssertEqual(node(result.root, at: "current.bin")?.ownDiskBytes, 100)
+        XCTAssertEqual(node(result.root, at: "downloaded.bin")?.ownDiskBytes, 200)
+        XCTAssertEqual(node(result.root, at: "unavailable.bin")?.ownDiskBytes, 50)
 
         // Omitted, not zeroed: a remote-only placeholder has no node at all.
         XCTAssertNil(node(result.root, at: "remote-only.bin"))
@@ -64,7 +64,7 @@ final class ExclusionTests: XCTestCase {
 
         guard let result = await runScan(probe).result else { return XCTFail("expected a result") }
 
-        XCTAssertEqual(result.root.subtreeBytes, 10)
+        XCTAssertEqual(result.root.subtreeDiskBytes, 10)
         XCTAssertEqual(result.exclusions.byReason, [.remoteOnlyCloud: 2])
 
         XCTAssertEqual(probe.listedPaths, [""], "a dataless folder is never listed — listing it would fetch it")
@@ -89,7 +89,7 @@ final class ExclusionTests: XCTestCase {
 
         guard let result = await runScan(probe).result else { return XCTFail("expected a result") }
 
-        XCTAssertEqual(result.root.subtreeBytes, 64)
+        XCTAssertEqual(result.root.subtreeDiskBytes, 64)
         XCTAssertEqual(probe.listedPaths, [""], "nothing beneath the boundary is listed")
         XCTAssertNotNil(node(result.root, at: "mounted"), "the boundary itself stays visible")
         XCTAssertEqual(result.exclusions.byReason, [.crossedVolumeBoundary: 1])
@@ -131,15 +131,15 @@ final class ExclusionTests: XCTestCase {
         guard let result = events.result else { return XCTFail("expected a result") }
 
         XCTAssertEqual(result.volumeCapacity, capacity)
-        XCTAssertEqual(result.root.subtreeBytes, 3_000, "the tree carries measured bytes and nothing else")
+        XCTAssertEqual(result.root.subtreeDiskBytes, 3_000, "the tree carries measured bytes and nothing else")
 
         // No node anywhere carries capacity, free, or the used figure derived
         // from them — the "Unknown" synthetic byte count the spec forbids.
         let forbidden: Set<Int64> = [capacity.totalBytes, capacity.availableBytes, capacity.usedBytes]
         var stack: [ScanNode] = [result.root]
         while let node = stack.popLast() {
-            XCTAssertFalse(forbidden.contains(node.ownBytes), "\(node.name) carries a volume figure as own bytes")
-            XCTAssertFalse(forbidden.contains(node.subtreeBytes), "\(node.name) carries a volume figure as a total")
+            XCTAssertFalse(forbidden.contains(node.ownDiskBytes), "\(node.name) carries a volume figure as own bytes")
+            XCTAssertFalse(forbidden.contains(node.subtreeDiskBytes), "\(node.name) carries a volume figure as a total")
             stack.append(contentsOf: node.children)
         }
 
@@ -166,7 +166,7 @@ final class ExclusionTests: XCTestCase {
         }
 
         XCTAssertNil(result.volumeCapacity)
-        XCTAssertEqual(result.root.subtreeBytes, 300,
+        XCTAssertEqual(result.root.subtreeDiskBytes, 300,
                        "a folder total that happens to equal capacity − free is a coincidence, not a source")
     }
 }

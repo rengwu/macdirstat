@@ -6,39 +6,57 @@ import Foundation
 /// total before scanning, and a pre-pass would double the I/O. What is honest
 /// is what has been measured so far.
 public struct ProgressSnapshot: Sendable, Equatable {
-    /// Bytes counted so far — equal to the root's `subtreeBytes`. Monotonic.
-    public let attributedBytes: Int64
+    /// Blocks on disk counted so far — equal to the root's `subtreeDiskBytes`.
+    /// Monotonic.
+    public let attributedDiskBytes: Int64
     public let filesSeen: Int64
     public let directoriesSeen: Int64
     /// The last components of the directory being listed, for the "currently
     /// scanning …" line.
     public let currentPathTail: String
     public let elapsed: TimeInterval
-    /// Derived, never stored in the tree.
-    public let bytesPerSecond: Double
-    /// Explicitly approximate, whole-volume scans only: attributed bytes ÷
-    /// volume-used, clamped to 1. Always `nil` for a folder scan, because
-    /// there is nothing honest to divide by (spec §5.5).
+    /// Entries met per second — files plus directories, over elapsed time.
+    ///
+    /// It replaces a bytes-per-second reading, which was never a disk speed:
+    /// this scanner reads directory listings and never file contents, so the
+    /// only rate on that card that is a measurement of anything is how fast
+    /// entries are being met (ticket 13).
+    public let itemsPerSecond: Double
+    /// Whole-volume scans only: blocks counted ÷ the volume's used figure.
+    ///
+    /// Numerator and denominator are now the same quantity, so this is a real
+    /// fraction rather than a reassurance bar — but it is still approximate,
+    /// and it is honest about the two ways it can be wrong:
+    ///
+    /// - **Capped at 0.99 while a scan is running.** No state of the app claims
+    ///   to be finished before it is; only a terminal snapshot may read 1.0.
+    /// - **Withdrawn for the rest of the scan** — `nil` — once the counted
+    ///   total passes volume-used. Past that point the figure has no honest
+    ///   denominator left, and the card falls back to counted total, item count
+    ///   and elapsed.
+    ///
+    /// Always `nil` for a folder scan, which has nothing to divide by
+    /// (spec §5.5).
     public let approximateFraction: Double?
     /// Emission order. Later snapshots supersede earlier ones.
     public let sequence: UInt64
 
     public init(
-        attributedBytes: Int64,
+        attributedDiskBytes: Int64,
         filesSeen: Int64,
         directoriesSeen: Int64,
         currentPathTail: String,
         elapsed: TimeInterval,
-        bytesPerSecond: Double,
+        itemsPerSecond: Double,
         approximateFraction: Double?,
         sequence: UInt64
     ) {
-        self.attributedBytes = attributedBytes
+        self.attributedDiskBytes = attributedDiskBytes
         self.filesSeen = filesSeen
         self.directoriesSeen = directoriesSeen
         self.currentPathTail = currentPathTail
         self.elapsed = elapsed
-        self.bytesPerSecond = bytesPerSecond
+        self.itemsPerSecond = itemsPerSecond
         self.approximateFraction = approximateFraction
         self.sequence = sequence
     }

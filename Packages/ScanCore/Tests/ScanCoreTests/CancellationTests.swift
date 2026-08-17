@@ -60,7 +60,7 @@ final class CancellationTests: XCTestCase {
         guard let result = events.result else { return XCTFail("expected a result") }
         XCTAssertEqual(result.root.children.count, 256,
                        "one batch past the checkpoint, no matter how large the directory")
-        XCTAssertEqual(result.root.subtreeBytes, 256, "what was measured before the stop is kept")
+        XCTAssertEqual(result.root.subtreeDiskBytes, 256, "what was measured before the stop is kept")
         XCTAssertEqual(result.reason, .cancelled)
     }
 
@@ -94,9 +94,9 @@ final class CancellationTests: XCTestCase {
         XCTAssertEqual(result.reason, .cancelled)
 
         // Retained: everything discovered before the stop is still there.
-        XCTAssertEqual(node(result.root, at: "finished/a.bin")?.ownBytes, 5)
-        XCTAssertEqual(node(result.root, at: "open/deeper/b.bin")?.ownBytes, 7)
-        XCTAssertEqual(result.root.subtreeBytes, 12)
+        XCTAssertEqual(node(result.root, at: "finished/a.bin")?.ownDiskBytes, 5)
+        XCTAssertEqual(node(result.root, at: "open/deeper/b.bin")?.ownDiskBytes, 7)
+        XCTAssertEqual(result.root.subtreeDiskBytes, 12)
         // Nodes are materialized as entries are processed, so a listed-but-not-
         // yet-processed sibling has no node. That is what Incomplete on its
         // parent means — the alternative would be inventing nodes whose state
@@ -137,7 +137,7 @@ final class CancellationTests: XCTestCase {
         XCTAssertEqual(result.reason, .cancelled, "a cancelled scan never later reports completed")
         XCTAssertEqual(result.completeness, .exact,
                        "…but the data is not called incomplete when the walk had in fact finished")
-        XCTAssertEqual(result.root.subtreeBytes, 1)
+        XCTAssertEqual(result.root.subtreeDiskBytes, 1)
     }
 
     // MARK: - Security-scoped access is balanced exactly once

@@ -40,7 +40,7 @@ struct ScanNodeTreemapRef: TreemapInputNode, Sendable {
         }
     }
 
-    var treemapAttributedBytes: Int64 { node.subtreeBytes }
+    var treemapAttributedBytes: Int64 { node.subtreeDiskBytes }
 
     /// Packages present collapsed until drilled into (spec §3.4). No generated
     /// rung builds one, so this is the collapsed half only.
@@ -53,7 +53,7 @@ struct ScanNodeTreemapRef: TreemapInputNode, Sendable {
     /// adapter answers the same way; the walking default in the protocol would
     /// reintroduce exactly the cost these tests measure the absence of.
     var treemapPresentedItemCount: Int {
-        node.kind == .package ? (node.subtreeBytes > 0 ? 1 : 0) : node.attributedNodeCount
+        node.kind == .package ? (node.subtreeDiskBytes > 0 ? 1 : 0) : node.attributedNodeCount
     }
 }
 

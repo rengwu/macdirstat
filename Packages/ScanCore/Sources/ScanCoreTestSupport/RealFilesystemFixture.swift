@@ -9,6 +9,17 @@ import Foundation
 /// measured through — and not from anything the engine computed. It is the
 /// same shape of independent oracle the scripted suite uses, applied to a tree
 /// that really exists.
+///
+/// **Both measures, stated apart.** Since ticket 13 a correct scan attributes
+/// blocks on disk and carries content length beside them, and this fixture is
+/// built to make the two disagree loudly: a 3 GiB sparse file and a 1 GiB
+/// sparse file inside the package are content length occupying **nothing**.
+/// The content figures are arithmetic, from the lengths the builder wrote. The
+/// block figures cannot be — how many blocks a 5-byte file occupies is the
+/// host volume's business — so the builder reads them back off the staged
+/// files, once, and the manifest states what it found. The semantics stay the
+/// oracle: which names are attributed at all, and that a deduplicated name
+/// contributes nothing, is decided here and not by the engine.
 public struct RealFixtureManifest {
     /// The directory a test scans. A **child** of the fixture's owned
     /// directory, so the ownership sentinel and the out-of-scope hard link are
@@ -24,6 +35,14 @@ public struct RealFixtureManifest {
     public let supportsCloning: Bool
     /// The byte length actually written to `Fixture.app/Contents/Info.plist`.
     public let infoPlistBytes: Int64
+    /// The blocks each attributed file occupies, keyed by its path relative to
+    /// `scanRoot`, read off the staged tree at build time.
+    ///
+    /// Only the names a correct scan **attributes** are in here: the second
+    /// name of the hard-linked inode is absent because it is charged nothing,
+    /// and so is everything under the `chmod 000` directory, which no scan can
+    /// see.
+    public let attributedDiskBytesByPath: [String: Int64]
 
     // MARK: - What was staged
 
@@ -62,10 +81,42 @@ public struct RealFixtureManifest {
 
     // MARK: - What a correct scan produces
 
-    /// Every byte a correct scan attributes, and no others.
-    public var expectedAttributedBytes: Int64 {
+    /// The paths a correct scan attributes, relative to `scanRoot`.
+    ///
+    /// This list is the semantic half of the oracle: `z-duplicate.bin` is
+    /// missing because the first in-scope name owns the inode, the three
+    /// symlinks are missing because a link has no bytes of its own, and
+    /// `locked/unreachable.bin` is missing because a `chmod 000` directory
+    /// hands back nothing to count.
+    public var attributedPaths: [String] {
+        var paths = [
+            ".hidden.bin", "a-owner.bin", "legacy.alias", "equal-a.bin", "equal-b.bin",
+            "xattr.bin", "empty.bin",
+            "Fixture.app/Contents/Info.plist", "Fixture.app/Contents/Resources/Sparse.bin",
+            chainLeafRelativePath, "readable-sibling/sibling.bin",
+        ]
+        if supportsCloning { paths.append("clone.bin") }
+        paths.append(contentsOf: Self.paletteFileNames.map { "kinds/\($0)" })
+        return paths
+    }
+
+    /// Every block a correct scan attributes, and no others — **the measure**.
+    ///
+    /// It is not arithmetic over the lengths the builder wrote, and cannot be:
+    /// the two sparse files occupy nothing at all, while a 5-byte file occupies
+    /// whatever the host volume's block size says it does.
+    public var expectedAttributedDiskBytes: Int64 {
+        attributedDiskBytesByPath.values.reduce(0, +)
+    }
+
+    /// Every byte of content length a correct scan carries beside the blocks.
+    ///
+    /// This one *is* arithmetic, over the lengths the builder wrote. On this
+    /// fixture it is some four gigabytes larger than the figure above, and all
+    /// of that difference is two sparse files.
+    public var expectedAttributedContentBytes: Int64 {
         var total: Int64 = 0
-        total += Self.hiddenSparseBytes          // logical length, not allocated blocks
+        total += Self.hiddenSparseBytes          // 3 GiB of length on no blocks at all
         total += Self.hardLinkBytes              // a-owner.bin owns the inode…
                                                  // …z-duplicate.bin adds zero, and the
                                                  // third name is outside the root
@@ -80,6 +131,20 @@ public struct RealFixtureManifest {
         // Contributing nothing, on purpose: three symlinks, the empty file, and
         // everything under the unreadable directory.
         return total
+    }
+
+    /// What `.hidden.bin` occupies — pinned, so a later change cannot quietly
+    /// move the fixture's headline case. `ftruncate` allocates no blocks, so on
+    /// every filesystem that supports sparse files this is **zero** against
+    /// three gigabytes of length (ticket 13).
+    public var hiddenSparseDiskBytes: Int64 {
+        attributedDiskBytesByPath[".hidden.bin"] ?? -1
+    }
+
+    /// What `Fixture.app/Contents/Resources/Sparse.bin` occupies — the same
+    /// case, one level inside a package that is measured through.
+    public var packageSparseDiskBytes: Int64 {
+        attributedDiskBytesByPath["Fixture.app/Contents/Resources/Sparse.bin"] ?? -1
     }
 
     /// Regular files, counted the way the engine counts them — a deduplicated
@@ -208,14 +273,45 @@ public enum RealFilesystemFixture {
         // the mode and puts it back at cleanup.
         try fixture.makeUnreadable(locked)
 
+        // The block figures, read back off what was just staged. Reading them
+        // here rather than asserting a constant is the only way the fixture
+        // can be right on a volume whose block size is not this one's — and it
+        // is read from the *filesystem*, never from a scan, so it is still an
+        // oracle the engine cannot influence.
+        let staged = RealFixtureManifest(
+            scanRoot: root,
+            outsideDirectory: outside,
+            lockedDirectory: locked,
+            packageDirectory: package,
+            supportsCloning: supportsCloning,
+            infoPlistBytes: Int64(infoPlist.count),
+            attributedDiskBytesByPath: [:]
+        )
+        var blocks: [String: Int64] = [:]
+        for path in staged.attributedPaths {
+            blocks[path] = try allocatedSize(of: root.appendingPathComponent(path))
+        }
+
         return RealFixtureManifest(
             scanRoot: root,
             outsideDirectory: outside,
             lockedDirectory: locked,
             packageDirectory: package,
             supportsCloning: supportsCloning,
-            infoPlistBytes: Int64(infoPlist.count)
+            infoPlistBytes: Int64(infoPlist.count),
+            attributedDiskBytesByPath: blocks
         )
+    }
+
+    /// `fileAllocatedSizeKey` for one staged file — the same key the engine
+    /// reads, because "how many blocks does this occupy" has exactly one
+    /// answer and no second source to check it against.
+    private static func allocatedSize(of url: URL) throws -> Int64 {
+        let values = try url.resourceValues(forKeys: [.fileAllocatedSizeKey])
+        guard let allocated = values.fileAllocatedSize else {
+            throw FixtureError.couldNotStage(path: url.path, errno: 0)
+        }
+        return Int64(allocated)
     }
 
     private static let infoPlistText = """

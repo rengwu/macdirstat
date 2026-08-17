@@ -45,10 +45,14 @@ final class SecurityScopeBalanceTests: RealFixtureTestCase {
     func test_aCancelledScanReleasesItsClaimExactlyOnce() async throws {
         let spy = SpySecurityScopedAccess()
         let scanner = Scanner()
-        // Cancel from inside the traversal, immediately after the second real
-        // listing, so the scan is provably part-way through a real tree.
+        // Cancel from inside the traversal, once it is provably part-way
+        // through a real tree. The fourth listing rather than the second: the
+        // first entry this fixture attributes is `.hidden.bin`, which is three
+        // gigabytes of content length occupying **no blocks at all**, so a scan
+        // stopped before `Fixture.app/Contents/Info.plist` has a real tree and
+        // a legitimately zero total (ticket 13).
         let probe = InterceptingProbe { _, index in
-            if index == 2 { scanner.cancel() }
+            if index == 4 { scanner.cancel() }
         }
 
         let stream = await scanner.scan(
@@ -58,7 +62,7 @@ final class SecurityScopeBalanceTests: RealFixtureTestCase {
 
         let result = try XCTUnwrap(events.result)
         XCTAssertEqual(result.reason, .cancelled)
-        XCTAssertGreaterThan(result.root.subtreeBytes, 0, "everything already discovered is kept")
+        XCTAssertGreaterThan(result.root.subtreeDiskBytes, 0, "everything already discovered is kept")
         XCTAssertEqual(spy.startCount, 1)
         XCTAssertEqual(spy.stopCount, 1, "the cancellation handler and the exit path must not both release")
     }
@@ -97,7 +101,7 @@ final class SecurityScopeBalanceTests: RealFixtureTestCase {
 
         XCTAssertEqual(first.result?.reason, .cancelled, "the replaced scan still delivers its partial result")
         XCTAssertEqual(second.result?.reason, .completed)
-        XCTAssertEqual(second.result?.root.subtreeBytes, manifest.expectedAttributedBytes,
+        XCTAssertEqual(second.result?.root.subtreeDiskBytes, manifest.expectedAttributedDiskBytes,
                        "the replacement ran to completion after the replaced scan ended")
 
         XCTAssertEqual(firstAccess.startCount, 1)
@@ -115,7 +119,7 @@ final class SecurityScopeBalanceTests: RealFixtureTestCase {
         let events = await runProductionScan(root: scanRoot, access: spy)
 
         XCTAssertEqual(events.result?.reason, .completed)
-        XCTAssertEqual(events.result?.root.subtreeBytes, manifest.expectedAttributedBytes)
+        XCTAssertEqual(events.result?.root.subtreeDiskBytes, manifest.expectedAttributedDiskBytes)
         XCTAssertEqual(spy.startCount, 1)
         XCTAssertEqual(spy.stopCount, 0)
     }
@@ -134,7 +138,7 @@ final class SecurityScopeBalanceTests: RealFixtureTestCase {
         let events = await runProductionScan(root: scanRoot, access: SystemSecurityScopedAccess())
 
         XCTAssertEqual(events.result?.reason, .completed)
-        XCTAssertEqual(events.result?.root.subtreeBytes, manifest.expectedAttributedBytes)
+        XCTAssertEqual(events.result?.root.subtreeDiskBytes, manifest.expectedAttributedDiskBytes)
 
         // Whatever it answers, a matching stop is safe and the pairing holds.
         let access = SystemSecurityScopedAccess()

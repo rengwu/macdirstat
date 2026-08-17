@@ -83,13 +83,13 @@ final class OperationCountTests: XCTestCase {
         XCTAssertEqual(decoys.count, 4)
         for decoy in decoys {
             XCTAssertTrue(decoy.children.isEmpty, "\(decoy.name) has descendants — the boundary was crossed")
-            XCTAssertEqual(decoy.subtreeBytes, 0)
+            XCTAssertEqual(decoy.subtreeDiskBytes, 0)
             XCTAssertEqual(decoy.readState, .complete)
         }
 
         // And the boundary changed nothing about the bytes: the same 768 MiB
         // Smoke reports, with four extra entries beside it.
-        XCTAssertEqual(outcome.result.root.subtreeBytes, ScaleRungs.smoke.manifest.attributedBytes)
+        XCTAssertEqual(outcome.result.root.subtreeDiskBytes, ScaleRungs.smoke.manifest.attributedBytes)
     }
 
     // MARK: - No second walk of a directory already visited (spec §3.3)
@@ -117,7 +117,7 @@ final class OperationCountTests: XCTestCase {
         XCTAssertEqual(grafts.count, 4)
         for graft in grafts {
             XCTAssertTrue(graft.children.isEmpty, "\(graft.name) was walked a second time")
-            XCTAssertEqual(graft.subtreeBytes, 0)
+            XCTAssertEqual(graft.subtreeDiskBytes, 0)
             XCTAssertEqual(graft.readState, .complete)
             guard case .directoryCountedElsewhere(let owner) = graft.attribution else {
                 return XCTFail("\(graft.name) does not say where its bytes were counted")
@@ -127,7 +127,7 @@ final class OperationCountTests: XCTestCase {
 
         // The bytes are Smoke's, unchanged: four extra entries, not four extra
         // subtrees.
-        XCTAssertEqual(outcome.result.root.subtreeBytes, ScaleRungs.smoke.manifest.attributedBytes)
+        XCTAssertEqual(outcome.result.root.subtreeDiskBytes, ScaleRungs.smoke.manifest.attributedBytes)
         XCTAssertEqual(outcome.result.root.census().entries, workload.manifest.entryCount)
     }
 
@@ -138,8 +138,8 @@ final class OperationCountTests: XCTestCase {
         let heavy = await ScaleScanDriver.run(ScaleRungs.smokeSameShapeHundredfoldBytes)
 
         XCTAssertEqual(
-            heavy.result.root.subtreeBytes,
-            light.result.root.subtreeBytes * 100,
+            heavy.result.root.subtreeDiskBytes,
+            light.result.root.subtreeDiskBytes * 100,
             "the control rung is not actually a hundred times heavier"
         )
         XCTAssertEqual(heavy.operations, light.operations,
@@ -189,6 +189,6 @@ final class OperationCountTests: XCTestCase {
 
         XCTAssertEqual(outcome.operations.listCount, 1)
         XCTAssertEqual(outcome.operations.entriesReturned, workload.fileCount)
-        XCTAssertEqual(outcome.result.root.subtreeBytes, workload.manifest.attributedBytes)
+        XCTAssertEqual(outcome.result.root.subtreeDiskBytes, workload.manifest.attributedBytes)
     }
 }

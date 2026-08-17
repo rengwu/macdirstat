@@ -76,7 +76,7 @@ struct SelectionContext {
     ) {
         self.rootURL = rootURL
         self.rootNode = rootNode
-        self.totalBytes = rootNode.subtreeBytes
+        self.totalBytes = rootNode.subtreeDiskBytes
         self.volumeCapacity = volumeCapacity
         self.isVolumeScan = isVolumeScan
     }
@@ -103,11 +103,20 @@ struct InspectorContentBuilder {
     }
 
     private func nodeContent(_ node: ScanNode, in context: SelectionContext) -> InspectorContent {
-        let bytes = node.subtreeBytes
+        let bytes = node.subtreeDiskBytes
         let isUnreadable = node.readState == .unreadable
         let isRoot = node === context.rootNode
 
         var rows: [InspectorContent.Row] = []
+        // The length line, and **only** where the two measures differ by more
+        // than a display step (ticket 13). On ~99% of rows they are the same
+        // number, and a row that repeats the figure above it is clutter; on the
+        // ones where they diverge — a sparse disk image, a compressed system
+        // binary, a cloud placeholder that is here in name only — it is the
+        // finding the user came for.
+        if let length = divergentContentLength(node), !isUnreadable {
+            rows.append(.init(label: "Content length", value: length))
+        }
         if node.isDirectoryLike {
             let contents = SubtreeCounts.scannerCounts(of: node)
             rows.append(
@@ -122,7 +131,7 @@ struct InspectorContentBuilder {
         rows.append(
             .init(
                 label: "% of parent",
-                value: node.parent.map { formatter.share(childBytes: bytes, parentBytes: $0.subtreeBytes) } ?? "100%"
+                value: node.parent.map { formatter.share(childBytes: bytes, parentBytes: $0.subtreeDiskBytes) } ?? "100%"
             )
         )
         if isRoot, let capacity = context.volumeCapacity, context.isVolumeScan {
@@ -170,7 +179,7 @@ struct InspectorContentBuilder {
                     label: "% of parent",
                     value: formatter.share(
                         childBytes: descriptor.bytes,
-                        parentBytes: descriptor.directory.subtreeBytes
+                        parentBytes: descriptor.directory.subtreeDiskBytes
                     )
                 ),
             ],
@@ -204,7 +213,7 @@ struct InspectorContentBuilder {
     func tooltip(for selection: WorkspaceSelection, in context: SelectionContext) -> String {
         switch selection {
         case .node(let node):
-            let bytes = node.subtreeBytes
+            let bytes = node.subtreeDiskBytes
             let size = node.readState == .unreadable
                 ? "Unknown — size never guessed"
                 : "\(formatter.bytes(bytes)) · \(formatter.exactBytes(bytes))"
@@ -213,6 +222,11 @@ struct InspectorContentBuilder {
                 size,
                 "\(kindLabel(node)) · \(formatter.share(childBytes: bytes, parentBytes: context.totalBytes)) of scan",
             ]
+            // The same rule as the inspector's row, from the same function, so
+            // the two can never disagree about whether this item diverges.
+            if node.readState != .unreadable, let length = divergentContentLength(node) {
+                lines.append("\(length) in length")
+            }
             let flags = tooltipFlags(node)
             if !flags.isEmpty { lines.append(flags.joined(separator: " · ")) }
             lines.append(node.url(root: context.rootURL).path)
@@ -233,7 +247,7 @@ struct InspectorContentBuilder {
     func accessibilityLabel(for selection: WorkspaceSelection) -> String {
         switch selection {
         case .node(let node):
-            let size = node.readState == .unreadable ? "size unknown" : formatter.bytes(node.subtreeBytes)
+            let size = node.readState == .unreadable ? "size unknown" : formatter.bytes(node.subtreeDiskBytes)
             return "\(node.name), \(size), \(kindLabel(node))"
         case .aggregate(let descriptor):
             return "\(formatter.count(Int64(descriptor.itemCount))) merged items, "
@@ -258,10 +272,29 @@ struct InspectorContentBuilder {
         return parts.joined(separator: " · ")
     }
 
+    /// The headline figure is blocks on disk, and the caption says so — because
+    /// "size" was the word for both measures and this only works if they can be
+    /// told apart in a sentence (ticket 13, `CONTEXT.md`).
     private func sizeCaption(_ node: ScanNode) -> String {
         if node.readState == .unreadable { return "not guessed" }
-        if node.subtreeBytes == 0 { return "no attributed bytes" }
-        return node.isDirectoryLike ? "total" : "logical"
+        if node.subtreeDiskBytes == 0 {
+            // The cloud-placeholder and sparse-file case, said plainly: it is
+            // not that we failed to measure it, it is that it is not there.
+            return node.subtreeContentBytes > 0 ? "nothing on disk" : "no attributed bytes"
+        }
+        return node.isDirectoryLike ? "total on disk" : "on disk"
+    }
+
+    /// The content length, formatted, when it differs from the on-disk figure
+    /// by more than a display step — and `nil` when it does not.
+    ///
+    /// "More than a display step" is exactly "the two render differently at the
+    /// three significant figures this app shows", which is the only definition
+    /// that cannot put a row on screen saying two identical numbers.
+    func divergentContentLength(_ node: ScanNode) -> String? {
+        let onDisk = formatter.bytes(node.subtreeDiskBytes)
+        let length = formatter.bytes(node.subtreeContentBytes)
+        return onDisk == length ? nil : length
     }
 
     private func tooltipFlags(_ node: ScanNode) -> [String] {
@@ -317,6 +350,25 @@ struct InspectorContentBuilder {
                     title: "Another path to a folder counted elsewhere.",
                     detail: ownerPath.map { "The same folder is here and at \($0). Its contents are counted once, there." }
                         ?? "The same folder is reachable at another path. Its contents are counted once, there."
+                )
+            )
+        }
+
+        // Content length with no blocks behind it at all. Rare, and worth a
+        // sentence where a merely-compressed file is not: this is the sparse
+        // disk image and the cloud placeholder — a name for bytes that are not
+        // on this disk (ticket 13).
+        if node.readState != .unreadable, node.subtreeDiskBytes == 0, node.subtreeContentBytes > 0 {
+            notes.append(
+                .init(
+                    severity: .info,
+                    glyph: "◌",
+                    title: "\(formatter.bytes(node.subtreeContentBytes)) in length, nothing on disk.",
+                    detail: """
+                        Its contents are not stored here — a sparse file's unwritten range, or a \
+                        cloud item that has not been downloaded. It has no rectangle because it \
+                        is taking up no space.
+                        """
                 )
             )
         }

@@ -24,14 +24,14 @@ final class IdentityTests: XCTestCase {
 
         guard let result = await runScan(probe).result else { return XCTFail("expected a result") }
 
-        XCTAssertEqual(result.root.subtreeBytes, 4_096, "one inode's bytes are counted once")
+        XCTAssertEqual(result.root.subtreeDiskBytes, 4_096, "one inode's bytes are counted once")
 
         let owner = node(result.root, at: "alpha.bin")
-        XCTAssertEqual(owner?.ownBytes, 4_096)
+        XCTAssertEqual(owner?.ownDiskBytes, 4_096)
         XCTAssertEqual(owner?.attribution, .owned)
 
         let duplicate = node(result.root, at: "zeta.bin")
-        XCTAssertEqual(duplicate?.ownBytes, 0, "the later path is visible with zero attributed bytes")
+        XCTAssertEqual(duplicate?.ownDiskBytes, 0, "the later path is visible with zero attributed bytes")
         XCTAssertEqual(duplicate?.attribution, .hardLinkElsewhere(owner: ["scan-root", "alpha.bin"]))
         XCTAssertEqual(duplicate?.readState, .complete, "a counted-elsewhere link is not an error")
 
@@ -54,11 +54,11 @@ final class IdentityTests: XCTestCase {
 
         guard let result = await runScan(probe).result else { return XCTFail("expected a result") }
 
-        XCTAssertEqual(result.root.subtreeBytes, 900)
-        XCTAssertEqual(node(result.root, at: "a/link.bin")?.ownBytes, 900)
-        XCTAssertEqual(node(result.root, at: "a")?.subtreeBytes, 900)
-        XCTAssertEqual(node(result.root, at: "b/link.bin")?.ownBytes, 0)
-        XCTAssertEqual(node(result.root, at: "b")?.subtreeBytes, 0,
+        XCTAssertEqual(result.root.subtreeDiskBytes, 900)
+        XCTAssertEqual(node(result.root, at: "a/link.bin")?.ownDiskBytes, 900)
+        XCTAssertEqual(node(result.root, at: "a")?.subtreeDiskBytes, 900)
+        XCTAssertEqual(node(result.root, at: "b/link.bin")?.ownDiskBytes, 0)
+        XCTAssertEqual(node(result.root, at: "b")?.subtreeDiskBytes, 0,
                        "the duplicate rolls nothing up — the bytes are already counted under a/")
         XCTAssertEqual(node(result.root, at: "b/link.bin")?.attribution,
                        .hardLinkElsewhere(owner: ["scan-root", "a", "link.bin"]))
@@ -80,7 +80,7 @@ final class IdentityTests: XCTestCase {
                 owner: result.root.children.first { $0.attribution == .owned }?.name,
                 duplicates: result.root.children.filter { $0.attribution != .owned }.map(\.name),
                 order: flatten(result.root),
-                total: result.root.subtreeBytes
+                total: result.root.subtreeDiskBytes
             )
         }
 
@@ -108,7 +108,7 @@ final class IdentityTests: XCTestCase {
 
         guard let result = await runScan(probe).result else { return XCTFail("expected a result") }
 
-        XCTAssertEqual(result.root.subtreeBytes, 2_048, "the only in-scope name owns the bytes")
+        XCTAssertEqual(result.root.subtreeDiskBytes, 2_048, "the only in-scope name owns the bytes")
         XCTAssertEqual(node(result.root, at: "inside.bin")?.attribution, .owned)
         XCTAssertEqual(result.root.children.map(\.name), ["inside.bin"], "no name from outside appears")
         XCTAssertEqual(probe.listedPaths, [""], "nothing was searched for the inode's other names")
@@ -127,7 +127,7 @@ final class IdentityTests: XCTestCase {
 
         guard let result = await runScan(probe).result else { return XCTFail("expected a result") }
 
-        XCTAssertEqual(result.root.subtreeBytes, 10_000, "clones are not deduplicated (spec §3.4)")
+        XCTAssertEqual(result.root.subtreeDiskBytes, 10_000, "clones are not deduplicated (spec §3.4)")
         XCTAssertEqual(node(result.root, at: "original.bin")?.attribution, .owned)
         XCTAssertEqual(node(result.root, at: "clone.bin")?.attribution, .owned)
     }
@@ -147,7 +147,7 @@ final class IdentityTests: XCTestCase {
 
         guard let result = await runScan(probe).result else { return XCTFail("expected a result") }
 
-        XCTAssertEqual(result.root.subtreeBytes, 192)
+        XCTAssertEqual(result.root.subtreeDiskBytes, 192)
         for name in ["a.bin", "b.bin", "c.bin"] {
             XCTAssertEqual(node(result.root, at: name)?.attribution, .owned, "\(name) was deduplicated")
         }
@@ -166,7 +166,7 @@ final class IdentityTests: XCTestCase {
 
         guard let result = await runScan(probe).result else { return XCTFail("expected a result") }
 
-        XCTAssertEqual(result.root.subtreeBytes, 128, "no dedup is possible where no hard link can exist")
+        XCTAssertEqual(result.root.subtreeDiskBytes, 128, "no dedup is possible where no hard link can exist")
         XCTAssertEqual(node(result.root, at: "b.bin")?.attribution, .owned)
     }
 
@@ -222,9 +222,9 @@ final class IdentityTests: XCTestCase {
 
         guard let package = node(result.root, at: "Media.app") else { return XCTFail("expected the package") }
         XCTAssertEqual(package.kind, .package)
-        XCTAssertEqual(package.subtreeBytes, 524, "the aggregate is exact because the scan measured through")
+        XCTAssertEqual(package.subtreeDiskBytes, 524, "the aggregate is exact because the scan measured through")
         XCTAssertEqual(package.fileCount, 3)
-        XCTAssertEqual(result.root.subtreeBytes, 1_524)
+        XCTAssertEqual(result.root.subtreeDiskBytes, 1_524)
 
         // Measured through, presented as one: the real children are in the
         // tree, and a view drawing `initiallyPresentedChildren` draws one box.
@@ -234,8 +234,8 @@ final class IdentityTests: XCTestCase {
 
         // Expanding it later cannot change the aggregate: the children already
         // sum to it.
-        XCTAssertEqual(package.children.reduce(0) { $0 + $1.subtreeBytes }, package.subtreeBytes)
-        XCTAssertEqual(foldOwnBytes(package), package.subtreeBytes)
+        XCTAssertEqual(package.children.reduce(0) { $0 + $1.subtreeDiskBytes }, package.subtreeDiskBytes)
+        XCTAssertEqual(foldOwnDiskBytes(package), package.subtreeDiskBytes)
     }
 
     func test_aPackageNestedInsideAPackageIsStillMeasuredThrough() async {
@@ -251,8 +251,8 @@ final class IdentityTests: XCTestCase {
 
         guard let result = await runScan(probe).result else { return XCTFail("expected a result") }
 
-        XCTAssertEqual(node(result.root, at: "Outer.app")?.subtreeBytes, 100)
-        XCTAssertEqual(node(result.root, at: "Outer.app/Helper.app")?.subtreeBytes, 70)
+        XCTAssertEqual(node(result.root, at: "Outer.app")?.subtreeDiskBytes, 100)
+        XCTAssertEqual(node(result.root, at: "Outer.app/Helper.app")?.subtreeDiskBytes, 70)
         XCTAssertEqual(probe.listedPaths, ["", "Outer.app", "Outer.app/Helper.app"])
     }
 }

@@ -73,11 +73,10 @@ extension Array where Element == ScanEvent {
 
 // MARK: - Independent oracle over the scripted manifest
 
-/// Sums the logical bytes a manifest *should* produce, by a recursion written
-/// from the semantics rather than from the engine: symlinks contribute zero and
-/// are not descended, a directory on another volume contributes nothing, an
-/// unreadable directory contributes nothing, sizes that could not be read are
-/// not guessed.
+/// Sums the blocks a manifest *should* produce, by a recursion written from the
+/// semantics rather than from the engine: symlinks contribute zero and are not
+/// descended, a directory on another volume contributes nothing, an unreadable
+/// directory contributes nothing, sizes that could not be read are not guessed.
 func expectedBytes(_ entry: ScriptedEntry, rootVolume: FileSystemIdentity?) -> Int64 {
     if entry.meta.isSymbolicLink { return 0 }
     if entry.meta.isDirectory {
@@ -85,7 +84,7 @@ func expectedBytes(_ entry: ScriptedEntry, rootVolume: FileSystemIdentity?) -> I
         if let volume = entry.meta.volumeIdentifier, let root = rootVolume, volume != root { return 0 }
         return entry.children.reduce(0) { $0 + expectedBytes($1, rootVolume: rootVolume) }
     }
-    if entry.meta.isRegularFile { return entry.meta.fileSize ?? 0 }
+    if entry.meta.isRegularFile { return entry.meta.diskSize ?? 0 }
     return 0
 }
 
@@ -129,7 +128,7 @@ func subtreeTotals(_ root: ScanNode) -> [String: Int64] {
     var totals: [String: Int64] = [:]
     var stack: [(node: ScanNode, path: String)] = [(root, "")]
     while let (node, path) = stack.popLast() {
-        totals[path] = node.subtreeBytes
+        totals[path] = node.subtreeDiskBytes
         for child in node.children {
             stack.append((child, path.isEmpty ? child.name : path + "/" + child.name))
         }
@@ -137,13 +136,25 @@ func subtreeTotals(_ root: ScanNode) -> [String: Int64] {
     return totals
 }
 
-/// Sums the `ownBytes` actually attributed to leaves in a tree — the check that
+/// Sums the `ownDiskBytes` actually attributed to leaves in a tree — the check that
 /// a directory's rolled-up total is the truth and not a running guess.
-func foldOwnBytes(_ root: ScanNode) -> Int64 {
+func foldOwnDiskBytes(_ root: ScanNode) -> Int64 {
     var total: Int64 = 0
     var stack: [ScanNode] = [root]
     while let node = stack.popLast() {
-        total += node.ownBytes
+        total += node.ownDiskBytes
+        stack.append(contentsOf: node.children)
+    }
+    return total
+}
+
+/// The same fold over the measure carried beside it, so a roll-up that drifts
+/// in only one of the two is still caught.
+func foldOwnContentBytes(_ root: ScanNode) -> Int64 {
+    var total: Int64 = 0
+    var stack: [ScanNode] = [root]
+    while let node = stack.popLast() {
+        total += node.ownContentBytes
         stack.append(contentsOf: node.children)
     }
     return total

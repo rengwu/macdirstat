@@ -10,7 +10,8 @@ public enum ErrorCategory: Sendable, Hashable, CaseIterable {
     /// disappearance.
     case unreadableDirectory
     /// An entry whose own metadata is missing or malformed — most commonly a
-    /// `fileSize` that could not be read.
+    /// `diskSize` that could not be read. The on-disk figure is the one that
+    /// decides: a readable content length does not rescue it (ticket 13).
     case unreadableEntry
     /// An entry that was listed with its parent and was gone by the time the
     /// walk reached it. Live change is best-effort (spec §3.5).

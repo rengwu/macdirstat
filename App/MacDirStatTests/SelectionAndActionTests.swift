@@ -47,7 +47,7 @@ final class SelectionModelTests: XCTestCase {
         let right = try XCTUnwrap(fixture.node(named: "right").children.first)
 
         XCTAssertEqual(left.name, right.name)
-        XCTAssertEqual(left.subtreeBytes, right.subtreeBytes)
+        XCTAssertEqual(left.subtreeDiskBytes, right.subtreeDiskBytes)
         XCTAssertNotEqual(WorkspaceSelection.node(left), WorkspaceSelection.node(right))
     }
 }
@@ -107,7 +107,7 @@ final class BidirectionalSelectionTests: XCTestCase {
         let fixture = try await makeSimpleFixture()
         let (workspace, _, _) = fixture.makeWorkspace()
         let empty = try fixture.node(named: "empty.txt")
-        XCTAssertEqual(empty.subtreeBytes, 0)
+        XCTAssertEqual(empty.subtreeDiskBytes, 0)
 
         workspace.selectionModel.select(.node(empty), source: .tree)
 
@@ -125,7 +125,11 @@ final class BidirectionalSelectionTests: XCTestCase {
         // A dominant file plus a long tail of tiny ones: at this viewport the
         // tail cannot be drawn individually, so it folds into one box.
         let fixture = try await ScannedFixture.make(in: self) { root in
-            try writeFile("dominant.mp4", bytes: 4_000_000, in: root)
+            // Half a gigabyte of blocks against sixty single-block files. It
+            // has to be this lopsided now that the app measures blocks: a
+            // 16-byte file still occupies a whole block, so a tail folds into
+            // an aggregate only beside something genuinely enormous.
+            try writeAllocatedFile("dominant.mp4", bytes: 512 * 1_024 * 1_024, in: root)
             for index in 1...60 {
                 try writeFile("tiny-\(index).bin", bytes: 16, in: root)
             }
@@ -287,7 +291,11 @@ final class ReadOnlyActionTests: XCTestCase {
 
     func test_rightClickingARectangleSelectsItFirstAndOffersOnlyOpenAndReveal() async throws {
         let fixture = try await ScannedFixture.make(in: self) { root in
-            try writeFile("dominant.mp4", bytes: 4_000_000, in: root)
+            // Half a gigabyte of blocks against sixty single-block files. It
+            // has to be this lopsided now that the app measures blocks: a
+            // 16-byte file still occupies a whole block, so a tail folds into
+            // an aggregate only beside something genuinely enormous.
+            try writeAllocatedFile("dominant.mp4", bytes: 512 * 1_024 * 1_024, in: root)
             for index in 1...60 {
                 try writeFile("tiny-\(index).bin", bytes: 16, in: root)
             }

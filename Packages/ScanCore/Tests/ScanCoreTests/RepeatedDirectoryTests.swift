@@ -48,7 +48,7 @@ final class RepeatedDirectoryTests: XCTestCase {
 
         guard let result = await runScan(probe).result else { return XCTFail("expected a result") }
 
-        XCTAssertEqual(result.root.subtreeBytes, 120, "the grafted subtree's bytes are counted once")
+        XCTAssertEqual(result.root.subtreeDiskBytes, 120, "the grafted subtree's bytes are counted once")
         XCTAssertEqual(result.root.fileCount, 2, "and so are its files")
         XCTAssertEqual(
             probe.listedPaths, ["", "a-real", "a-real/nested"],
@@ -71,8 +71,8 @@ final class RepeatedDirectoryTests: XCTestCase {
         guard let result = await runScan(probe).result else { return XCTFail("expected a result") }
         guard let graft = node(result.root, at: "z-graft") else { return XCTFail("the second name vanished") }
 
-        XCTAssertEqual(graft.subtreeBytes, 0)
-        XCTAssertEqual(graft.ownBytes, 0)
+        XCTAssertEqual(graft.subtreeDiskBytes, 0)
+        XCTAssertEqual(graft.ownDiskBytes, 0)
         XCTAssertEqual(graft.fileCount, 0)
         XCTAssertTrue(graft.children.isEmpty)
         XCTAssertEqual(graft.attribution, .directoryCountedElsewhere(owner: ["scan-root", "a-real"]))
@@ -90,8 +90,8 @@ final class RepeatedDirectoryTests: XCTestCase {
 
         guard let result = await runScan(probe).result else { return XCTFail("expected a result") }
 
-        XCTAssertEqual(result.root.subtreeBytes, 120)
-        XCTAssertEqual(node(result.root, at: "a-first")?.subtreeBytes, 120)
+        XCTAssertEqual(result.root.subtreeDiskBytes, 120)
+        XCTAssertEqual(node(result.root, at: "a-first")?.subtreeDiskBytes, 120)
         XCTAssertEqual(
             node(result.root, at: "z-second")?.attribution,
             .directoryCountedElsewhere(owner: ["scan-root", "a-first"])
@@ -133,7 +133,7 @@ final class RepeatedDirectoryTests: XCTestCase {
             result.exclusions.byReason,
             [.repeatedDirectory: 2, .crossedVolumeBoundary: 1, .remoteOnlyCloud: 1]
         )
-        XCTAssertEqual(result.root.subtreeBytes, 8)
+        XCTAssertEqual(result.root.subtreeDiskBytes, 8)
     }
 
     // MARK: - The boundaries of the guard
@@ -154,7 +154,7 @@ final class RepeatedDirectoryTests: XCTestCase {
 
         guard let result = await runScan(probe).result else { return XCTFail("expected a result") }
 
-        XCTAssertEqual(result.root.subtreeBytes, 70, "an unknown identity descends — nothing is skipped")
+        XCTAssertEqual(result.root.subtreeDiskBytes, 70, "an unknown identity descends — nothing is skipped")
         XCTAssertEqual(probe.listedPaths, ["", "one", "two"])
         XCTAssertTrue(result.exclusions.isEmpty)
     }
@@ -174,7 +174,7 @@ final class RepeatedDirectoryTests: XCTestCase {
 
         guard let result = await runScan(probe).result else { return XCTFail("expected a result") }
 
-        XCTAssertEqual(result.root.subtreeBytes, 70)
+        XCTAssertEqual(result.root.subtreeDiskBytes, 70)
         XCTAssertEqual(probe.listedPaths, ["", "one", "two"])
         XCTAssertTrue(result.exclusions.isEmpty)
     }
@@ -193,7 +193,7 @@ final class RepeatedDirectoryTests: XCTestCase {
 
         guard let result = await runScan(probe).result else { return XCTFail("expected a result") }
 
-        XCTAssertEqual(result.root.subtreeBytes, 9)
+        XCTAssertEqual(result.root.subtreeDiskBytes, 9)
         XCTAssertEqual(probe.listedPaths, [""])
         XCTAssertEqual(result.exclusions.byReason, [.repeatedDirectory: 1])
         XCTAssertEqual(
@@ -215,7 +215,7 @@ final class RepeatedDirectoryTests: XCTestCase {
 
         guard let result = await runScan(probe).result else { return XCTFail("expected a result") }
 
-        XCTAssertEqual(result.root.subtreeBytes, 64)
+        XCTAssertEqual(result.root.subtreeDiskBytes, 64)
         XCTAssertEqual(probe.listedPaths, ["", "A.app"])
         XCTAssertEqual(result.exclusions.byReason, [.repeatedDirectory: 1])
     }
@@ -238,7 +238,7 @@ final class RepeatedDirectoryTests: XCTestCase {
 
         guard let result = await runScan(probe).result else { return XCTFail("expected a result") }
 
-        XCTAssertEqual(result.root.subtreeBytes, 70, "our own directory is still walked")
+        XCTAssertEqual(result.root.subtreeDiskBytes, 70, "our own directory is still walked")
         XCTAssertEqual(probe.listedPaths, ["", "z-ours"])
         XCTAssertEqual(result.exclusions.byReason, [.crossedVolumeBoundary: 1])
     }
@@ -288,8 +288,8 @@ final class RepeatedDirectoryTests: XCTestCase {
             return XCTFail("expected a result")
         }
 
-        XCTAssertEqual(result.root.subtreeBytes, 1_077, "1,000 counted once, plus the 77 only the second root has")
-        XCTAssertEqual(node(result.root, at: "Users")?.subtreeBytes, 1_000,
+        XCTAssertEqual(result.root.subtreeDiskBytes, 1_077, "1,000 counted once, plus the 77 only the second root has")
+        XCTAssertEqual(node(result.root, at: "Users")?.subtreeDiskBytes, 1_000,
                        "the path a person recognises owns the bytes")
         XCTAssertEqual(
             node(result.root, at: "System/Volumes/Data/Users")?.attribution,
@@ -319,7 +319,7 @@ final class RepeatedDirectoryTests: XCTestCase {
             return XCTFail("expected a result")
         }
 
-        XCTAssertEqual(node(result.root, at: "System/Volumes/Data/.Spotlight-V100")?.subtreeBytes, 77,
+        XCTAssertEqual(node(result.root, at: "System/Volumes/Data/.Spotlight-V100")?.subtreeDiskBytes, 77,
                        "an entry that exists only under the second root is still counted")
         XCTAssertTrue(probe.listedPaths.contains("System/Volumes/Data"))
     }
@@ -341,7 +341,7 @@ final class RepeatedDirectoryTests: XCTestCase {
             return XCTFail("expected a result")
         }
 
-        XCTAssertEqual(result.root.subtreeBytes, 1_000, "nothing is double counted…")
+        XCTAssertEqual(result.root.subtreeDiskBytes, 1_000, "nothing is double counted…")
         XCTAssertNil(node(result.root, at: "System/Volumes/Data/.Spotlight-V100"),
                      "…but what only the second root could reach is not counted at all")
         XCTAssertEqual(
@@ -400,8 +400,8 @@ final class RepeatedDirectoryTests: XCTestCase {
 
         guard let result = await runScan(probe).result else { return XCTFail("expected a result") }
 
-        XCTAssertEqual(result.root.subtreeBytes, 900)
-        XCTAssertEqual(node(result.root, at: "Users")?.subtreeBytes, 900,
+        XCTAssertEqual(result.root.subtreeDiskBytes, 900)
+        XCTAssertEqual(node(result.root, at: "Users")?.subtreeDiskBytes, 900,
                        "the visible name keeps the bytes")
         XCTAssertEqual(
             node(result.root, at: ".nofollow/Users")?.attribution,
@@ -427,8 +427,8 @@ final class RepeatedDirectoryTests: XCTestCase {
 
         guard let result = await runScan(probe).result else { return XCTFail("expected a result") }
 
-        XCTAssertEqual(result.root.subtreeBytes, 42)
-        XCTAssertEqual(node(result.root, at: ".cache")?.subtreeBytes, 40)
+        XCTAssertEqual(result.root.subtreeDiskBytes, 42)
+        XCTAssertEqual(node(result.root, at: ".cache")?.subtreeDiskBytes, 40)
         XCTAssertTrue(result.exclusions.isEmpty)
         XCTAssertEqual(probe.listedPaths, ["", "visible", ".cache"], "walked last…")
         XCTAssertEqual(
@@ -453,7 +453,7 @@ final class RepeatedDirectoryTests: XCTestCase {
             return XCTFail("expected a result")
         }
 
-        XCTAssertEqual(result.root.subtreeBytes, 240, "the guard is what makes the total 120")
+        XCTAssertEqual(result.root.subtreeDiskBytes, 240, "the guard is what makes the total 120")
         XCTAssertEqual(result.root.fileCount, 4)
         XCTAssertEqual(probe.listedPaths, ["", "a-real", "a-real/nested", "z-graft", "z-graft/nested"])
         XCTAssertTrue(result.exclusions.isEmpty)

@@ -112,7 +112,7 @@ final class NameOrderTests: XCTestCase {
             XCTAssertEqual(result.root.children.map { Self.spelling($0.name) },
                            [Self.spelling(decomposed), Self.spelling(precomposed)],
                            "listed \(reversed ? "reversed" : "in order")")
-            XCTAssertEqual(result.root.subtreeBytes, 30, "two names, two files, both counted")
+            XCTAssertEqual(result.root.subtreeDiskBytes, 30, "two names, two files, both counted")
         }
     }
 
@@ -138,7 +138,7 @@ final class NameOrderTests: XCTestCase {
             return (
                 owner: result.root.children.first { $0.attribution == .owned }.map { Self.spelling($0.name) },
                 duplicate: result.root.children.first { $0.attribution != .owned }.map { Self.spelling($0.name) },
-                total: result.root.subtreeBytes
+                total: result.root.subtreeDiskBytes
             )
         }
 

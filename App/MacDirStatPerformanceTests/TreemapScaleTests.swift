@@ -98,7 +98,7 @@ final class TreemapScaleTests: XCTestCase {
         let workload = ScaleRungs.stressFlatDirectory
         let outcome = await ScaleScanDriver.run(workload)
         let tree = ScanNodeTreemapRef(node: outcome.result.root)
-        let total = outcome.result.root.subtreeBytes
+        let total = outcome.result.root.subtreeDiskBytes
 
         let roomy = TreemapSize(width: 2_560, height: 1_600)
         let roomyLayout = TreemapLayout.layout(tree: tree, viewport: roomy)
@@ -289,8 +289,8 @@ final class TreemapScaleTests: XCTestCase {
             rung: rung,
             directoryCount: census.directories,
             fileCount: census.files,
-            logicalBytes: outcome.result.root.subtreeBytes,
-            attributedBytes: outcome.result.root.subtreeBytes,
+            logicalBytes: outcome.result.root.subtreeDiskBytes,
+            attributedBytes: outcome.result.root.subtreeDiskBytes,
             unreadableEntries: census.unreadable,
             exclusions: outcome.result.exclusions.total,
             hardLinkDuplicates: census.hardLinkDuplicates,
