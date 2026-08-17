@@ -52,6 +52,15 @@ a cost that is real has to exceed the arena the earlier rung already grew.
 repeating the identity of directories the walk has already opened, each of which really
 does hand back its subtree if anything lists it.
 
+## The within-directory sort
+
+`sort-cost.md` is a prose record rather than a rung: what the sort at the end of every
+directory listing costs, measured on two real directory-heavy trees before and after
+ticket 15 changed the comparator, plus the comparator timed on its own over five name
+mixes. It is written by hand from what
+`MacDirStatPerformanceTests/DirectorySortCostTests` prints, because the half that
+matters most reads a real tree the harness did not build and so cannot run unattended.
+
 ## Reading the columns
 
 `measurementNotes` in the JSON says what each number means and, more importantly, which

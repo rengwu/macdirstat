@@ -152,6 +152,21 @@ matrix recorded across macOS 11 through current.
   subdirectories are opened after their visible siblings**. The seam gained a fourth
   requirement, `mountPointPaths()` — one `getmntinfo_r_np` per scan.
 
+- [The within-directory sort: measured first, then changed for a different reason](./tickets/15-directory-sort-normalization-cost.md) —
+  the sort was never the bottleneck the field sample suggested: listing is **93–95 %** of a
+  scan's wall clock and the sort **1.5–2.1 %** (0.86 s of a 57 s `/System/Library` scan,
+  447,367 entries in 156,701 directories). It changed anyway, for a correctness reason the
+  measurement exposed: `String <` orders by canonical equivalence, so two spellings of one
+  name are **tied**, and the tie falls to the order the filesystem listed them in — the one
+  input that is not the same on two machines holding the same tree, and the input hard-link
+  ownership rides on. `ScanCore.NameOrder.precedes` now compares Unicode scalars — the
+  comparison `PreparedTree.precedes` already made, now named at both sites and used by the
+  tree view too — which is also **2.2–2.4× cheaper** in a real scan. Why cheaper there and
+  slower in a warm micro-benchmark: `URL.lastPathComponent` returns a non-contiguous string,
+  and canonical comparison of one leaves its fast path for the normalizer, which is the
+  NFD/NFC frames the field sample caught on a volume holding 18 non-ASCII names in 447,367.
+  Record: [`records/sort-cost.md`](./records/sort-cost.md).
+
 ## Not yet specified
 
 - **Compiler availability checking does not reject everything §4.4 assumes it does.** A
@@ -174,12 +189,13 @@ matrix recorded across macOS 11 through current.
   a product decision that reaches back into ticket 04's semantics and into `spec.md`; the
   "About N% of used space" bar divides logical bytes by real used space and pegs at 100%
   long before a scan ends. <clears-with: 13>
-- **The within-directory sort orders by Unicode canonical equivalence.** `String <`
-  normalizes both operands on every comparison, paid `k log k` times across ~1.4 M
-  directories. `PreparedTree.precedes` already avoids it deliberately and says why; the
-  scanner did not. The order decides hard-link ownership, so a cheaper comparator has to
-  keep ticket 03's cross-machine determinism — and the cost should be measured before it is
-  changed. <clears-with: 15>
+- **Every name a scan holds is a non-native Swift string.** `URL.lastPathComponent` returns
+  a string whose UTF-8 is not contiguous, and ticket 15 measured one consequence: canonical
+  `String <` on those names costs **5.9×** what it costs on the same names copied into
+  native storage. Comparison is only one of the things done to a name — hashing, `==`,
+  path building and every UI read pay some version of the same tax. Copying each name once,
+  in the probe, would buy it back at the price of one allocation per entry (2.9 M on a scan
+  of `/`). Unmeasured, and nothing depends on it today.
 - **§3.3 now has three rules where the spec states one.** The device-identity boundary
   check is joined by a visited-directory identity guard and by two ordering rules — a
   mount point inside the root's own volume is opened last, a hidden subdirectory after its

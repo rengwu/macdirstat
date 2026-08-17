@@ -318,6 +318,43 @@ final class RealFilesystemSemanticsTests: RealFixtureTestCase {
         XCTAssertEqual(result.completeness, .incomplete(cancelled: false, unreadableEntries: 2))
     }
 
+    /// **What the two spellings of one name do on a real volume** (ticket 15).
+    ///
+    /// The scripted suite decides the order; only a filesystem can say whether
+    /// the pair can exist at all. macOS is not one answer here: an APFS volume
+    /// that is case-insensitive is normalization-*insensitive* too, so the
+    /// second `mkdir` collides and the directory holds one entry; a
+    /// case-sensitive APFS volume, an exFAT stick or a disk image keeps both.
+    /// This test runs on whichever kind it finds, asserts what that kind
+    /// implies, and prints which one it was — so a green run on a laptop is
+    /// never mistaken for proof the pair was ordered.
+    func test_aVolumeThatKeepsBothSpellingsOfOneNameOrdersThemByCodePoint() async throws {
+        let precomposed = "caf\u{00E9}"
+        let decomposed = "cafe\u{0301}"
+        let manager = FileManager.default
+        let directory = fixture.directory.appendingPathComponent("normalization", isDirectory: true)
+        try manager.createDirectory(at: directory, withIntermediateDirectories: false)
+        try manager.createDirectory(
+            at: directory.appendingPathComponent(precomposed, isDirectory: true),
+            withIntermediateDirectories: false
+        )
+        let second = directory.appendingPathComponent(decomposed, isDirectory: true)
+        let volumeKeepsBoth = (try? manager.createDirectory(at: second, withIntermediateDirectories: false)) != nil
+
+        let events = await runProductionScan(root: directory)
+        let scanned = try XCTUnwrap(events.result)
+        let names = scanned.root.children.map { Array($0.name.utf8) }
+
+        if volumeKeepsBoth {
+            print("[fixture] this volume keeps both spellings of one name")
+            XCTAssertEqual(names, [Array(decomposed.utf8), Array(precomposed.utf8)],
+                           "U+0065 precedes U+00E9, so the decomposed name sorts first")
+        } else {
+            print("[fixture] this volume folds the two spellings into one name")
+            XCTAssertEqual(names.count, 1, "a normalization-insensitive volume kept one of them")
+        }
+    }
+
     /// Nothing in this fixture crosses a volume boundary or is a remote-only
     /// placeholder, so there is nothing to exclude — and an exclusion count of
     /// zero is what keeps "Incomplete" meaning "something went wrong".

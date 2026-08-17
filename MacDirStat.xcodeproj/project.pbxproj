@@ -47,6 +47,7 @@
 		AB000000000000000000B02C /* MemoryCeilingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F02C /* MemoryCeilingTests.swift */; };
 		AB000000000000000000B02D /* TreemapScaleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F02D /* TreemapScaleTests.swift */; };
 		AB000000000000000000B02E /* RealFilesystemSoakTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F02E /* RealFilesystemSoakTests.swift */; };
+		AB000000000000000000B02F /* DirectorySortCostTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F02F /* DirectorySortCostTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -123,6 +124,7 @@
 		AB000000000000000000F02C /* MemoryCeilingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryCeilingTests.swift; sourceTree = "<group>"; };
 		AB000000000000000000F02D /* TreemapScaleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TreemapScaleTests.swift; sourceTree = "<group>"; };
 		AB000000000000000000F02E /* RealFilesystemSoakTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealFilesystemSoakTests.swift; sourceTree = "<group>"; };
+		AB000000000000000000F02F /* DirectorySortCostTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectorySortCostTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -253,6 +255,7 @@
 				AB000000000000000000F02C /* MemoryCeilingTests.swift */,
 				AB000000000000000000F02D /* TreemapScaleTests.swift */,
 				AB000000000000000000F02E /* RealFilesystemSoakTests.swift */,
+				AB000000000000000000F02F /* DirectorySortCostTests.swift */,
 				AB000000000000000000F00A /* MacDirStatPerformanceScaffoldTests.swift */,
 			);
 			path = MacDirStatPerformanceTests;
@@ -507,6 +510,7 @@
 				AB000000000000000000B02C /* MemoryCeilingTests.swift in Sources */,
 				AB000000000000000000B02D /* TreemapScaleTests.swift in Sources */,
 				AB000000000000000000B02E /* RealFilesystemSoakTests.swift in Sources */,
+				AB000000000000000000B02F /* DirectorySortCostTests.swift in Sources */,
 				AB000000000000000000B009 /* MacDirStatPerformanceScaffoldTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

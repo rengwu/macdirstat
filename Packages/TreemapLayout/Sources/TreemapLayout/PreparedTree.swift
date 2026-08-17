@@ -79,9 +79,25 @@ struct PreparedTree<Node: TreemapInputNode> {
     /// locale-independent and stable, but only one of them is what §6.1 says.
     /// The distinction can only ever move two siblings of *identical* size past
     /// each other, and only when their names differ in normalization.
+    ///
+    /// **The scanner does the same thing, and cannot share this code.**
+    /// `ScanCore.NameOrder` orders one directory's entries by exactly this
+    /// comparison, for a stronger reason: there the order decides which of
+    /// several names for one inode owns its bytes, so a pair of names that are
+    /// not the same name must never compare equal. The two packages are
+    /// independent — `ScanCore` is Foundation-only and knows nothing of
+    /// layout — so the rule is written twice on purpose, and each site names the
+    /// other. Changing one without the other would make a treemap box and its
+    /// tree row disagree about sibling order.
+    ///
+    /// Names are compared for equality by scalar too, and not with `String ==`,
+    /// so that a decomposed and a precomposed spelling of one name are two
+    /// names here as well — otherwise this comparison would claim code-point
+    /// order and then hand canonically equivalent names to the ordinal
+    /// tie-break.
     static func precedes(_ a: PreparedNode<Node>, _ b: PreparedNode<Node>) -> Bool {
         if a.bytes != b.bytes { return a.bytes > b.bytes }
-        if a.name != b.name {
+        if !a.name.unicodeScalars.elementsEqual(b.name.unicodeScalars) {
             return a.name.unicodeScalars.lexicographicallyPrecedes(b.name.unicodeScalars) {
                 $0.value < $1.value
             }

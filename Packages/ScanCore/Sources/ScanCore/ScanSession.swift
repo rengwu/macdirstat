@@ -247,8 +247,12 @@ final class ScanSession {
                     var entries = try probe.list(stack[top].url)
                     // Deterministic order, and locale-independent so two
                     // machines agree: identical trees must produce identical
-                    // node order and identical hard-link ownership.
-                    entries.sort { $0.name < $1.name }
+                    // node order and identical hard-link ownership. Code-point
+                    // order rather than `String <`, which would leave two names
+                    // differing only in normalization tied and let the
+                    // filesystem's listing order decide the owner — see
+                    // ``NameOrder``.
+                    entries.sort { NameOrder.precedes($0.name, $1.name) }
                     stack[top].entries = entries
                     stack[top].listed = true
                     treeDirty = true

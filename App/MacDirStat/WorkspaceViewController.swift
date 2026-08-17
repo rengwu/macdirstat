@@ -270,21 +270,27 @@ final class DirectoryTreeViewController: NSViewController, NSOutlineViewDataSour
         outlineView.reloadData()
     }
 
+    /// Names are compared with ``NameOrder/precedes(_:_:)`` — the engine's own
+    /// order, and the treemap's (spec §6.1) — rather than with `String <`, so a
+    /// row and the box it is selected with never disagree about which of two
+    /// siblings comes first.
     private func sortedChildren(of node: ScanNode) -> [ScanNode] {
         node.children.sorted { lhs, rhs in
             switch sortColumn {
             case .name:
-                return sortAscending ? lhs.name < rhs.name : lhs.name > rhs.name
+                return sortAscending
+                    ? NameOrder.precedes(lhs.name, rhs.name)
+                    : NameOrder.precedes(rhs.name, lhs.name)
             case .size:
-                if lhs.subtreeBytes == rhs.subtreeBytes { return lhs.name < rhs.name }
+                if lhs.subtreeBytes == rhs.subtreeBytes { return NameOrder.precedes(lhs.name, rhs.name) }
                 return sortAscending ? lhs.subtreeBytes < rhs.subtreeBytes : lhs.subtreeBytes > rhs.subtreeBytes
             case .percent:
-                if lhs.subtreeBytes == rhs.subtreeBytes { return lhs.name < rhs.name }
+                if lhs.subtreeBytes == rhs.subtreeBytes { return NameOrder.precedes(lhs.name, rhs.name) }
                 return sortAscending ? lhs.subtreeBytes < rhs.subtreeBytes : lhs.subtreeBytes > rhs.subtreeBytes
             case .items:
                 let left = VisibleTreeCounts.countItems(beneath: lhs)
                 let right = VisibleTreeCounts.countItems(beneath: rhs)
-                if left == right { return lhs.name < rhs.name }
+                if left == right { return NameOrder.precedes(lhs.name, rhs.name) }
                 return sortAscending ? left < right : left > right
             }
         }

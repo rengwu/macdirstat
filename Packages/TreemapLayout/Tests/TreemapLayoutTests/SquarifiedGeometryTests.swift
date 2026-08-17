@@ -80,6 +80,27 @@ final class SquarifiedGeometryTests: XCTestCase {
         XCTAssertEqual(laidOut, ["A", "Z", "a", "b", "e", "É"])
     }
 
+    /// Two spellings of one name are two names here, exactly as they are in the
+    /// scanner (`ScanCore.NameOrder`): the decomposed one sorts first, because
+    /// `U+0065` precedes `U+00E9`, and it does so whichever order they arrived
+    /// in. Compared as bytes on purpose — `String ==` is canonical equivalence,
+    /// so an assertion written over `String` could not tell them apart, and it
+    /// is that same equivalence which used to send this pair to the discovery-
+    /// position tie-break instead of to the name one.
+    func test_twoSpellingsOfOneNameAreOrderedByCodePointAndNotByDiscovery() {
+        let precomposed = "caf\u{00E9}.bin"
+        let decomposed = "cafe\u{0301}.bin"
+
+        for children in [[precomposed, decomposed], [decomposed, precomposed]] {
+            let tree = Fixture.directory("root", children.map { Fixture.file($0, 1_000) })
+            let result = TreemapLayout.layout(tree: tree, viewport: square)
+
+            let laidOut = result.boxes.dropFirst().compactMap { $0.node?.treemapName }.map { Array($0.utf8) }
+            XCTAssertEqual(laidOut, [Array(decomposed.utf8), Array(precomposed.utf8)],
+                           "arrived as \(children == [precomposed, decomposed] ? "NFC first" : "NFD first")")
+        }
+    }
+
     func test_bytesDescendingOutranksTheNameTieBreak() {
         let tree = Fixture.directory("root", [
             Fixture.file("zzz.bin", 9_000),
