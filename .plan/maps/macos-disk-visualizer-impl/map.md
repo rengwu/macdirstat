@@ -205,6 +205,19 @@ matrix recorded across macOS 11 through current.
   is what it is. Clones flip to over-reporting and are accepted. `spec.md` is amended;
   `CONTEXT.md` pins the two terms; the build is [ticket 16](./tickets/16-count-blocks-on-disk.md).
 
+- [Count blocks on disk, carry length beside them](./tickets/16-count-blocks-on-disk.md) —
+  the build, and the specification and the code agree again. `EntryMeta.diskSize` beside
+  `contentLength`, four `Int64` on `ScanNode` rolled up on one ancestor walk, the `lstat`
+  fallback reaching the same quantity through `st_blocks × 512`, `attributedNodeCount`
+  keyed on the visible measure. Throughput is items per second, the completion fraction is
+  capped at 0.99 while running and withdrawn once counting passes volume-used, and a
+  finished volume scan reconciles in the **status bar** — *"344 GiB counted · 384 GiB
+  used"* — shown whenever there is a used figure, because agreement only reads as evidence
+  if it is there every time. `ownBytes`/`subtreeBytes` are **renamed** at all 205 sites
+  rather than kept with a changed meaning. Proved on `/`: **344.16 GiB on disk against
+  1,817.97 GiB of length**, `/Users` 263 GiB occupying and 1,724 GiB long, two runs
+  agreeing to 0.02%. Record: [`records/blocks-on-disk.md`](./records/blocks-on-disk.md).
+
 ## Not yet specified
 
 - **Compiler availability checking does not reject everything §4.4 assumes it does.** A
@@ -229,13 +242,22 @@ matrix recorded across macOS 11 through current.
   it without touching geometry. §8.2 commits no wall-clock bar and the main thread no
   longer waits for it, so this is a recorded cost and not a defect; it matters only if
   the tree feed's 4 Hz ever needs to be honoured rather than coalesced.
-- **The specification and the code disagree about what the app measures, on purpose.**
-  Ticket 13 settled it — blocks on disk, content length carried beside them — and amended
-  `spec.md` to say so. The engine still measures `fileSizeKey` alone, so until the build
-  lands, `spec.md` describes an app that does not exist yet and every number the app shows
-  on a developer's machine is several times too large. This is the one patch on this map
-  where reading the spec will actively mislead an implementer about current behaviour.
-  <clears-with: 16>
+- **`spec.md` §5.2 names two fields that no longer exist.** It describes the node as
+  carrying `ownBytes`/`subtreeBytes`; ticket 16 renamed them `ownDiskBytes`/
+  `subtreeDiskBytes` and added `ownContentBytes`/`subtreeContentBytes`, so every call site
+  says which of the two measures it means. §3.1 already describes both measures correctly —
+  this is the data-model paragraph lagging the names, and the patch is the edit, not a
+  re-decision.
+
+- **A scan of `/` reconciles about ten percent below the volume's used figure, and nothing
+  is wrong.** `volumeAvailableCapacityKey` is a property of the APFS *container*, so
+  Preboot, Recovery and VM are inside the denominator while §3.3 correctly keeps them
+  outside the numerator; local snapshots hold blocks no walk can reach; root-owned
+  directories a user's own scan cannot read hold a little more. Against the two volumes a
+  scan of `/` can actually reach, ticket 16 measured **−3.2%**. Ticket 13's 0.3% was taken
+  on `/System/Volumes/Data`, where the root really is one volume. Nobody has decided
+  whether the line should say so — subtract the sibling volumes, name them, or leave the
+  user to read a gap that is normal for one root and meaningful for another.
 - **Every name a scan holds is a non-native Swift string.** `URL.lastPathComponent` returns
   a string whose UTF-8 is not contiguous, and ticket 15 measured one consequence: canonical
   `String <` on those names costs **5.9×** what it costs on the same names copied into
