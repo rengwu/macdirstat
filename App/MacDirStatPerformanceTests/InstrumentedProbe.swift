@@ -24,6 +24,9 @@ struct ProbeOperationCounts: Equatable {
     var entriesReturned = 0
     var deepestListedDepth = 0
     var foreignVolumeListCount = 0
+    /// Listings of a name that repeats another directory's identity. A graft
+    /// hands back the real subtree, so a walk that listed one would double it.
+    var repeatedDirectoryListCount = 0
     /// Only tracked when the probe was built with `tracksListedPaths`, which
     /// the heavy rungs turn off — the set would be a per-directory allocation
     /// inside a memory measurement.
@@ -119,6 +122,9 @@ final class CountingWorkloadProbe: DirectoryProbe, @unchecked Sendable {
         counts.deepestListedDepth = max(counts.deepestListedDepth, components.count)
         if components.last?.hasPrefix("foreign-volume-") == true {
             counts.foreignVolumeListCount += 1
+        }
+        if components.contains(where: { $0.hasPrefix("graft-") }) {
+            counts.repeatedDirectoryListCount += 1
         }
         if tracksListedPaths, !listedPaths.insert(components.joined(separator: "/")).inserted {
             counts.repeatedListCount += 1

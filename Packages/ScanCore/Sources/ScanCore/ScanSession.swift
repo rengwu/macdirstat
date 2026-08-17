@@ -19,9 +19,22 @@ final class ScanSession {
     private struct Frame {
         let node: ScanNode
         let url: URL
+        /// `fileResourceIdentifierKey`, carried from the parent's listing so
+        /// the visited-directory check can be made when this frame is actually
+        /// opened rather than when it was met (spec §3.3). A frame that is held
+        /// back must take its verdict at its real arrival, not at its
+        /// discovery.
+        var identity: FileSystemIdentity?
+        /// A filesystem mounted inside the root's own volume. Never offered to
+        /// the visited-directory index: two volume roots may share an inode
+        /// number, and skipping one would lose everything only it can reach.
+        var isMountPoint: Bool = false
         var entries: [EntryMeta] = []
         var cursor: Int = 0
         var listed: Bool = false
+        /// Hidden subdirectories, opened after this directory's visible ones.
+        /// See ``ScanSession/traverse()``.
+        var pendingHidden: [Frame] = []
     }
 
     private let request: ScanRequest
@@ -33,10 +46,17 @@ final class ScanSession {
 
     private let root: ScanNode
     private var rootVolume: FileSystemIdentity?
+    private var rootIdentity: FileSystemIdentity?
     private var volumeCapacity: VolumeCapacity?
 
     /// Populated at pre-flight, once the volume's hard-link support is known.
     private var hardLinks = HardLinkIndex(isEnabled: false)
+    /// Every directory this scan has descended, by filesystem identity, so a
+    /// directory reachable at two paths is walked once (spec §3.3).
+    private var visitedDirectories: VisitedDirectoryIndex
+    /// Where filesystems are mounted, read once at pre-flight. An ordering
+    /// hint, not a boundary: see ``DirectoryProbe/mountPointPaths()``.
+    private var mountPointPaths: Set<String> = []
     private var diagnostics: ScanDiagnostics
 
     private var filesSeen: Int64 = 0
@@ -65,6 +85,9 @@ final class ScanSession {
         self.clock = request.options.clock
         self.batchSize = request.options.cancellationBatchSize
         self.diagnostics = ScanDiagnostics(detailLimit: request.options.maxDetailedErrors)
+        self.visitedDirectories = VisitedDirectoryIndex(
+            isEnabled: request.options.deduplicatesRepeatedDirectories
+        )
         self.root = ScanNode(name: request.root.lastPathComponent, kind: .directory, parent: nil)
     }
 
@@ -140,6 +163,14 @@ final class ScanSession {
         // Where the volume cannot hold a hard link, the identity index and its
         // per-entry bookkeeping are skipped entirely (spec §3.4).
         hardLinks = HardLinkIndex(isEnabled: info.supportsHardLinks)
+        // The root is the first directory opened, so it is the first identity
+        // in the visited index: a graft that points back at the scan root is
+        // re-entry like any other (spec §3.3).
+        rootIdentity = meta.fileIdentity
+        // One call for the whole scan. The scan root's own path is dropped:
+        // it is where the walk starts, not something it could descend twice.
+        mountPointPaths = probe.mountPointPaths()
+        mountPointPaths.remove(request.root.path)
         directoriesSeen = 1
     }
 
@@ -151,17 +182,64 @@ final class ScanSession {
     // MARK: - Traversal
 
     /// Returns `true` if the scan stopped because cancellation was requested.
+    ///
+    /// **Two paths to one directory: which one keeps it.** A directory the walk
+    /// has already opened is never opened again (spec §3.3), so when the same
+    /// directory is reachable twice the *first* path to it keeps its bytes and
+    /// the second stays visible and weightless. Arrival order is therefore a
+    /// presentation decision, and the walk makes two of them, both aimed at
+    /// leaving the bytes on the path a person recognises:
+    ///
+    /// - **A mount point inside the root's own volume is opened last of all.**
+    ///   `/System/Volumes/Data` is the data volume's own root, holding the
+    ///   firmlinked names already reachable from `/` beside entries that live
+    ///   nowhere else; walking it last leaves `/Users` owning `/Users`.
+    /// - **A hidden subdirectory is opened after its visible siblings.** macOS
+    ///   hangs synthetic aliases of the whole filesystem off the volume root —
+    ///   `/.nofollow` lists the same top level as `/`, and sorts before every
+    ///   real name in it — so without this the entire disk is attributed to a
+    ///   directory no user has heard of.
+    ///
+    /// Neither changes what is counted, or how many times; both change only
+    /// which of two paths to one directory is the one that carries it.
     private func traverse() -> Bool {
-        var stack: [Frame] = [Frame(node: root, url: request.root)]
+        var stack: [Frame] = [Frame(node: root, url: request.root, identity: rootIdentity)]
+        // Mount points, held back until the ordinary walk has finished.
+        var deferredMounts: [Frame] = []
 
-        while !stack.isEmpty {
+        while !stack.isEmpty || !deferredMounts.isEmpty {
+            if stack.isEmpty {
+                // The ordinary tree is finished; now the mount points, in the
+                // order they were met.
+                stack.append(deferredMounts.removeFirst())
+            }
+
             // Checkpoint A — once per directory.
             if isCancellationRequested {
-                stopAtCancellation(stack)
+                stopAtCancellation(openFrames(stack, deferredMounts))
                 return true
             }
 
             let top = stack.count - 1
+
+            // The visited-directory check, made as this directory is opened.
+            if !stack[top].listed, !stack[top].isMountPoint,
+               case .repeatVisit(let owner) = visitedDirectories.claim(stack[top].identity,
+                                                                      for: stack[top].node) {
+                // A second path to a directory already walked — the firmlink
+                // graft under `/System/Volumes/Data` is the case every Mac has.
+                // Its bytes were counted at the first path, so this name stays
+                // visible and weightless, pointing at the owner, exactly as a
+                // second name for a hard-linked inode does. Nothing went wrong,
+                // so it is an exclusion and its ancestors stay Complete.
+                diagnostics.exclude(.repeatedDirectory)
+                stack[top].node.markDirectoryCountedElsewhere(owner: owner.pathComponents())
+                stack[top].node.freeze()
+                stack.removeLast()
+                treeDirty = true
+                emitIfDue()
+                continue
+            }
 
             if !stack[top].listed {
                 currentPathTail = Self.pathTail(of: stack[top].url)
@@ -206,7 +284,7 @@ final class ScanSession {
                     // listing it is what would start a download (spec §3.4).
                     diagnostics.exclude(.remoteOnlyCloud)
                     if batchCheckpointRequestsStop() {
-                        stopAtCancellation(stack)
+                        stopAtCancellation(openFrames(stack, deferredMounts))
                         return true
                     }
                     throttledEmit()
@@ -220,35 +298,57 @@ final class ScanSession {
 
                 if kind == .directory || kind == .package {
                     directoriesSeen += 1
-                    if isOnRootVolume(meta) {
-                        stack.append(Frame(
+                    let childURL = stack[top].url.appendingPathComponent(meta.name)
+                    if !isOnRootVolume(meta) {
+                        // A different volume: the entry stays visible, but
+                        // nothing beneath it is ever listed (spec §3.3, §5.4).
+                        // Nothing went wrong — a policy skipped it — so it is an
+                        // exclusion, not an error, and its ancestors stay
+                        // Complete.
+                        diagnostics.exclude(.crossedVolumeBoundary)
+                        node.freeze()
+                    } else {
+                        let isMountPoint = mountPointPaths.contains(childURL.path)
+                        let frame = Frame(
                             node: node,
-                            url: stack[top].url.appendingPathComponent(meta.name)
-                        ))
-                        descended = true
-                        throttledEmit()
-                        // Depth-first: the child is processed before this
-                        // directory's remaining entries.
-                        break
+                            url: childURL,
+                            identity: meta.fileIdentity,
+                            isMountPoint: isMountPoint
+                        )
+                        if isMountPoint {
+                            deferredMounts.append(frame)
+                        } else if Self.isHidden(meta.name) {
+                            stack[top].pendingHidden.append(frame)
+                        } else {
+                            stack.append(frame)
+                            descended = true
+                            throttledEmit()
+                            // Depth-first: the child is processed before this
+                            // directory's remaining entries.
+                            break
+                        }
                     }
-                    // A different volume: the entry stays visible, but nothing
-                    // beneath it is ever listed (spec §3.3, §5.4). Nothing went
-                    // wrong — a policy skipped it — so it is an exclusion, not
-                    // an error, and its ancestors stay Complete.
-                    diagnostics.exclude(.crossedVolumeBoundary)
-                    node.freeze()
                 } else {
                     attribute(node, meta)
                 }
 
                 if batchCheckpointRequestsStop() {
-                    stopAtCancellation(stack)
+                    stopAtCancellation(openFrames(stack, deferredMounts))
                     return true
                 }
                 throttledEmit()
             }
 
             if descended { continue }
+
+            if !stack[top].pendingHidden.isEmpty {
+                // Every visible subdirectory is finished; the hidden ones go on
+                // now, in listing order.
+                let hidden = stack[top].pendingHidden
+                stack[top].pendingHidden = []
+                stack.append(contentsOf: hidden.reversed())
+                continue
+            }
 
             stack[top].node.freeze()
             stack.removeLast()
@@ -257,6 +357,21 @@ final class ScanSession {
         }
 
         return false
+    }
+
+    /// Every directory the walk had started or promised to start: the open
+    /// path, the hidden subdirectories waiting behind their visible siblings,
+    /// and the mount points held back for the end.
+    private func openFrames(_ stack: [Frame], _ deferredMounts: [Frame]) -> [Frame] {
+        stack + stack.flatMap(\.pendingHidden) + deferredMounts
+    }
+
+    /// A dot-named entry. Hidden subdirectories are opened after their visible
+    /// siblings, so a synthetic alias of the whole filesystem — `/.nofollow`,
+    /// which sorts before every real name at the volume root — cannot take the
+    /// bytes off the paths a person recognises (spec §3.3).
+    private static func isHidden(_ name: String) -> Bool {
+        name.hasPrefix(".")
     }
 
     /// Everything still open when cancellation lands is Incomplete — its total

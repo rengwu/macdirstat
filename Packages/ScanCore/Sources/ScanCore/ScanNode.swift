@@ -26,6 +26,12 @@ public enum Attribution: Sendable, Equatable {
     /// *when available*; this engine always has it, because the owner is a node
     /// it is still holding.
     case hardLinkElsewhere(owner: [String]?)
+    /// This directory is a second path to a directory already walked at
+    /// `owner` — an APFS firmlink graft, or any other re-entry. Its subtree was
+    /// counted once, there; this name stays visible, weightless and unexpanded
+    /// rather than disappearing, because the directory really is at this path
+    /// (spec §3.3, §3.4).
+    case directoryCountedElsewhere(owner: [String]?)
 }
 
 /// Whether what a node reports is the whole truth (spec §3.5).
@@ -156,6 +162,12 @@ public final class ScanNode: @unchecked Sendable {
     /// keeps its place in the tree and its zero attributed bytes (spec §3.4).
     func markHardLinkElsewhere(owner: [String]?) {
         attribution = .hardLinkElsewhere(owner: owner)
+    }
+
+    /// Records that this path is a second name for the directory at `owner`,
+    /// whose subtree already carries the bytes (spec §3.3).
+    func markDirectoryCountedElsewhere(owner: [String]?) {
+        attribution = .directoryCountedElsewhere(owner: owner)
     }
 
     func markUnreadable() {

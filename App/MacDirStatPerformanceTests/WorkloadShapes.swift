@@ -25,6 +25,19 @@ struct BalancedTreeWorkload: ScaleWorkload {
     let fileCount: Int
     let branching: Int
     let foreignVolumeDirectories: Int
+    /// Extra names hung off the root that repeat another directory's file
+    /// identity: a firmlink graft, at scale. If the visited-directory guard
+    /// ever stops working, listing one of these hands back the real subtree and
+    /// the rung's declared entry count and byte total both fail.
+    let graftedDirectories: Int
+    /// Whether directory entries carry a `fileResourceIdentifier` at all.
+    ///
+    /// A real filesystem always does, so this is `true` everywhere but in the
+    /// one measurement that isolates what the visited-directory index costs.
+    /// The identity object is built either way — only whether the entry carries
+    /// it changes — so the two variants pay the same allocation and differ only
+    /// in what the index retains.
+    let identifiesDirectories: Bool
     let composition: SizeComposition
 
     init(
@@ -34,26 +47,35 @@ struct BalancedTreeWorkload: ScaleWorkload {
         branching: Int,
         totalBytes: Int64,
         rungs: [SizeComposition.Rung],
-        foreignVolumeDirectories: Int = 0
+        foreignVolumeDirectories: Int = 0,
+        graftedDirectories: Int = 0,
+        identifiesDirectories: Bool = true
     ) {
-        precondition(directoryCount > foreignVolumeDirectories, "the tree needs a root")
+        precondition(
+            directoryCount > foreignVolumeDirectories + graftedDirectories,
+            "the tree needs a root"
+        )
+        precondition(graftedDirectories < directoryCount - foreignVolumeDirectories - graftedDirectories,
+                     "every graft must repeat a directory the tree actually has")
         self.rung = rung
-        self.treeDirectoryCount = directoryCount - foreignVolumeDirectories
+        self.treeDirectoryCount = directoryCount - foreignVolumeDirectories - graftedDirectories
         self.fileCount = fileCount
         self.branching = branching
         self.foreignVolumeDirectories = foreignVolumeDirectories
+        self.graftedDirectories = graftedDirectories
+        self.identifiesDirectories = identifiesDirectories
         self.composition = SizeComposition(fileCount: fileCount, totalBytes: totalBytes, rungs: rungs)
     }
 
     var manifest: WorkloadManifest {
         WorkloadManifest(
             rung: rung,
-            directoryCount: treeDirectoryCount + foreignVolumeDirectories,
+            directoryCount: treeDirectoryCount + foreignVolumeDirectories + graftedDirectories,
             fileCount: fileCount,
             logicalBytes: composition.totalBytes,
             attributedBytes: composition.totalBytes,
             unreadableEntries: 0,
-            exclusions: foreignVolumeDirectories,
+            exclusions: foreignVolumeDirectories + graftedDirectories,
             hardLinkDuplicates: 0,
             maximumDepth: depth(of: treeDirectoryCount - 1)
         )
@@ -86,6 +108,17 @@ struct BalancedTreeWorkload: ScaleWorkload {
                     volumeIdentifier: FileSystemIdentity("volume-elsewhere-\(decoy)")
                 ))
             }
+            for graft in 0..<graftedDirectories {
+                // Same volume, same identity as `directory-(graft + 1)`: one
+                // directory under a second name, exactly as the data volume's
+                // firmlinks present one under `/System/Volumes/Data`.
+                entries.append(EntryMeta(
+                    name: "graft-\(graft)",
+                    isDirectory: true,
+                    fileIdentity: Self.directoryIdentity(graft + 1),
+                    volumeIdentifier: rootVolumeIdentity
+                ))
+            }
         }
         for file in fileRange(of: index) {
             entries.append(fileEntry(file, bytes: composition.size(ofFileAt: file)))
@@ -95,9 +128,17 @@ struct BalancedTreeWorkload: ScaleWorkload {
 
     /// `nil` means "this is a decoy on another volume"; a throw means the path
     /// does not name a directory of this workload at all.
+    ///
+    /// A graft resolves to the directory it repeats, because that is what a
+    /// firmlink does: a walk that ignored the guard would find the whole
+    /// subtree there and count it twice, which is the failure this shape exists
+    /// to make visible.
     private func directoryIndex(for components: [String]) throws -> Int? {
         guard let last = components.last else { return 0 }
         if last.hasPrefix("foreign-volume-") { return nil }
+        if last.hasPrefix("graft-"), let graft = Int(last.dropFirst("graft-".count)) {
+            return graft + 1
+        }
         guard let index = WorkloadNaming.directoryIndex(of: last), index < treeDirectoryCount else {
             throw CocoaError(.fileNoSuchFile)
         }
@@ -122,10 +163,36 @@ struct BalancedTreeWorkload: ScaleWorkload {
         return depth
     }
 
+    /// The same rung with directory identities withheld — the control for what
+    /// the visited-directory index costs (``MemoryCeilingTests``). Same tree,
+    /// same entries, same allocations; the engine simply has nothing to index.
+    func withoutDirectoryIdentities() -> BalancedTreeWorkload {
+        BalancedTreeWorkload(
+            rung: rung + "-no-directory-identities",
+            directoryCount: manifest.directoryCount,
+            fileCount: fileCount,
+            branching: branching,
+            totalBytes: composition.totalBytes,
+            rungs: composition.rungs,
+            foreignVolumeDirectories: foreignVolumeDirectories,
+            graftedDirectories: graftedDirectories,
+            identifiesDirectories: false
+        )
+    }
+
+    /// One inode per directory, as a real filesystem reports. Built even when
+    /// the entry will not carry it, so the two variants of a rung allocate
+    /// identically and their footprints differ only by what the engine kept.
+    static func directoryIdentity(_ index: Int) -> FileSystemIdentity {
+        FileSystemIdentity("directory-inode-\(index)")
+    }
+
     private func directoryEntry(_ index: Int) -> EntryMeta {
-        EntryMeta(
+        let identity = Self.directoryIdentity(index)
+        return EntryMeta(
             name: WorkloadNaming.directoryName(index),
             isDirectory: true,
+            fileIdentity: identifiesDirectories ? identity : nil,
             volumeIdentifier: rootVolumeIdentity
         )
     }
@@ -242,6 +309,7 @@ struct DeepChainWorkload: ScaleWorkload {
             entries.append(EntryMeta(
                 name: WorkloadNaming.directoryName(level + 1),
                 isDirectory: true,
+                fileIdentity: BalancedTreeWorkload.directoryIdentity(level + 1),
                 volumeIdentifier: rootVolumeIdentity
             ))
         }

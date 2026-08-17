@@ -213,8 +213,16 @@ extension ScaleWorkload {
     var volumeInfo: VolumeInfo { VolumeInfo(isLocal: true, supportsHardLinks: true, capacity: nil) }
     var rootVolumeIdentity: FileSystemIdentity { FileSystemIdentity("volume-root") }
 
-    /// The scan root's own metadata, read once at pre-flight.
+    /// The scan root's own metadata, read once at pre-flight. It carries an
+    /// identity like every other directory: the root is the first entry in the
+    /// visited-directory index, so a graft that points back at it is caught
+    /// (spec §3.3).
     func rootMetadata(name: String) -> EntryMeta {
-        EntryMeta(name: name, isDirectory: true, volumeIdentifier: rootVolumeIdentity)
+        EntryMeta(
+            name: name,
+            isDirectory: true,
+            fileIdentity: BalancedTreeWorkload.directoryIdentity(0),
+            volumeIdentifier: rootVolumeIdentity
+        )
     }
 }

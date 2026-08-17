@@ -269,6 +269,7 @@ struct InspectorContentBuilder {
         if node.kind == .package { flags.append("Package") }
         if node.kind == .symbolicLink { flags.append("Symbolic link — never followed") }
         if case .hardLinkElsewhere = node.attribution { flags.append("Hard link — counted elsewhere") }
+        if case .directoryCountedElsewhere = node.attribution { flags.append("Another path to a folder counted elsewhere") }
         switch node.readState {
         case .unreadable: flags.append("Unreadable — size not guessed")
         case .incomplete: flags.append("Incomplete — lower bound")
@@ -303,6 +304,19 @@ struct InspectorContentBuilder {
                     title: "Hard link — counted elsewhere.",
                     detail: ownerPath.map { "Attributed once, to the first in-scope path: \($0)" }
                         ?? "Attributed once, to the first in-scope path."
+                )
+            )
+        }
+
+        if case .directoryCountedElsewhere(let owner) = node.attribution {
+            let ownerPath = owner.map { absolutePath(components: $0, in: context) }
+            notes.append(
+                .init(
+                    severity: .info,
+                    glyph: "⧉",
+                    title: "Another path to a folder counted elsewhere.",
+                    detail: ownerPath.map { "The same folder is here and at \($0). Its contents are counted once, there." }
+                        ?? "The same folder is reachable at another path. Its contents are counted once, there."
                 )
             )
         }

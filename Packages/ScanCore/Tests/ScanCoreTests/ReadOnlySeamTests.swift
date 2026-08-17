@@ -44,16 +44,26 @@ final class ReadOnlySeamTests: XCTestCase {
         }
     }
 
-    func test_theSeamDeclaresExactlyTheThreeReadOnlyRequirements() throws {
-        let requirements = try directoryProbeSource
-            .split(separator: "\n")
+    /// The requirements themselves, not the file's `func` lines: the seam ships
+    /// a default implementation beside the protocol, and a guard that counted
+    /// that too would be asserting something other than the width of the seam.
+    func test_theSeamDeclaresExactlyTheFourReadOnlyRequirements() throws {
+        let lines = try directoryProbeSource
+            .split(separator: "\n", omittingEmptySubsequences: false)
             .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { $0.hasPrefix("func ") }
+        guard let start = lines.firstIndex(where: { $0.hasPrefix("public protocol DirectoryProbe") }),
+              let end = lines[start...].firstIndex(of: "}")
+        else { return XCTFail("the seam moved; this guard must move with it") }
+
+        let requirements = lines[start...end].filter { $0.hasPrefix("func ") }
 
         XCTAssertEqual(requirements, [
             "func list(_ url: URL) throws -> [EntryMeta]",
             "func metadata(of url: URL) throws -> EntryMeta",
-            "func volumeInfo(for url: URL) throws -> VolumeInfo"
+            "func volumeInfo(for url: URL) throws -> VolumeInfo",
+            // Read once per scan, and only to decide *which* of two paths to a
+            // shared subtree keeps it (spec §3.3).
+            "func mountPointPaths() -> Set<String>"
         ])
     }
 

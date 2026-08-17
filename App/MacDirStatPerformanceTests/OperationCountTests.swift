@@ -92,6 +92,45 @@ final class OperationCountTests: XCTestCase {
         XCTAssertEqual(outcome.result.root.subtreeBytes, ScaleRungs.smoke.manifest.attributedBytes)
     }
 
+    // MARK: - No second walk of a directory already visited (spec §3.3)
+
+    /// The field report's shape, at Smoke's scale: four names repeating the
+    /// identity of four directories the walk has already entered.
+    ///
+    /// A graft hands back the real subtree if anything lists it, so this rung
+    /// reports Smoke's 768 MiB exactly when the guard holds, and about twice
+    /// them when it does not — which is what a scan of `/` did before it.
+    func test_aDirectoryReachedTwiceIsVisibleAndNeverListedASecondTime() async throws {
+        let workload = ScaleRungs.smokeWithRepeatedDirectories
+        let outcome = await ScaleScanDriver.run(workload, tracksListedPaths: true)
+
+        XCTAssertEqual(outcome.operations.repeatedDirectoryListCount, 0)
+        XCTAssertEqual(outcome.operations.repeatedListCount, 0)
+        XCTAssertEqual(outcome.operations.listCount, workload.manifest.directoryCount - 4)
+
+        // An exclusion, not an error, exactly like a device boundary.
+        XCTAssertEqual(outcome.result.exclusions.byReason[.repeatedDirectory], 4)
+        XCTAssertEqual(outcome.result.errors.total, 0)
+        XCTAssertEqual(outcome.result.completeness, .exact)
+
+        let grafts = outcome.result.root.children.filter { $0.name.hasPrefix("graft-") }
+        XCTAssertEqual(grafts.count, 4)
+        for graft in grafts {
+            XCTAssertTrue(graft.children.isEmpty, "\(graft.name) was walked a second time")
+            XCTAssertEqual(graft.subtreeBytes, 0)
+            XCTAssertEqual(graft.readState, .complete)
+            guard case .directoryCountedElsewhere(let owner) = graft.attribution else {
+                return XCTFail("\(graft.name) does not say where its bytes were counted")
+            }
+            XCTAssertEqual(owner?.count, 2, "the owner is a child of the scan root")
+        }
+
+        // The bytes are Smoke's, unchanged: four extra entries, not four extra
+        // subtrees.
+        XCTAssertEqual(outcome.result.root.subtreeBytes, ScaleRungs.smoke.manifest.attributedBytes)
+        XCTAssertEqual(outcome.result.root.census().entries, workload.manifest.entryCount)
+    }
+
     // MARK: - Counts scale with entries and depth, not with bytes
 
     func test_ahundredfoldMoreBytesInTheSameShapeCostsExactlyTheSameOperations() async throws {

@@ -19,9 +19,16 @@ public struct ScriptedEntry {
         self.listFailure = listFailure
     }
 
+    /// - Parameter identity: `fileResourceIdentifierKey`. Two directories that
+    ///   carry the **same** identity are the same directory reached by two
+    ///   paths — the APFS firmlink graft under `/System/Volumes/Data`, which no
+    ///   test can stage on a real disk because only the OS may create a
+    ///   firmlink. `nil` models an identity that could not be read, which must
+    ///   always be descended.
     public static func directory(
         _ name: String,
         volume: FileSystemIdentity? = nil,
+        identity: FileSystemIdentity? = nil,
         isPackage: Bool = false,
         listFailure: Error? = nil,
         isUbiquitousItem: Bool = false,
@@ -33,6 +40,7 @@ public struct ScriptedEntry {
                 name: name,
                 isDirectory: true,
                 isPackage: isPackage,
+                fileIdentity: identity,
                 volumeIdentifier: volume,
                 isUbiquitousItem: isUbiquitousItem,
                 cloudDownloadingStatus: cloudStatus
@@ -123,6 +131,7 @@ public final class ScriptedDirectoryProbe: DirectoryProbe, @unchecked Sendable {
     private let clock: VirtualClock?
     private let advancePerRequest: TimeInterval
     private let beforeRequest: (@Sendable (ProbeRequest) -> Void)?
+    private let mountPoints: Set<String>
 
     private let lock = NSLock()
     private var log: [ProbeRequest] = []
@@ -135,7 +144,11 @@ public final class ScriptedDirectoryProbe: DirectoryProbe, @unchecked Sendable {
         volumeInfoFailure: Error? = nil,
         clock: VirtualClock? = nil,
         advancePerRequest: TimeInterval = 0,
-        beforeRequest: (@Sendable (ProbeRequest) -> Void)? = nil
+        beforeRequest: (@Sendable (ProbeRequest) -> Void)? = nil,
+        /// Absolute paths this scripted filesystem calls mount points — how a
+        /// test stages the `/System/Volumes/Data` shape, where one mounted
+        /// filesystem is presented as part of the root's own volume.
+        mountPoints: Set<String> = []
     ) {
         self.rootURL = rootURL.standardizedFileURL
         self.root = root
@@ -145,6 +158,7 @@ public final class ScriptedDirectoryProbe: DirectoryProbe, @unchecked Sendable {
         self.clock = clock
         self.advancePerRequest = advancePerRequest
         self.beforeRequest = beforeRequest
+        self.mountPoints = mountPoints
     }
 
     // MARK: - The request log
@@ -172,6 +186,10 @@ public final class ScriptedDirectoryProbe: DirectoryProbe, @unchecked Sendable {
         let entry = try record(.metadata, url)
         if let failure = metadataFailure, url.standardizedFileURL == rootURL { throw failure }
         return entry.meta
+    }
+
+    public func mountPointPaths() -> Set<String> {
+        mountPoints
     }
 
     public func volumeInfo(for url: URL) throws -> VolumeInfo {

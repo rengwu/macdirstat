@@ -95,6 +95,32 @@ public struct FileManagerDirectoryProbe: DirectoryProbe {
         )
     }
 
+    /// `getmntinfo_r_np(3)` — the mount table, in one call, with no
+    /// per-directory `statfs` anywhere.
+    ///
+    /// The `_r_np` variant, not plain `getmntinfo`: that one answers out of a
+    /// static buffer shared by the whole process, which two scans running at
+    /// once would race on. This one hands back a buffer that is ours to free.
+    ///
+    /// `MNT_NOWAIT` deliberately: the cached figures are what is wanted, and a
+    /// scan must not block on a stalled network mount to learn where the mount
+    /// points are.
+    public func mountPointPaths() -> Set<String> {
+        var buffer: UnsafeMutablePointer<statfs>?
+        let count = getmntinfo_r_np(&buffer, MNT_NOWAIT)
+        defer { free(buffer) }
+        guard count > 0, let mounts = buffer else { return [] }
+        var paths = Set<String>(minimumCapacity: Int(count))
+        for index in 0..<Int(count) {
+            var mount = mounts[index]
+            let path = withUnsafeBytes(of: &mount.f_mntonname) { raw in
+                String(cString: raw.baseAddress!.assumingMemoryBound(to: CChar.self))
+            }
+            paths.insert(path)
+        }
+        return paths
+    }
+
     // MARK: - Building an `EntryMeta`
 
     /// The child case: the URL already carries its prefetched values.

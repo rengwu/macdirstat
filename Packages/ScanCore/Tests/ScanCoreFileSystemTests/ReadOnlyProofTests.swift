@@ -112,7 +112,7 @@ final class ReadOnlyProofTests: RealFixtureTestCase {
         }
     }
 
-    func test_theProductionProbeExposesExactlyTheThreeSeamMethods() throws {
+    func test_theProductionProbeExposesExactlyTheFourSeamMethods() throws {
         let publicFunctions = try probeSource
             .split(separator: "\n")
             .map { $0.trimmingCharacters(in: .whitespaces) }
@@ -121,8 +121,27 @@ final class ReadOnlyProofTests: RealFixtureTestCase {
         XCTAssertEqual(publicFunctions, [
             "public func list(_ url: URL) throws -> [EntryMeta] {",
             "public func metadata(of url: URL) throws -> EntryMeta {",
-            "public func volumeInfo(for url: URL) throws -> VolumeInfo {"
+            "public func volumeInfo(for url: URL) throws -> VolumeInfo {",
+            // `getmntinfo(3)`: the mount table, read once per scan, so a
+            // filesystem mounted inside the root's own volume is walked last
+            // rather than shadowing the paths a person recognises (spec §3.3).
+            "public func mountPointPaths() -> Set<String> {"
         ])
+    }
+
+    /// The mount table this machine actually reports, through the seam. It has
+    /// to contain the root, and everything in it has to be an absolute path —
+    /// the comparison the traversal makes is a string one.
+    func test_theProbeReadsThisMachinesMountTable() {
+        let mounts = FileManagerDirectoryProbe().mountPointPaths()
+
+        XCTAssertTrue(mounts.contains("/"), "every Mac has a root mount")
+        XCTAssertTrue(mounts.allSatisfy { $0.hasPrefix("/") })
+        XCTAssertTrue(mounts.allSatisfy { $0 == "/" || !$0.hasSuffix("/") },
+                      "a trailing slash would never match a URL's path")
+        // The fixture is an ordinary directory on the boot volume, so nothing
+        // beneath it can be a mount point.
+        XCTAssertFalse(mounts.contains(scanRoot.path))
     }
 
     /// The fixture stages no ubiquitous item, and nothing in a scan of it can

@@ -59,6 +59,30 @@ enum ScaleRungs {
         )
     }
 
+    /// Smoke with four directories grafted a second time onto the root.
+    ///
+    /// Four extra entries repeating the identity of `directory-1 … directory-4`,
+    /// each of which really does hand back its subtree if anything lists it —
+    /// so this rung reports Smoke's bytes exactly when the visited-directory
+    /// guard holds, and roughly twice them when it does not.
+    static var smokeWithRepeatedDirectories: BalancedTreeWorkload {
+        BalancedTreeWorkload(
+            rung: "smoke-with-repeated-directories",
+            directoryCount: 260,
+            fileCount: 3_840,
+            branching: 4,
+            totalBytes: 768 * miB,
+            rungs: [
+                .init(count: 1, bytes: 192 * miB),
+                .init(count: 2, bytes: 96 * miB),
+                .init(count: 8, bytes: 16 * miB),
+                .init(count: 32, bytes: 2 * miB),
+                .init(count: 128, bytes: 256 * kiB)
+            ],
+            graftedDirectories: 4
+        )
+    }
+
     /// Smoke's shape with a hundred times its bytes.
     ///
     /// The control for "operation counts scale with entries + ancestor depth,

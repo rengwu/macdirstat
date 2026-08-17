@@ -57,6 +57,88 @@ final class MemoryCeilingTests: XCTestCase {
         await runRungAndAssertCeiling(ScaleRungs.stressInjectedFailures)
     }
 
+    /// The rung whose grafts the visited-directory index has to catch: a guard
+    /// that leaked would show as four extra subtrees here, in the entry-count
+    /// assertion, before it ever showed as memory.
+    func test_repeatedDirectoriesFinishBelowEightGibibytes() async throws {
+        await runRungAndAssertCeiling(ScaleRungs.smokeWithRepeatedDirectories)
+    }
+
+    // MARK: - What the visited-directory guard costs
+
+    /// The guard that stops a scan of `/` counting the disk twice keeps one
+    /// dictionary entry per directory **descended** — not per entry — and this
+    /// is the number.
+    ///
+    /// Measured as a difference between two runs of one rung: the ordinary one,
+    /// where every directory carries a `fileResourceIdentifier` as a real
+    /// filesystem reports, and a control where the identity is built and
+    /// discarded rather than carried. Same tree, same entries, same
+    /// allocations; the only difference is what the engine retained.
+    ///
+    /// Both figures go into the record, so a reader can subtract them again
+    /// rather than take this test's word for it. The bar is an upper bound on
+    /// the difference, because that is the only direction the claim runs — noise
+    /// in a shared host process can make one rung's delta look smaller than the
+    /// other's, but it cannot make the index cost kilobytes per directory
+    /// without showing up here.
+    func test_theVisitedDirectoryGuardCostsBoundedMemoryPerDirectory() async throws {
+        try XCTSkipUnless(PerformanceRunPolicy.runsHeavyRungs, PerformanceRunPolicy.heavyRungSkipMessage)
+
+        let indexed = ScaleRungs.representative
+        let control = indexed.withoutDirectoryIdentities()
+        let directories = indexed.manifest.directoryCount
+
+        // The control runs **first**, deliberately. Both rungs share one host
+        // process, and macOS's allocator does not hand freed pages straight
+        // back, so a rung that runs second is measured against an arena the
+        // first one already grew: any footprint the index really costs has to
+        // exceed that arena to show up at all.
+        let withoutIndex = await measureRung(control)
+        let withIndex = await measureRung(indexed)
+
+        let difference = Int64(withIndex) - Int64(withoutIndex)
+        let bytesPerDirectory = Double(difference) / Double(directories)
+        XCTAssertLessThan(
+            bytesPerDirectory, 512,
+            """
+            the visited-directory index cost \(String(format: "%.0f", bytesPerDirectory)) bytes per \
+            directory across \(directories) directories \
+            (\(withIndex.formattedAsGibibytes) indexed against \
+            \(withoutIndex.formattedAsGibibytes) unindexed) — at the ~1.4 M directories of a whole-Mac \
+            scan that would be \(String(format: "%.2f", bytesPerDirectory * 1_400_000 / 1_073_741_824)) GiB.
+            """
+        )
+        XCTAssertLessThan(withIndex, ceilingBytes)
+    }
+
+    /// One rung, run and released, reporting only its peak footprint. The tree
+    /// is dropped and the allocator's free pages returned before the caller
+    /// compares two of these.
+    private func measureRung(_ workload: ScaleWorkload) async -> UInt64 {
+        var peak: UInt64 = 0
+        await { () async -> Void in
+            let outcome = await ScaleScanDriver.run(workload)
+            XCTAssertEqual(outcome.result.reason, .completed, "\(workload.manifest.rung)")
+            XCTAssertEqual(
+                outcome.result.root.subtreeBytes, workload.manifest.attributedBytes,
+                "\(workload.manifest.rung) attributed the wrong number of bytes"
+            )
+            peak = outcome.memory.peak.physicalFootprint
+            PerformanceRecordStore.shared.append(
+                ScaleScanDriver.record(
+                    outcome,
+                    manifest: workload.manifest,
+                    hardLinkDuplicates: outcome.result.root.census().hardLinkDuplicates
+                ),
+                attachingTo: self
+            )
+        }()
+        autoreleasepool {}
+        malloc_zone_pressure_relief(nil, 0)
+        return peak
+    }
+
     // MARK: - Cancel keeps working on the biggest rungs
 
     /// "Still usable" at Representative and Large, as an operation bound rather

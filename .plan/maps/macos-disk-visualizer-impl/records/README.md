@@ -39,6 +39,19 @@ mkdir -p .performance-fixture   # gitignored; must be empty
 The builder refuses a directory that is missing, occupied, or one of the places nothing
 should ever be staged, and removes only a tree whose sentinel it recognises.
 
+## The visited-directory guard
+
+Two rungs come in a pair: `representative` and `representative-no-directory-identities`.
+They are the same 400,000 entries, generated identically, differing only in whether each
+directory entry carries a `fileResourceIdentifier` — so the difference between their peak
+footprints is what the guard that stops a scan of `/` counting the disk twice costs in
+memory (ticket 12). The control runs **first** on purpose: both share one host process, so
+a cost that is real has to exceed the arena the earlier rung already grew.
+
+`smoke-with-repeated-directories` is the correctness half of the same subject: four names
+repeating the identity of directories the walk has already opened, each of which really
+does hand back its subtree if anything lists it.
+
 ## Reading the columns
 
 `measurementNotes` in the JSON says what each number means and, more importantly, which

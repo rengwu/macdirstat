@@ -56,6 +56,14 @@ public struct ScanOptions: Sendable {
     /// this bounds memory, not honesty.
     public var maxDetailedErrors: Int
     public var clock: ScanClock
+    /// The visited-directory guard's off switch (``VisitedDirectoryIndex``).
+    ///
+    /// Internal, and `true` everywhere in the product: a scan that walks the
+    /// same directory twice reports twice the bytes. It exists so a test can
+    /// show its own grafted fixture doubling without the guard — an assertion
+    /// that the guard counts a graft once proves nothing unless the fixture is
+    /// known to be a graft in the first place.
+    var deduplicatesRepeatedDirectories = true
 
     public init(
         progressCadence: EmissionCadence = .progressDefault,

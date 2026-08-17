@@ -74,6 +74,13 @@ public enum ExclusionReason: Sendable, Hashable, CaseIterable {
     /// A subdirectory on a different volume: visible, never descended
     /// (spec §3.3).
     case crossedVolumeBoundary
+    /// A second path to a directory already descended on this volume — the
+    /// APFS firmlink graft under `/System/Volumes/Data` is the case every Mac
+    /// has. The name stays visible and weightless, its bytes counted once at
+    /// the first path (spec §3.3, §3.4). Like every exclusion, it is not an
+    /// error: nothing failed, the walk simply refused to count the same
+    /// directory twice.
+    case repeatedDirectory
 }
 
 /// What the scan skipped on purpose, counted exactly by reason (spec §3.5).

@@ -138,6 +138,20 @@ matrix recorded across macOS 11 through current.
   clear: depth 64 is 15× under the ~1,000-level recursive-ARC bound and its deepest path
   already nearly fills `PATH_MAX`, so no real filesystem can reach further.
 
+- [Directory re-entry: counted once, on the path you recognise](./tickets/12-firmlink-reentry-double-count.md) —
+  a scan of `/` no longer counts the disk twice: **1.78 TB / 2.91 M files / 3.63 M nodes**
+  in 9 minutes at a 695 MB footprint, against the field report's 3.78 TiB and 7.35 M files,
+  with `Docker.raw` once and `/Users` at the top. `VisitedDirectoryIndex` keys one entry per directory *opened* on
+  `fileResourceIdentifierKey`; a repeat is an **exclusion** (`.repeatedDirectory`), never an
+  error, and the second name stays visible and weightless with the owner's path, as a
+  hard-linked name does. Two things the ticket did not foresee: `/` and
+  `/System/Volumes/Data` share an identity while holding different entries, so a **mount
+  point is walked last and never indexed** (identity alone would have lost `.Spotlight-V100`
+  and its neighbours — a double count traded for an under-count); and `/.nofollow` is a
+  synthetic alias of the whole filesystem that sorts before every real name, so **hidden
+  subdirectories are opened after their visible siblings**. The seam gained a fourth
+  requirement, `mountPointPaths()` — one `getmntinfo_r_np` per scan.
+
 ## Not yet specified
 
 - **Compiler availability checking does not reject everything §4.4 assumes it does.** A
@@ -154,12 +168,6 @@ matrix recorded across macOS 11 through current.
   — are a decision, not a measurement. The field run showed the throttle only changes how
   often the app freezes, not whether it does: the pre-pass runs on the main thread.
   <clears-with: 14>
-- **A scan of `/` counts the whole disk twice, and nothing in the suite could have caught
-  it.** macOS reports one device identity for the system and data volumes, so the
-  volume-boundary check descends into `/System/Volumes/Data` and re-walks every firmlinked
-  directory. Totals, node counts, wall-clock and footprint all double. Every fixture and
-  every performance rung is a tree the tests built, so none of them contains a graft.
-  <clears-with: 12>
 - **The single logical measure is indefensible on sparse files, and the progress fraction
   is dimensionally wrong.** A 1 TiB `Docker.raw` occupying 34.6 GiB is the normal case on a
   developer's machine. Whether the engine carries logical bytes, allocated bytes or both is
@@ -172,6 +180,15 @@ matrix recorded across macOS 11 through current.
   scanner did not. The order decides hard-link ownership, so a cheaper comparator has to
   keep ticket 03's cross-machine determinism — and the cost should be measured before it is
   changed. <clears-with: 15>
+- **§3.3 now has three rules where the spec states one.** The device-identity boundary
+  check is joined by a visited-directory identity guard and by two ordering rules — a
+  mount point inside the root's own volume is opened last, a hidden subdirectory after its
+  visible siblings — because macOS reports one device *and* one file identity for `/` and
+  `/System/Volumes/Data`, and hangs synthetic aliases of the whole filesystem off the
+  volume root. Ticket 12 settled all three and proved them on a real `/`; `spec.md` still
+  describes the boundary check alone, and the probe seam it calls "listing and metadata
+  only" now also reads the mount table. The patch is the edit to `spec.md`, not a
+  re-decision.
 - **Spec text lags the prototype.** Ticket 01's answer supersedes six clauses across
   §§6.1, 6.2, 7.1 and 7.3 (merge iteration, merge-box order, outline depth cap,
   tree-visible counts, Cancelled banner → status-bar chip, empty-state and chooser
