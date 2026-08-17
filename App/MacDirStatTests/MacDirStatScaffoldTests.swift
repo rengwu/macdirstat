@@ -76,13 +76,14 @@ final class StatusBarSummaryTests: XCTestCase {
     private func text(
         phase: ScanPhase,
         root: ScanNode?,
+        result: ScanResult? = nil,
         volumeCapacity: VolumeCapacity? = nil
     ) -> String? {
         StatusBarViewController.text(
             phase: phase,
             root: root,
             progress: nil,
-            result: nil,
+            result: result,
             volumeCapacity: volumeCapacity,
             formatter: formatter
         )
@@ -127,6 +128,36 @@ final class StatusBarSummaryTests: XCTestCase {
 
         XCTAssertTrue(line.contains("counted"), line)
         XCTAssertTrue(line.contains("100 MiB used"), line)
+    }
+
+    /// **Cancelled (§7.3):** an "● Incomplete — scan cancelled" chip at the head
+    /// of the line, and the partial total is retained beside it — the results
+    /// stay there to browse, they are simply a lower bound now.
+    func test_aCancelledScanFlagsIncompleteAtTheHeadOfTheStatusBar() async throws {
+        let fixture = try await ScannedFixture.make(in: self) { root in
+            try writeFile("payload.bin", bytes: 4_096, in: root)
+        }
+
+        let line = try XCTUnwrap(text(phase: .cancelled, root: fixture.rootNode))
+
+        XCTAssertTrue(line.hasPrefix("● Incomplete — scan cancelled"), line)
+        XCTAssertTrue(line.contains(formatter.bytes(fixture.rootNode.subtreeDiskBytes)), line)
+    }
+
+    /// **Completed with errors (§7.3):** the count of what could not be read is
+    /// surfaced in the line, which is what marks the total a lower bound.
+    func test_aScanThatCompletedWithErrorsCountsThemInTheStatusBar() async throws {
+        let fixture = try await ScannedFixture.make(in: self) { root in
+            let locked = try makeDirectory("locked", in: root)
+            try writeFile("inside.bin", bytes: 4_096, in: locked)
+            try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: locked.path)
+        }
+        let result = try XCTUnwrap(fixture.model.result)
+        try XCTSkipIf(result.errors.isEmpty, "this host let the scan read a chmod-000 directory")
+
+        let line = try XCTUnwrap(text(phase: .completed, root: fixture.rootNode, result: result))
+
+        XCTAssertTrue(line.contains("\(formatter.count(Int64(result.errors.total))) errors"), line)
     }
 
     /// A folder scan has no volume to reconcile against, so it says nothing it
