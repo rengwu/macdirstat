@@ -20,6 +20,14 @@ import Foundation
 /// 3. **Zero bytes, no rectangle.** Empty files, symlinks, hard-link
 ///    non-owners and unreadable entries of unknowable size have no area to
 ///    draw, so they get no box. They stay listed in the tree.
+/// 4. **A budget, when one is given** (``TreemapLayoutBudget``). Rules 1–3 fix
+///    the box count at the viewport's area over 4 pt², which on a maximized 4K
+///    window is more rectangles than either the layout or the repaint can
+///    afford, and more than the eye can read. A budget caps them: regions
+///    beyond a directory's area share fold into the aggregate it already has,
+///    and once the cap is reached the walk stops opening directories, leaving
+///    each unopened one as a single box for its whole subtree. Unbudgeted —
+///    the default — none of this runs and the geometry is unchanged.
 ///
 /// **The walk reads only what it draws.** A directory is asked for its children
 /// at the moment it is about to be subdivided, and never otherwise: everything
@@ -32,16 +40,19 @@ public enum TreemapLayout {
     /// The deployment floor this package is built against (spec §4.2).
     public static let minimumSupportedMacOS = "11.0"
 
-    /// Lays `tree` out in `viewport`.
+    /// Lays `tree` out in `viewport`, drawing at most `budget` boxes.
     ///
     /// Every size change recomputes from scratch — no cache, no hysteresis,
     /// no animation (spec §6.4) — which is affordable precisely because this
-    /// is bounded by *visible* boxes rather than by node count.
+    /// is bounded by *visible* boxes rather than by node count, and, with a
+    /// budget, by a number the caller picked rather than by the display's.
     public static func layout<Node: TreemapInputNode>(
         tree: Node,
-        viewport: TreemapSize
+        viewport: TreemapSize,
+        budget: TreemapLayoutBudget = .unbounded
     ) -> TreemapLayoutResult<Node> {
         var statistics = TreemapLayoutStatistics()
+        statistics.boxBudget = budget.visibleBoxes
         guard viewport.isDrawable, tree.treemapAttributedBytes > 0 else {
             return TreemapLayoutResult(viewport: viewport, boxes: [], statistics: statistics)
         }
@@ -52,6 +63,7 @@ public enum TreemapLayout {
         statistics.placedNodeCount = tree.treemapPresentedItemCount
 
         let viewportRect = TreemapRect(origin: TreemapPoint(x: 0, y: 0), size: viewport)
+        let viewportArea = viewportRect.area
         var boxes: [TreemapBox<Node>] = []
         boxes.append(
             TreemapBox(
@@ -64,12 +76,25 @@ public enum TreemapLayout {
             )
         )
 
-        // Explicit stack rather than recursion: depth is the tree's, and the
+        // An explicit queue rather than recursion: depth is the tree's, and the
         // deep-chain rung of the workload ladder is exactly the shape that
         // would otherwise put the layout on the releasing thread's stack budget.
-        var stack: [Frame<Node>] = [Frame(node: tree, rect: viewportRect, depth: 0, boxIndex: 0)]
+        var queue = FrameQueue<Node>(bestFirst: budget.isBounded)
+        queue.push(Frame(node: tree, rect: viewportRect, depth: 0, boxIndex: 0, sequence: 0))
+        var sequence = 1
+        // Boxes that carry a fill. The root is one until something tiles it;
+        // every subdivision then trades one for the placements it produced.
+        var filledBoxCount = 1
 
-        while let frame = stack.popLast() {
+        while let frame = queue.pop() {
+            // The budget is checked *before* a directory is read, never after:
+            // reading is the cost, and a region that stays shut costs nothing
+            // beyond the one box it already has.
+            if let cap = budget.visibleBoxes, filledBoxCount >= cap {
+                statistics.reachedBoxBudget = true
+                statistics.unopenedBoxCount = queue.count + 1
+                break
+            }
             guard frame.rect.width > 0, frame.rect.height > 0 else { continue }
 
             let children = PreparedTree.children(of: frame.node)
@@ -77,10 +102,16 @@ public enum TreemapLayout {
             guard !children.isEmpty else { continue }
             statistics.visitedDirectoryCount += 1
 
-            let placements = placeChildren(children, in: frame.rect, statistics: &statistics)
+            let placements = placeChildren(
+                children,
+                in: frame.rect,
+                allowance: budget.allowance(forRect: frame.rect, viewportArea: viewportArea),
+                statistics: &statistics
+            )
             guard !placements.isEmpty else { continue }
 
             boxes[frame.boxIndex].isSubdivided = true
+            filledBoxCount += placements.count - 1
 
             var descend: [Frame<Node>] = []
             descend.reserveCapacity(placements.count)
@@ -99,7 +130,16 @@ public enum TreemapLayout {
                             isSubdivided: false
                         )
                     )
-                    descend.append(Frame(node: child.node, rect: rect, depth: frame.depth + 1, boxIndex: index))
+                    descend.append(
+                        Frame(
+                            node: child.node,
+                            rect: rect,
+                            depth: frame.depth + 1,
+                            boxIndex: index,
+                            sequence: sequence
+                        )
+                    )
+                    sequence += 1
                 case .aggregate(let merged, let bytes, let itemCount, let rect):
                     statistics.aggregateBoxCount += 1
                     statistics.mergedItemCount += itemCount
@@ -122,9 +162,7 @@ public enum TreemapLayout {
                     )
                 }
             }
-            // Reversed, so a LIFO stack walks the children in layout order and
-            // the draw list stays "parents first, then siblings in order".
-            stack.append(contentsOf: descend.reversed())
+            queue.push(children: descend)
         }
 
         for box in boxes {
@@ -165,6 +203,7 @@ public enum TreemapLayout {
     private static func placeChildren<Node: TreemapInputNode>(
         _ children: [PreparedChild<Node>],
         in rect: TreemapRect,
+        allowance: Int?,
         statistics: inout TreemapLayoutStatistics
     ) -> [Placement<Node>] {
         var survivors = Array(children.indices)
@@ -172,6 +211,29 @@ public enum TreemapLayout {
         var mergedBytes: Int64 = 0
         var mergedItems = 0
         var placements: [Placement<Node>] = []
+
+        // Folding is the same operation wherever it comes from — the sliver
+        // rule or the allowance — and each child is asked for its item count
+        // exactly once, here.
+        func fold(_ indices: [Int]) {
+            for childIndex in indices {
+                merged.append(childIndex)
+                mergedBytes += children[childIndex].bytes
+                mergedItems += children[childIndex].node.treemapPresentedItemCount
+            }
+        }
+
+        // The allowance, applied **before** the first squarify rather than
+        // after it: a directory of 100,000 children in a region that may draw
+        // 40 has no business being tiled 100,000 ways first. Children arrive
+        // sorted bytes-descending (§6.1), so the tail is the smallest of them,
+        // which is the same end of the directory the sliver rule takes.
+        if let allowance, survivors.count > allowance {
+            let overflow = Array(survivors[allowance...])
+            statistics.budgetFoldedChildCount += overflow.count
+            fold(overflow)
+            survivors.removeSubrange(allowance...)
+        }
 
         for round in 1...TreemapMetrics.mergeRoundCap {
             placements = pack(
@@ -200,11 +262,7 @@ public enum TreemapLayout {
             }
 
             let folding = Set(slivers)
-            for childIndex in survivors where folding.contains(childIndex) {
-                merged.append(childIndex)
-                mergedBytes += children[childIndex].bytes
-                mergedItems += children[childIndex].node.treemapPresentedItemCount
-            }
+            fold(survivors.filter { folding.contains($0) })
             survivors.removeAll { folding.contains($0) }
 
             if survivors.isEmpty {
@@ -266,5 +324,91 @@ public enum TreemapLayout {
         let rect: TreemapRect
         let depth: Int
         let boxIndex: Int
+        /// Creation order, and so the walk's tie-break. Two frames of exactly
+        /// equal area must still have one settled order, or a budget would cut
+        /// the map in a different place from one run to the next.
+        let sequence: Int
+    }
+
+    /// Where the walk goes next.
+    ///
+    /// Unbudgeted this is the LIFO stack the layout has always used — children
+    /// pushed reversed, so the draw list comes out parents first and siblings
+    /// in layout order — and the box order is unchanged from before budgets
+    /// existed.
+    ///
+    /// Budgeted it is a max-heap on rectangle area, because a cap has to be
+    /// spent on what the eye actually reads. Depth-first would hand the whole
+    /// budget to whichever branch happened to be walked first and leave the
+    /// rest of the volume as one flat block; largest-first resolves the map
+    /// evenly and degrades from the bottom, which is the same direction the
+    /// merge rule already degrades in. Parents are still appended to the draw
+    /// list before their children — a child frame is only ever created while
+    /// its parent's box exists — so the containment invariant §6.4 hit testing
+    /// relies on holds in both modes; only sibling order across the array
+    /// differs, and nothing reads that.
+    private struct FrameQueue<Node: TreemapInputNode> {
+        private var frames: [Frame<Node>] = []
+        private let bestFirst: Bool
+
+        init(bestFirst: Bool) {
+            self.bestFirst = bestFirst
+        }
+
+        var count: Int { frames.count }
+
+        mutating func push(_ frame: Frame<Node>) {
+            frames.append(frame)
+            if bestFirst { siftUp(from: frames.count - 1) }
+        }
+
+        /// One directory's children at once.
+        mutating func push(children: [Frame<Node>]) {
+            if bestFirst {
+                for frame in children { push(frame) }
+            } else {
+                frames.append(contentsOf: children.reversed())
+            }
+        }
+
+        mutating func pop() -> Frame<Node>? {
+            guard !frames.isEmpty else { return nil }
+            guard bestFirst else { return frames.removeLast() }
+            frames.swapAt(0, frames.count - 1)
+            let top = frames.removeLast()
+            if !frames.isEmpty { siftDown(from: 0) }
+            return top
+        }
+
+        private func precedes(_ a: Frame<Node>, _ b: Frame<Node>) -> Bool {
+            let left = a.rect.area
+            let right = b.rect.area
+            if left != right { return left > right }
+            return a.sequence < b.sequence
+        }
+
+        private mutating func siftUp(from index: Int) {
+            var child = index
+            while child > 0 {
+                let parent = (child - 1) / 2
+                guard precedes(frames[child], frames[parent]) else { return }
+                frames.swapAt(child, parent)
+                child = parent
+            }
+        }
+
+        private mutating func siftDown(from index: Int) {
+            var parent = index
+            while true {
+                let left = parent * 2 + 1
+                let right = left + 1
+                var winner = parent
+                if left < frames.count, precedes(frames[left], frames[winner]) { winner = left }
+                if right < frames.count, precedes(frames[right], frames[winner]) { winner = right }
+                guard winner != parent else { return }
+                frames.swapAt(parent, winner)
+                parent = winner
+            }
+        }
     }
 }

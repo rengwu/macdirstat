@@ -30,8 +30,8 @@ public enum TreemapLayoutExecution: Sendable, Equatable {
 /// and its result is still a better picture than none.
 ///
 /// The coordinator owns *when*, never *what*: the geometry is
-/// ``TreemapLayout/layout(tree:viewport:)``'s, unchanged and identical on
-/// either execution setting.
+/// ``TreemapLayout/layout(tree:viewport:budget:)``'s, unchanged and identical
+/// on either execution setting.
 @MainActor
 public final class TreemapLayoutCoordinator<Node: TreemapInputNode & Sendable> {
     /// What a caller asked to see. Two requests are the same request when the
@@ -49,6 +49,12 @@ public final class TreemapLayoutCoordinator<Node: TreemapInputNode & Sendable> {
     }
 
     public let execution: TreemapLayoutExecution
+
+    /// The cap every layout this coordinator runs is computed under
+    /// (``TreemapLayoutBudget``). Fixed for the coordinator's lifetime, so it
+    /// is not part of ``Request``: changing it means a new coordinator and a
+    /// fresh draw list, which is what the view does.
+    public let budget: TreemapLayoutBudget
 
     /// The most recent draw list, which may describe an older request than the
     /// one currently outstanding. ``resultRequest`` says which.
@@ -68,8 +74,12 @@ public final class TreemapLayoutCoordinator<Node: TreemapInputNode & Sendable> {
     private var pending: (tree: Node, request: Request)?
     private var settleWaiters: [CheckedContinuation<Void, Never>] = []
 
-    public init(execution: TreemapLayoutExecution = .background) {
+    public init(
+        execution: TreemapLayoutExecution = .background,
+        budget: TreemapLayoutBudget = .unbounded
+    ) {
         self.execution = execution
+        self.budget = budget
     }
 
     /// Whether the held result is the one that was last asked for.
@@ -116,9 +126,11 @@ public final class TreemapLayoutCoordinator<Node: TreemapInputNode & Sendable> {
         guard let (tree, request) = pending else { return }
         pending = nil
         inFlight = request
+        // Copied out so the detached task captures a value, not the actor.
+        let budget = self.budget
         Task.detached(priority: .userInitiated) { [weak self] in
             let began = ProcessInfo.processInfo.systemUptime
-            let computed = TreemapLayout.layout(tree: tree, viewport: request.viewport)
+            let computed = TreemapLayout.layout(tree: tree, viewport: request.viewport, budget: budget)
             let elapsed = ProcessInfo.processInfo.systemUptime - began
             await self?.finish(computed, for: request, seconds: elapsed)
         }
@@ -139,7 +151,7 @@ public final class TreemapLayoutCoordinator<Node: TreemapInputNode & Sendable> {
 
     private func compute(tree: Node, request: Request) -> TreemapLayoutResult<Node> {
         let began = ProcessInfo.processInfo.systemUptime
-        let computed = TreemapLayout.layout(tree: tree, viewport: request.viewport)
+        let computed = TreemapLayout.layout(tree: tree, viewport: request.viewport, budget: budget)
         record(seconds: ProcessInfo.processInfo.systemUptime - began)
         return computed
     }

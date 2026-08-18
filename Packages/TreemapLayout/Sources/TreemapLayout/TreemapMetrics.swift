@@ -9,6 +9,11 @@ public enum TreemapMetrics {
     /// The merge trigger (spec §6.2). A child whose rectangle would be narrower
     /// **or** shorter than this folds into its directory's aggregate box. It is
     /// a *merge* trigger, never a drop trigger.
+    ///
+    /// It is a floor on what may be *drawn*, not a cap on how much: at a fixed
+    /// 2 pt a window of twice the area holds twice the boxes. Where that number
+    /// has to be bounded, ``TreemapLayoutBudget`` folds above this threshold —
+    /// into the same aggregate, under the same rule.
     public static let mergeThresholdPoints: Double = 2
 
     /// Safety cap on the merge fixpoint's rounds per directory.
@@ -20,6 +25,22 @@ public enum TreemapMetrics {
     /// the aggregate pinned last, so 8 leaves headroom.
     /// ``TreemapLayoutStatistics/reachedRoundCap`` reports if it ever bound.
     public static let mergeRoundCap = 8
+
+    /// The box cap the app lays out under (``TreemapLayoutBudget/standard``).
+    ///
+    /// Chosen from the two costs it bounds, both measured at 3840×2160:
+    ///
+    /// * **Repaint.** Fills plus hairlines — two of the six passes — cost about
+    ///   125 ms at 20k boxes, 194 ms at 45k and 412 ms at 140k. Under ~30k the
+    ///   full-map repaint stays inside a couple of frames, and after it the
+    ///   view repaints only the rectangles that changed.
+    /// * **Relayout.** The walk's cost tracks the children it reads, which the
+    ///   budget bounds along with the boxes: the §8.1 large rung's 137k boxes
+    ///   and 1.17 s fall by roughly the ratio the cap imposes.
+    ///
+    /// It is a *ceiling*, not a target: a map that resolves in fewer boxes is
+    /// laid out exactly as it was before the budget existed, at 2×2 pt.
+    public static let standardVisibleBoxBudget = 30_000
 
     /// A leaf is labelled only when its rectangle is at least this large
     /// (spec §6.3, as realized in the ticket-01 prototype).

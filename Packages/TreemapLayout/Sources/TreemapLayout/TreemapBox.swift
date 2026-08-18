@@ -131,6 +131,23 @@ public struct TreemapLayoutStatistics: Hashable, Sendable {
     /// accepted with slivers still in it. Never observed on the ticket-01
     /// fixtures; if it ever trips, the layout is still area-truthful.
     public var reachedRoundCap = false
+
+    /// The cap this layout ran under, or `nil` if it ran unbudgeted
+    /// (``TreemapLayoutBudget``).
+    public var boxBudget: Int?
+    /// `true` if the budget actually bound — the walk stopped opening
+    /// directories with frames still queued. False on any map that resolved
+    /// inside its budget, which is every map small enough not to need one.
+    public var reachedBoxBudget = false
+    /// Regions left unopened when the budget bound. Each is on screen as one
+    /// box at its exact attributed area; the directories among them are the
+    /// regions this map does not resolve into their contents.
+    public var unopenedBoxCount = 0
+    /// Children folded into their directory's aggregate by the budget's
+    /// per-directory allowance rather than by the 2×2 pt sliver rule. They are
+    /// merged, not dropped: the aggregate reports their exact combined bytes
+    /// and item count, exactly as §6.2 requires of every fold.
+    public var budgetFoldedChildCount = 0
 }
 
 /// The result of laying a tree out in a viewport: a flat draw list plus the
