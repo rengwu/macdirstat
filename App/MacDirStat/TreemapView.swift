@@ -82,7 +82,14 @@ final class TreemapView: NSView {
     }
 
     private func makeCoordinator() {
-        coordinator = TreemapLayoutCoordinator<TreemapNodeRef>(execution: layoutExecution)
+        coordinator = TreemapLayoutCoordinator<TreemapNodeRef>(
+            execution: layoutExecution,
+            // Cap the picture, not the tree: without this the box count is the
+            // window's area over 4 pt², so maximizing on a 4K display buys tens
+            // of thousands of rectangles nobody can read and every relayout and
+            // repaint pays for them (``TreemapLayoutBudget``).
+            budget: .standard
+        )
         coordinator.onResult = { [weak self] in self?.layoutDidArrive() }
         accessibilityRequest = nil
     }
@@ -215,7 +222,7 @@ final class TreemapView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         let appearance = currentAppearance
         TreemapChrome.voidBackground(appearance).setFill()
-        bounds.fill()
+        dirtyRect.fill()
 
         requestLayout()
         guard let held = coordinator.result, !held.boxes.isEmpty,
@@ -231,64 +238,113 @@ final class TreemapView: NSView {
         let result = held
 
         let scale = backingScale
+        // Snapped once, here, and read by index from every pass below. The
+        // passes used to each snap the same rectangle again, which is six
+        // roundings per box, and a maximized 4K window has a great many boxes.
+        let snapped = result.boxes.map { snappedRect($0.frame, scale: scale) }
 
-        // 1 — fills. Zero insets: the leaves tile their directory's rectangle
-        // exactly, so a directory has no fill of its own (§6.1, §6.3).
-        for box in result.boxes where !box.isSubdivided {
-            let rect = snappedRect(box.frame, scale: scale)
-            guard rect.width > 0, rect.height > 0 else { continue }
+        // **Everything below is limited to `dirtyRect`.** Moving the pointer
+        // invalidates two rectangles rather than the view, so a hover costs two
+        // small repaints instead of one pass over every box on screen — which
+        // is what made a large window feel slow well before the box count did.
+        var fillsByGroup: [TreemapKindGroup: [NSRect]] = [:]
+        var aggregateIndices: [Int] = []
+        var incompleteIndices: [Int] = []
+        var labelledIndices: [Int] = []
+        let hairlinePath = CGMutablePath()
+        let hairline = CGFloat(TreemapMetrics.siblingHairlineWidthPoints)
+
+        for (index, box) in result.boxes.enumerated() where !box.isSubdivided {
+            let rect = snapped[index]
+            guard rect.width > 0, rect.height > 0, rect.intersects(dirtyRect) else { continue }
             if box.isAggregate {
-                drawHatch(
-                    in: rect,
-                    base: TreemapPalette.mergedBoxFillColor(appearance).nsColor,
-                    stroke: TreemapPalette.mergedBoxHatchColor(appearance).nsColor,
-                    context: cgContext
-                )
+                aggregateIndices.append(index)
             } else {
-                let group = box.kindGroup ?? .other
-                TreemapPalette.color(for: group, appearance: appearance).nsColor.setFill()
-                rect.fill()
+                fillsByGroup[box.kindGroup ?? .other, default: []].append(rect)
+            }
+            if rect.width >= 1.2, rect.height >= 1.2 {
+                hairlinePath.addRect(rect.insetBy(dx: hairline / 2, dy: hairline / 2))
+            }
+            if box.isIncomplete, rect.width >= 3, rect.height >= 3 {
+                incompleteIndices.append(index)
+            }
+            if box.fitsLabel {
+                labelledIndices.append(index)
             }
         }
 
-        // 2 — 0.5 pt hairlines between sibling leaves (§6.1).
-        TreemapChrome.siblingHairline(appearance).setStroke()
-        let hairline = CGFloat(TreemapMetrics.siblingHairlineWidthPoints)
-        for box in result.boxes where !box.isSubdivided {
-            let rect = snappedRect(box.frame, scale: scale)
-            guard rect.width >= 1.2, rect.height >= 1.2 else { continue }
-            let path = NSBezierPath(rect: rect.insetBy(dx: hairline / 2, dy: hairline / 2))
-            path.lineWidth = hairline
-            path.stroke()
+        // 1 — fills. Zero insets: the leaves tile their directory's rectangle
+        // exactly, so a directory has no fill of its own (§6.1, §6.3). One
+        // batched call per kind group rather than one per box; the rectangles
+        // are snapped to the pixel grid and never overlap, so which group is
+        // painted first cannot change a pixel.
+        for (group, rects) in fillsByGroup {
+            cgContext.setFillColor(TreemapPalette.color(for: group, appearance: appearance).nsColor.cgColor)
+            cgContext.addRects(rects)
+            cgContext.fillPath()
+        }
+        for index in aggregateIndices {
+            drawHatch(
+                in: snapped[index],
+                base: TreemapPalette.mergedBoxFillColor(appearance).nsColor,
+                stroke: TreemapPalette.mergedBoxHatchColor(appearance).nsColor,
+                context: cgContext
+            )
+        }
+
+        // 2 — 0.5 pt hairlines between sibling leaves (§6.1), as one path: the
+        // colour and width are the same for every box, so this is one stroke
+        // rather than a `NSBezierPath` allocated and stroked per rectangle.
+        if !hairlinePath.isEmpty {
+            cgContext.saveGState()
+            cgContext.setStrokeColor(TreemapChrome.siblingHairline(appearance).cgColor)
+            cgContext.setLineWidth(hairline)
+            cgContext.addPath(hairlinePath)
+            cgContext.strokePath()
+            cgContext.restoreGState()
         }
 
         // 3 — per-depth directory outlines, 1 pt, capped at 3 levels below the
-        // root (ticket 01, decision 9).
-        TreemapChrome.directoryOutline(appearance).setStroke()
+        // root (ticket 01, decision 9). Same one-path treatment.
+        let outlinePath = CGMutablePath()
         let outlineWidth = CGFloat(TreemapMetrics.directoryOutlineWidthPoints)
-        for box in result.outlinedBoxes {
-            let rect = snappedRect(box.frame, scale: scale)
-            let path = NSBezierPath(rect: rect.insetBy(dx: outlineWidth / 2, dy: outlineWidth / 2))
-            path.lineWidth = outlineWidth
-            path.stroke()
+        for (index, box) in result.boxes.enumerated()
+        where box.isSubdivided
+            && box.depth > 0
+            && box.depth <= TreemapMetrics.directoryOutlineMaximumDepth
+            && box.frame.shortestSide >= TreemapMetrics.directoryOutlineMinimumSidePoints {
+            let rect = snapped[index]
+            guard rect.intersects(dirtyRect) else { continue }
+            outlinePath.addRect(rect.insetBy(dx: outlineWidth / 2, dy: outlineWidth / 2))
+        }
+        if !outlinePath.isEmpty {
+            cgContext.saveGState()
+            cgContext.setStrokeColor(TreemapChrome.directoryOutline(appearance).cgColor)
+            cgContext.setLineWidth(outlineWidth)
+            cgContext.addPath(outlinePath)
+            cgContext.strokePath()
+            cgContext.restoreGState()
         }
 
         // 4 — Incomplete: red diagonal hatch, over a fill that already says so
         // in the tree and inspector as text (§6.3, §9.4).
-        for box in result.boxes where !box.isSubdivided && box.isIncomplete {
-            let rect = snappedRect(box.frame, scale: scale)
-            guard rect.width >= 3, rect.height >= 3 else { continue }
-            drawHatch(in: rect, base: nil, stroke: TreemapChrome.incompleteHatch(appearance), context: cgContext)
+        for index in incompleteIndices {
+            drawHatch(
+                in: snapped[index],
+                base: nil,
+                stroke: TreemapChrome.incompleteHatch(appearance),
+                context: cgContext
+            )
         }
 
         // 5 — labels: 11 pt, only at ≥ 48×15 pt, truncated, with a halo (§6.3).
-        for box in result.boxes where box.fitsLabel {
-            drawLabel(for: box, in: snappedRect(box.frame, scale: scale))
+        for index in labelledIndices {
+            drawLabel(for: result.boxes[index], in: snapped[index])
         }
 
         // 6 — hover: a 1 pt high-contrast stroke (§6.3).
         if let hoveredBoxIndex, hoveredBoxIndex < result.boxes.count {
-            let rect = snappedRect(result.boxes[hoveredBoxIndex].frame, scale: scale)
+            let rect = snapped[hoveredBoxIndex]
             let width = CGFloat(TreemapMetrics.hoverStrokeWidthPoints)
             TreemapChrome.hoverStroke(appearance).setStroke()
             let path = NSBezierPath(rect: rect.insetBy(dx: width / 2, dy: width / 2))
@@ -299,7 +355,7 @@ final class TreemapView: NSView {
         // 7 — selection: a 2 pt accent stroke inset 1 pt. A directory is
         // subdivided, so this outlines its whole region (§6.3, §7.2).
         if let index = selectedBoxIndex(in: result) {
-            let rect = snappedRect(result.boxes[index].frame, scale: scale)
+            let rect = snapped[index]
             let inset = CGFloat(TreemapMetrics.selectionStrokeInsetPoints)
             let width = CGFloat(TreemapMetrics.selectionStrokeWidthPoints)
             let strokeRect = rect.insetBy(dx: inset + width / 2, dy: inset + width / 2)
@@ -334,6 +390,11 @@ final class TreemapView: NSView {
             y: bounds.height / CGFloat(result.viewport.height)
         )
 
+        // Batched exactly as the real draw is, and for the same reason with
+        // more force: this is the frame a live resize actually shows, once per
+        // size the window passes through.
+        var fillsByGroup: [TreemapKindGroup: [NSRect]] = [:]
+        var mergedFills: [NSRect] = []
         for box in result.boxes where !box.isSubdivided {
             let rect = NSRect(
                 x: box.frame.x, y: box.frame.y,
@@ -341,21 +402,38 @@ final class TreemapView: NSView {
             )
             guard rect.width > 0, rect.height > 0 else { continue }
             if box.isAggregate {
-                TreemapPalette.mergedBoxFillColor(appearance).nsColor.setFill()
+                mergedFills.append(rect)
             } else {
-                TreemapPalette.color(for: box.kindGroup ?? .other, appearance: appearance).nsColor.setFill()
+                fillsByGroup[box.kindGroup ?? .other, default: []].append(rect)
             }
-            rect.fill()
+        }
+        for (group, rects) in fillsByGroup {
+            context.setFillColor(TreemapPalette.color(for: group, appearance: appearance).nsColor.cgColor)
+            context.addRects(rects)
+            context.fillPath()
+        }
+        if !mergedFills.isEmpty {
+            context.setFillColor(TreemapPalette.mergedBoxFillColor(appearance).nsColor.cgColor)
+            context.addRects(mergedFills)
+            context.fillPath()
         }
 
-        TreemapChrome.directoryOutline(appearance).setStroke()
-        for box in result.outlinedBoxes {
-            let path = NSBezierPath(rect: NSRect(
+        let outlinePath = CGMutablePath()
+        for box in result.boxes
+        where box.isSubdivided
+            && box.depth > 0
+            && box.depth <= TreemapMetrics.directoryOutlineMaximumDepth
+            && box.frame.shortestSide >= TreemapMetrics.directoryOutlineMinimumSidePoints {
+            outlinePath.addRect(NSRect(
                 x: box.frame.x, y: box.frame.y,
                 width: box.frame.width, height: box.frame.height
             ))
-            path.lineWidth = CGFloat(TreemapMetrics.directoryOutlineWidthPoints)
-            path.stroke()
+        }
+        if !outlinePath.isEmpty {
+            context.setStrokeColor(TreemapChrome.directoryOutline(appearance).cgColor)
+            context.setLineWidth(CGFloat(TreemapMetrics.directoryOutlineWidthPoints))
+            context.addPath(outlinePath)
+            context.strokePath()
         }
     }
 
@@ -492,21 +570,43 @@ final class TreemapView: NSView {
     }
 
     override func mouseExited(with event: NSEvent) {
-        guard hoveredBoxIndex != nil else { return }
+        guard let previous = hoveredBoxIndex else { return }
         hoveredBoxIndex = nil
         toolTip = nil
-        needsDisplay = true
+        invalidate(boxIndex: previous)
     }
 
     func updateHover(at point: NSPoint) {
         let index = boxIndex(at: point)
         guard index != hoveredBoxIndex else { return }
+        let previous = hoveredBoxIndex
         hoveredBoxIndex = index
         toolTip = index.flatMap { hoveredIndex -> String? in
             guard let context, let selection = selection(atBoxIndex: hoveredIndex) else { return nil }
             return contentBuilder.tooltip(for: selection, in: context)
         }
-        needsDisplay = true
+        // Two rectangles changed, so two rectangles are repainted. Marking the
+        // whole view dirty here meant every pointer move redrew every box on
+        // screen — affordable at 1440×900, and the largest single cost of a
+        // maximized window at 4K.
+        invalidate(boxIndex: previous)
+        invalidate(boxIndex: index)
+    }
+
+    /// Marks one box's rectangle for repaint, and nothing else.
+    ///
+    /// Reads the held layout directly rather than through ``currentLayout()``:
+    /// this is on the mouse path and has no business asking for a relayout.
+    private func invalidate(boxIndex: Int?) {
+        guard let boxIndex,
+              let result = coordinator.result,
+              result.viewport == currentViewport,
+              boxIndex < result.boxes.count else { return }
+        let rect = snappedRect(result.boxes[boxIndex].frame, scale: backingScale)
+        // Slop for the strokes that sit on the rectangle's own edge — the
+        // hover stroke, the selection stroke, and the hairline a neighbour
+        // draws on the shared edge.
+        setNeedsDisplay(rect.insetBy(dx: -2, dy: -2))
     }
 
     override func mouseDown(with event: NSEvent) {
