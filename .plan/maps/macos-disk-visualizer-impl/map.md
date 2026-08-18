@@ -235,6 +235,20 @@ on a Release build that launches and scans a real volume.
   is what it is. Clones flip to over-reporting and are accepted. `spec.md` is amended;
   `CONTEXT.md` pins the two terms; the build is [ticket 16](./tickets/16-count-blocks-on-disk.md).
 
+- **The number of boxes is ours to choose, not the display's.** §6's merge rule is a floor
+  on what may be drawn and never a cap on how many, so the count is the viewport's area over
+  4 pt² — 137,056 boxes and 1.17 s of layout at the Large rung, and roughly twice that on a
+  maximized 4K window, where fills and hairlines alone cost 412 ms of main thread at 140k
+  boxes. [Ticket 17](./tickets/17-treemap-box-budget.md) caps boxes instead of raising the
+  threshold (2 pt → 16 pt cuts boxes 3.7× but layout only 173 → 141 ms, because every
+  directory is still opened, and it coarsens small windows that were never over budget).
+  A budget is spent **per directory by area share** — the overflow folds into the aggregate
+  §6.2 already provides, exact numbers intact — and **across the walk**, which runs
+  largest-rectangle-first and stops opening directories at the cap, leaving what is unopened
+  as one honest box for its subtree. 30,000 boxes, one constant; unbudgeted callers get the
+  old geometry box for box. `draw(_:)` honours its `dirtyRect` and hover repaints two
+  rectangles rather than the map.
+
 - [Count blocks on disk, carry length beside them](./tickets/16-count-blocks-on-disk.md) —
   the build, and the specification and the code agree again. `EntryMeta.diskSize` beside
   `contentLength`, four `Int64` on `ScanNode` rolled up on one ancestor walk, the `lstat`
@@ -273,14 +287,14 @@ on a Release build that launches and scans a real volume.
 
 ## Not yet specified
 
-- **A relayout at the Large rung still costs 1.17 seconds of a background core, and it is
-  allocation churn rather than algorithm.** Two arrays per directory opened — the
-  adapter's `treemapPresentedChildren`, then the prepared children — and four more per
-  merge round, across 126,144 directories. Reusing buffers across directories would cut
-  it without touching geometry. The spec commits no wall-clock bar and the main thread no
-  longer waits for it, so this is a recorded cost and not a defect. What made it urgent —
-  a tree feed arriving four times a second — is gone; a relayout now happens on a resize
-  or a divider drag, where the coordinator's newest-wins already covers it.
+- **A relayout is allocation churn as much as algorithm, and ticket 17 only cut it in
+  proportion.** Two arrays per directory opened — the adapter's `treemapPresentedChildren`,
+  then the prepared children — and four more per merge round, across the 126,144
+  directories the Large rung opened for its 1.17 s. The box budget bounds how many
+  directories are opened at all, so the churn falls with the count; it does not make any
+  one directory cheaper. Reusing buffers across directories would, without touching
+  geometry. The spec commits no wall-clock bar and the main thread does not wait for it,
+  so this is a recorded cost and not a defect.
 - **A scan of `/` reconciles about ten percent below the volume's used figure, and nothing
   is wrong.** `volumeAvailableCapacityKey` is a property of the APFS *container*, so
   Preboot, Recovery and VM are inside the denominator while §3.3 correctly keeps them
