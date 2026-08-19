@@ -237,6 +237,46 @@ final class AppShellTests: XCTestCase {
         XCTAssertNotNil(controller.statusBarController.view.superview)
     }
 
+    /// §7.2: "every split divider drags". The tree pane's own drag has to have
+    /// somewhere to go, and has to be catchable on a 1 pt hairline.
+    func test_treePaneIsResizableAndItsDividerIsCatchable() {
+        let controller = MainWindowController()
+        let workspace = controller.workspaceViewController
+        let tree = workspace.splitViewItems[0]
+
+        XCTAssertEqual(tree.minimumThickness, WorkspaceSplitViewController.treeMinimumThickness)
+        XCTAssertEqual(tree.maximumThickness, WorkspaceSplitViewController.treeMaximumThickness)
+        XCTAssertGreaterThan(
+            tree.maximumThickness - tree.minimumThickness, 200,
+            "a range this pane cannot travel in is a fixed pane wearing a divider"
+        )
+        // Wide enough for all four columns at their design widths at once.
+        XCTAssertGreaterThanOrEqual(tree.maximumThickness, 220 + 90 + 116 + 72)
+
+        controller.window?.setContentSize(NSSize(width: 1_400, height: 800))
+        workspace.splitView.layoutSubtreeIfNeeded()
+        let split = workspace.splitView
+
+        for dividerIndex in 0..<2 {
+            let grab = workspace.splitView(split, additionalEffectiveRectOfDividerAt: dividerIndex)
+            let edge = split.arrangedSubviews[dividerIndex].frame.maxX
+            XCTAssertLessThan(grab.minX, edge, "divider \(dividerIndex) has no slop on its leading side")
+            XCTAssertGreaterThan(grab.maxX, edge, "divider \(dividerIndex) has no slop on its trailing side")
+            XCTAssertEqual(
+                grab.width,
+                split.dividerThickness + 2 * WorkspaceSplitViewController.dividerGrabSlop,
+                accuracy: 0.001
+            )
+            XCTAssertEqual(grab.height, split.bounds.height, accuracy: 0.001)
+        }
+
+        // A collapsed pane has no hairline, so it gets no band over the pane
+        // that took its place.
+        workspace.splitViewItems[2].isCollapsed = true
+        split.layoutSubtreeIfNeeded()
+        XCTAssertEqual(workspace.splitView(split, additionalEffectiveRectOfDividerAt: 1), .zero)
+    }
+
     func test_treeUsesSourceListWithSettledColumnsAndDefaultSizeSort() {
         let controller = DirectoryTreeViewController(formatter: DisplayFormatter(locale: Locale(identifier: "en_US")))
         controller.loadView()

@@ -860,9 +860,13 @@ final class WorkspaceSplitViewController: NSSplitViewController, FileActionRespo
             self?.selectionDidChange(change)
         }
 
+        // The tree pane is dragged, not fixed. Its ceiling is wide enough to
+        // show all four columns at once (220 + 90 + 116 + 72, plus intercell
+        // spacing and a scroller), which is where a user who drags this
+        // divider is usually headed.
         let left = NSSplitViewItem(sidebarWithViewController: treeViewController)
-        left.minimumThickness = 240
-        left.maximumThickness = 520
+        left.minimumThickness = Self.treeMinimumThickness
+        left.maximumThickness = Self.treeMaximumThickness
         left.holdingPriority = .defaultHigh
 
         let center = NSSplitViewItem(viewController: treemapViewController)
@@ -888,6 +892,46 @@ final class WorkspaceSplitViewController: NSSplitViewController, FileActionRespo
     }
 
     required init?(coder: NSCoder) { nil }
+
+    /// The tree pane's drag range (§7.2, "every split divider drags"). The
+    /// pane opens at its minimum, so the minimum is also the width the window
+    /// starts with.
+    static let treeMinimumThickness: CGFloat = 240
+    static let treeMaximumThickness: CGFloat = 620
+
+    /// A hairline divider is 1 pt wide, which is not a thing a pointer can
+    /// reliably catch. The prototype gave every divider a few points of slop on
+    /// each side (`core-workspace-prototype.html`, `.divider::after`); this is
+    /// that slop, in the split view's own coordinates.
+    static let dividerGrabSlop: CGFloat = 4
+
+    override func splitView(
+        _ splitView: NSSplitView,
+        additionalEffectiveRectOfDividerAt dividerIndex: Int
+    ) -> NSRect {
+        let divider = dividerRect(at: dividerIndex)
+        guard !divider.isEmpty else { return .zero }
+        return divider.insetBy(dx: -Self.dividerGrabSlop, dy: 0)
+    }
+
+    /// The divider's own rect. The arranged subviews abut — the hairline is
+    /// drawn over their shared edge rather than in a gap between them — so the
+    /// divider is `dividerThickness` centred on that edge. A collapsed pane has
+    /// no divider to widen, and returns an empty rect rather than a band lying
+    /// over its neighbour's content.
+    private func dividerRect(at dividerIndex: Int) -> NSRect {
+        let panes = splitView.arrangedSubviews
+        guard splitView.isVertical, dividerIndex >= 0, dividerIndex + 1 < panes.count else { return .zero }
+        guard !splitViewItems[dividerIndex].isCollapsed,
+              !splitViewItems[dividerIndex + 1].isCollapsed else { return .zero }
+        let thickness = splitView.dividerThickness
+        return NSRect(
+            x: panes[dividerIndex].frame.maxX - thickness / 2,
+            y: splitView.bounds.minY,
+            width: thickness,
+            height: splitView.bounds.height
+        )
+    }
 
     func start(root: URL, mode: ScanMode) {
         // A new scan invalidates every node identity the selection could name.
