@@ -73,15 +73,16 @@ final class DisplayFormattingTests: XCTestCase {
 final class StatusBarSummaryTests: XCTestCase {
     private let formatter = DisplayFormatter(locale: Locale(identifier: "en_US"))
 
+    /// A terminal phase is described by its result, so these tests hand over
+    /// the one the fixture's own scan produced — which is also where the
+    /// visible file and folder tallies now come from.
     private func text(
         phase: ScanPhase,
-        root: ScanNode?,
-        result: ScanResult? = nil,
+        result: ScanResult?,
         volumeCapacity: VolumeCapacity? = nil
     ) -> String? {
         StatusBarViewController.text(
             phase: phase,
-            root: root,
             progress: nil,
             result: result,
             volumeCapacity: volumeCapacity,
@@ -101,7 +102,7 @@ final class StatusBarSummaryTests: XCTestCase {
         let line = try XCTUnwrap(
             text(
                 phase: .completed,
-                root: fixture.rootNode,
+                result: fixture.model.result,
                 volumeCapacity: VolumeCapacity(totalBytes: 1_000_000, availableBytes: 1_000_000 - counted)
             )
         )
@@ -121,7 +122,7 @@ final class StatusBarSummaryTests: XCTestCase {
         let line = try XCTUnwrap(
             text(
                 phase: .completed,
-                root: fixture.rootNode,
+                result: fixture.model.result,
                 volumeCapacity: VolumeCapacity(totalBytes: 100 * 1_024 * 1_024, availableBytes: 0)
             )
         )
@@ -138,7 +139,7 @@ final class StatusBarSummaryTests: XCTestCase {
             try writeFile("payload.bin", bytes: 4_096, in: root)
         }
 
-        let line = try XCTUnwrap(text(phase: .cancelled, root: fixture.rootNode))
+        let line = try XCTUnwrap(text(phase: .cancelled, result: fixture.model.result))
 
         XCTAssertTrue(line.hasPrefix("● Incomplete — scan cancelled"), line)
         XCTAssertTrue(line.contains(formatter.bytes(fixture.rootNode.subtreeDiskBytes)), line)
@@ -155,9 +156,116 @@ final class StatusBarSummaryTests: XCTestCase {
         let result = try XCTUnwrap(fixture.model.result)
         try XCTSkipIf(result.errors.isEmpty, "this host let the scan read a chmod-000 directory")
 
-        let line = try XCTUnwrap(text(phase: .completed, root: fixture.rootNode, result: result))
+        let line = try XCTUnwrap(text(phase: .completed, result: result))
 
         XCTAssertTrue(line.contains("\(formatter.count(Int64(result.errors.total))) errors"), line)
+    }
+
+    /// **The visible tallies are the scan's own fold, unchanged.** They used to
+    /// be a whole-tree walk performed on the main actor every time the status
+    /// line was rebuilt; they now travel with the result. Presentation
+    /// semantics: a package is one item filed under files, and nothing below it
+    /// is counted separately.
+    func test_theVisibleTotalsAreTheSameNumbersTheOldWholeTreeWalkProduced() async throws {
+        let fixture = try await ScannedFixture.make(in: self) { root in
+            let package = try makeDirectory("Editor.app", in: root)
+            let contents = try makeDirectory("Contents", in: package)
+            try writeFile("Info.plist", bytes: 512, in: contents)
+
+            let docs = try makeDirectory("docs", in: root)
+            try writeFile("a.txt", bytes: 10, in: docs)
+            let nested = try makeDirectory("nested", in: docs)
+            try writeFile("deep.bin", bytes: 300, in: nested)
+
+            _ = try makeDirectory("empty", in: root)
+            try writeFile("solo.bin", bytes: 40, in: root)
+        }
+
+        // The walk this replaced, verbatim, as a test-only oracle.
+        var files = 0
+        var folders = 0
+        var stack = fixture.rootNode.children
+        while let current = stack.popLast() {
+            switch current.kind {
+            case .directory:
+                folders += 1
+                stack.append(contentsOf: current.children)
+            case .package, .file, .symbolicLink, .other:
+                files += 1
+                if current.kind != .package { stack.append(contentsOf: current.children) }
+            }
+        }
+
+        let line = try XCTUnwrap(text(phase: .completed, result: fixture.model.result))
+
+        XCTAssertTrue(line.contains("\(formatter.count(Int64(files))) files"), line)
+        XCTAssertTrue(line.contains("\(formatter.count(Int64(folders))) folders"), line)
+        // Hand-counted: Editor.app, a.txt, deep.bin, solo.bin are the files —
+        // the package's interior is not among them — and docs, nested, empty
+        // are the folders.
+        XCTAssertEqual(files, 4)
+        XCTAssertEqual(folders, 3)
+    }
+
+    /// Every piece of the terminal line at once, so removing the selection
+    /// notification cannot quietly take a clause with it: the cancelled chip,
+    /// the reconciliation pair, capacity and free, the error count and the
+    /// exclusion count, in that order and with that wording.
+    func test_aCancelledLineKeepsEveryClauseItHasEvidenceFor() async throws {
+        let fixture = try await ScannedFixture.make(in: self) { root in
+            try writeFile("payload.bin", bytes: 4_096, in: root)
+        }
+        let real = try XCTUnwrap(fixture.model.result)
+        let capacity = VolumeCapacity(totalBytes: 100 * 1_024 * 1_024, availableBytes: 25 * 1_024 * 1_024)
+        // The real tree and its real fold, wearing the diagnostics a scan with
+        // problems would have carried.
+        let staged = ScanResult(
+            reason: .cancelled,
+            root: real.root,
+            completeness: .incomplete(cancelled: true, unreadableEntries: 3),
+            errors: ErrorSummary(byCategory: [.unreadableDirectory: 3], details: [], total: 3, truncated: false),
+            exclusions: ExclusionSummary(byReason: [.crossedVolumeBoundary: 2, .repeatedDirectory: 5]),
+            visibleTotals: real.visibleTotals,
+            volumeCapacity: capacity,
+            elapsed: real.elapsed
+        )
+
+        let line = try XCTUnwrap(text(phase: .cancelled, result: staged, volumeCapacity: capacity))
+
+        XCTAssertTrue(line.hasPrefix("● Incomplete — scan cancelled"), line)
+        XCTAssertTrue(line.contains("\(formatter.bytes(real.root.subtreeDiskBytes)) counted"), line)
+        XCTAssertTrue(line.contains("\(formatter.bytes(capacity.usedBytes)) used"), line)
+        XCTAssertTrue(line.contains("\(formatter.count(Int64(staged.visibleTotals.files))) files"), line)
+        XCTAssertTrue(line.contains("\(formatter.count(Int64(staged.visibleTotals.folders))) folders"), line)
+        XCTAssertTrue(line.contains("Capacity \(formatter.bytes(capacity.totalBytes))"), line)
+        XCTAssertTrue(line.contains("Free \(formatter.bytes(capacity.availableBytes))"), line)
+        XCTAssertTrue(line.contains("3 errors"), line)
+        XCTAssertTrue(line.contains("7 excluded"), line)
+    }
+
+    /// **A selection is not a model change.** Picking a row updates the
+    /// inspector and the shared selection and nothing else; it used to fire the
+    /// callback whose only subscriber rebuilds the status line, which meant a
+    /// whole-tree walk per click.
+    func test_selectingARowUpdatesTheInspectorWithoutAskingTheStatusBarToUpdate() async throws {
+        let fixture = try await ScannedFixture.make(in: self) { root in
+            let docs = try makeDirectory("docs", in: root)
+            try writeFile("report.pdf", bytes: 2_048, in: docs)
+        }
+        let (workspace, _, _) = fixture.makeWorkspace()
+        var statusUpdates = 0
+        workspace.onScanModelChange = { statusUpdates += 1 }
+
+        let node = try fixture.node(named: "report.pdf")
+        workspace.selectionModel.select(.node(node), source: .tree)
+
+        XCTAssertEqual(statusUpdates, 0, "a selection changes nothing the status bar shows")
+        XCTAssertEqual(workspace.inspectorViewController.content?.title, "report.pdf")
+        XCTAssertTrue(workspace.selectionModel.selection?.node === node)
+
+        // And the callback still fires from the real model path.
+        workspace.model.onChange?()
+        XCTAssertEqual(statusUpdates, 1, "a scan model change still reaches the status bar")
     }
 
     /// A folder scan has no volume to reconcile against, so it says nothing it
@@ -167,7 +275,7 @@ final class StatusBarSummaryTests: XCTestCase {
             try writeFile("payload.bin", bytes: 4_096, in: root)
         }
 
-        let line = try XCTUnwrap(text(phase: .completed, root: fixture.rootNode))
+        let line = try XCTUnwrap(text(phase: .completed, result: fixture.model.result))
 
         XCTAssertFalse(line.contains("used"), line)
         XCTAssertFalse(line.contains("counted"), line)

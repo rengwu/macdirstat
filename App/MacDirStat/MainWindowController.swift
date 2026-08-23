@@ -28,7 +28,7 @@ final class MainWindowController: NSWindowController {
 
         super.init(window: window)
         window.toolbar = makeToolbar()
-        workspace.onModelChange = { [weak statusBar, weak workspace] in
+        workspace.onScanModelChange = { [weak statusBar, weak workspace] in
             guard let statusBar, let workspace else { return }
             statusBar.update(model: workspace.model)
         }

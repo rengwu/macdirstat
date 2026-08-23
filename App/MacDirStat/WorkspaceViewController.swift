@@ -457,25 +457,6 @@ private final class PercentTableCellView: NSTableCellView {
     }
 }
 
-enum VisibleTreeCounts {
-    static func totals(in root: ScanNode) -> (files: Int, folders: Int) {
-        var files = 0
-        var folders = 0
-        var stack = root.children
-        while let current = stack.popLast() {
-            switch current.kind {
-            case .directory:
-                folders += 1
-                stack.append(contentsOf: current.children)
-            case .package, .file, .symbolicLink, .other:
-                files += 1
-                if current.kind != .package { stack.append(contentsOf: current.children) }
-            }
-        }
-        return (files, folders)
-    }
-}
-
 /// The center pane: the treemap itself, with the lifecycle overlays (empty
 /// state, progress card) floating over it.
 ///
@@ -747,7 +728,6 @@ final class StatusBarViewController: NSViewController {
 
         summary.stringValue = Self.text(
             phase: model.phase,
-            root: model.root,
             progress: model.progress,
             result: model.result,
             volumeCapacity: model.volumeCapacity,
@@ -757,10 +737,15 @@ final class StatusBarViewController: NSViewController {
 
     /// The status line as data, so what it says about a finished volume scan is
     /// a unit test rather than a screenshot. `nil` means "leave what is there" —
-    /// a terminal phase with no tree yet.
+    /// a terminal phase with no result yet.
+    ///
+    /// A terminal phase is described entirely by its ``ScanResult``: the tree it
+    /// carries, and the file and folder tallies the scan folded before handing
+    /// it over. `volumeCapacity` stays a parameter of its own because it is a
+    /// fact about the volume rather than about the scan, and the app holds it
+    /// from `.started` onward.
     static func text(
         phase: ScanPhase,
-        root: ScanNode?,
         progress: ProgressSnapshot?,
         result: ScanResult?,
         volumeCapacity: VolumeCapacity?,
@@ -772,8 +757,15 @@ final class StatusBarViewController: NSViewController {
         case .scanning:
             return "Scanning  ·  \(formatter.bytes(progress?.attributedDiskBytes ?? 0))  ·  \(formatter.count(progress?.filesSeen ?? 0)) files  ·  \(formatter.count(progress?.directoriesSeen ?? 0)) folders"
         case .completed, .cancelled:
-            guard let root = root else { return nil }
-            let counts = VisibleTreeCounts.totals(in: root)
+            // Production always has one here: the phase is set from the
+            // terminal event that carries the result.
+            guard let result = result else { return nil }
+            let root = result.root
+            // Read, not walked. These were folded on the scan's own thread; the
+            // status line is rebuilt whenever the presentation model changes,
+            // and a whole-tree walk per rebuild is not something the main actor
+            // can afford at two million nodes.
+            let counts = result.visibleTotals
             // **The reconciliation line** (ticket 13), and it lives here rather
             // than in the inspector because it is a statement about the scan
             // and not about the item the user happens to have selected. It is
@@ -797,10 +789,10 @@ final class StatusBarViewController: NSViewController {
                 pieces.append("Capacity \(formatter.bytes(capacity.totalBytes))")
                 pieces.append("Free \(formatter.bytes(capacity.availableBytes))")
             }
-            if let result = result, result.errors.total > 0 {
+            if result.errors.total > 0 {
                 pieces.append("\(formatter.count(Int64(result.errors.total))) errors")
             }
-            if let result = result, result.exclusions.total > 0 {
+            if result.exclusions.total > 0 {
                 pieces.append("\(formatter.count(Int64(result.exclusions.total))) excluded")
             }
             if phase == .cancelled { pieces.insert("● Incomplete — scan cancelled", at: 0) }
@@ -877,7 +869,12 @@ final class WorkspaceSplitViewController: NSSplitViewController, FileActionRespo
     let selectionModel = SelectionModel()
     let workspaceActions: WorkspaceActing
     private let contentBuilder: InspectorContentBuilder
-    var onModelChange: (() -> Void)?
+    /// Fired when the **scan presentation model** changes — a new phase, a new
+    /// tree, new progress. Deliberately *not* fired for a selection: nothing
+    /// the status bar shows depends on which row is picked, and calling it from
+    /// `selectionDidChange` is what used to rebuild the whole status line on
+    /// every click.
+    var onScanModelChange: (() -> Void)?
     var onChooseRequest: (() -> Void)?
     private var displayedRoot: ScanNode?
 
@@ -1045,7 +1042,6 @@ final class WorkspaceSplitViewController: NSSplitViewController, FileActionRespo
     private func selectionDidChange(_ change: SelectionChange) {
         refreshInspector()
         treemapViewController.showNoRectangleNote(for: change.selection)
-        onModelChange?()
     }
 
     private func refreshInspector() {
@@ -1081,7 +1077,7 @@ final class WorkspaceSplitViewController: NSSplitViewController, FileActionRespo
         treemapViewController.treemapView.setRoot(model.root)
         treemapViewController.show(model.phase, progress: model.progress, formatter: formatter)
         refreshInspector()
-        onModelChange?()
+        onScanModelChange?()
     }
 }
 
