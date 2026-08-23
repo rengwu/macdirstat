@@ -66,6 +66,89 @@ final class DisplayFormattingTests: XCTestCase {
             XCTAssertFalse(text.contains("bytes"), text)
         }
     }
+
+    /// One instance now keeps its formatters instead of building them per call.
+    /// Reuse is only correct if the second answer equals the first, so this
+    /// asks each method twice and interleaves the three configurations: a
+    /// formatter that leaked `usesSignificantDigits` or a fraction-digit
+    /// setting into a sibling would answer differently the second time.
+    func test_repeatedAndInterleavedCallsAnswerIdentically() {
+        let formatter = DisplayFormatter(locale: enUS)
+
+        for _ in 0..<3 {
+            XCTAssertEqual(formatter.count(1_234_567), "1,234,567")
+            XCTAssertEqual(formatter.bytes(1_536), "1.50 KiB")
+            XCTAssertEqual(formatter.percentage(12.34), "12.3%")
+            XCTAssertEqual(formatter.exactBytes(1_234_567), "1,234,567 bytes")
+            XCTAssertEqual(formatter.bytes(1_023), "1,023 bytes")
+            XCTAssertEqual(formatter.percentage(100), "100.0%")
+        }
+    }
+
+    /// The value facade is copied on every `init` that takes one — the window
+    /// controller builds one and hands it to four view controllers. A copy must
+    /// format exactly as its original, and neither may disturb the other.
+    func test_copiesOfTheFacadeFormatLikeTheirOriginal() {
+        let original = DisplayFormatter(locale: enUS)
+        let copy = original
+
+        XCTAssertEqual(copy.locale, original.locale)
+        XCTAssertEqual(copy.bytes(1_536), original.bytes(1_536))
+        XCTAssertEqual(copy.count(1_234_567), original.count(1_234_567))
+        XCTAssertEqual(copy.percentage(12.34), original.percentage(12.34))
+        // Reading through the copy must not change what the original says.
+        XCTAssertEqual(original.bytes(1_536), "1.50 KiB")
+    }
+
+    /// Shared formatters must be per instance and never process-global: the
+    /// tests below hold two locales at once, and so could a future window.
+    func test_twoInstancesKeepTheirOwnLocales() {
+        let american = DisplayFormatter(locale: enUS)
+        let german = DisplayFormatter(locale: deDE)
+
+        for _ in 0..<3 {
+            XCTAssertEqual(american.bytes(1_536), "1.50 KiB")
+            XCTAssertEqual(german.bytes(1_536), "1,50 KiB")
+            XCTAssertEqual(american.count(1_234_567), "1,234,567")
+            XCTAssertEqual(german.count(1_234_567), "1.234.567")
+            XCTAssertEqual(american.percentage(12.34), "12.3%")
+            XCTAssertEqual(german.percentage(12.34), "12,3%")
+        }
+    }
+
+    /// The integer path must stay at zero fraction digits and the significant
+    /// path at three significant digits, whichever ran first.
+    func test_theIntegerAndSignificantConfigurationsStaySeparate() {
+        let formatter = DisplayFormatter(locale: enUS)
+
+        // 1 GiB exactly: significant through `bytes`, exact through `count`.
+        XCTAssertEqual(formatter.bytes(1_073_741_824), "1.00 GiB")
+        XCTAssertEqual(formatter.count(1_073_741_824), "1,073,741,824")
+        XCTAssertEqual(formatter.bytes(1_073_741_824), "1.00 GiB")
+        // A count is never abbreviated to three figures.
+        XCTAssertEqual(formatter.count(999_999), "999,999")
+        XCTAssertEqual(formatter.exactBytes(1_000), "1,000 bytes")
+    }
+
+    /// The boundaries where a shared formatter would show first: the carry that
+    /// crosses a unit, and the half-up tenth in a percentage.
+    func test_boundaryRoundingAtUnitAndTenthEdges() {
+        let formatter = DisplayFormatter(locale: enUS)
+
+        XCTAssertEqual(formatter.bytes(1_023), "1,023 bytes")
+        XCTAssertEqual(formatter.bytes(1_024), "1.00 KiB")
+        // Three significant digits, so the last KiB below a MiB reads 1,020.
+        XCTAssertEqual(formatter.bytes(1_048_575), "1,020 KiB")
+        XCTAssertEqual(formatter.bytes(1_048_576), "1.00 MiB")
+
+        XCTAssertEqual(formatter.percentage(0.05), "0.1%")
+        XCTAssertEqual(formatter.percentage(0.14), "0.1%")
+        XCTAssertEqual(formatter.percentage(0.15), "0.2%")
+        XCTAssertEqual(formatter.percentage(99.94), "99.9%")
+        XCTAssertEqual(formatter.percentage(99.95), "100.0%")
+        XCTAssertEqual(formatter.percentage(101), "100.0%")
+        XCTAssertEqual(formatter.percentage(-1), "0%")
+    }
 }
 
 /// The status line, as data (ticket 13).

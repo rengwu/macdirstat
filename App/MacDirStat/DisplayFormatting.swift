@@ -2,13 +2,23 @@ import Foundation
 
 /// All user-facing numeric formatting. `ByteCountFormatter` is intentionally
 /// absent because it does not emit the IEC labels fixed by the specification.
+///
+/// The three `NumberFormatter`s each instance needs are built once, in
+/// ``Storage``, and never reconfigured afterwards. Building one per call was
+/// measurable: these methods run per tree cell, per progress tick and per
+/// aggregate treemap label, and a Foundation formatter is not cheap to make.
+/// Reuse is only safe because no formatting method mutates one — a formatter
+/// that is configured in place per call cannot be shared, which is why the
+/// three configurations live in three formatters rather than one.
 struct DisplayFormatter {
     private static let units = ["bytes", "KiB", "MiB", "GiB", "TiB", "PiB"]
 
     let locale: Locale
+    private let storage: Storage
 
     init(locale: Locale = .current) {
         self.locale = locale
+        self.storage = Storage(locale: locale)
     }
 
     func bytes(_ byteCount: Int64) -> String {
@@ -46,11 +56,7 @@ struct DisplayFormatter {
         if clamped == 0 { return "0%" }
         if clamped > 0, clamped < 0.05 { return "< 0.1%" }
 
-        let formatter = decimalFormatter()
-        formatter.minimumFractionDigits = 1
-        formatter.maximumFractionDigits = 1
-        formatter.roundingMode = .halfUp
-        return "\(formatter.string(from: NSNumber(value: clamped)) ?? "0.0")%"
+        return "\(storage.percentage.string(from: NSNumber(value: clamped)) ?? "0.0")%"
     }
 
     func share(childBytes: Int64, parentBytes: Int64) -> String {
@@ -74,28 +80,46 @@ struct DisplayFormatter {
     }
 
     private func integer(_ value: Int64) -> String {
-        let formatter = decimalFormatter()
-        formatter.minimumFractionDigits = 0
-        formatter.maximumFractionDigits = 0
-        formatter.usesGroupingSeparator = true
-        return formatter.string(from: NSNumber(value: value)) ?? String(value)
+        storage.integer.string(from: NSNumber(value: value)) ?? String(value)
     }
 
     private func significant(_ value: Double) -> String {
-        let formatter = decimalFormatter()
-        formatter.usesSignificantDigits = true
-        formatter.minimumSignificantDigits = 3
-        formatter.maximumSignificantDigits = 3
-        formatter.usesGroupingSeparator = true
-        formatter.roundingMode = .halfUp
-        return formatter.string(from: NSNumber(value: value)) ?? String(value)
+        storage.significant.string(from: NSNumber(value: value)) ?? String(value)
     }
 
-    private func decimalFormatter() -> NumberFormatter {
-        let formatter = NumberFormatter()
-        formatter.locale = locale
-        formatter.numberStyle = .decimal
-        formatter.generatesDecimalNumbers = true
-        return formatter
+    /// The three formatters, held by reference so that copying the value facade
+    /// — which happens on every `init` a view controller takes — shares them
+    /// instead of rebuilding them.
+    private final class Storage {
+        let integer: NumberFormatter
+        let significant: NumberFormatter
+        let percentage: NumberFormatter
+
+        init(locale: Locale) {
+            integer = Storage.decimal(locale: locale)
+            integer.minimumFractionDigits = 0
+            integer.maximumFractionDigits = 0
+            integer.usesGroupingSeparator = true
+
+            significant = Storage.decimal(locale: locale)
+            significant.usesSignificantDigits = true
+            significant.minimumSignificantDigits = 3
+            significant.maximumSignificantDigits = 3
+            significant.usesGroupingSeparator = true
+            significant.roundingMode = .halfUp
+
+            percentage = Storage.decimal(locale: locale)
+            percentage.minimumFractionDigits = 1
+            percentage.maximumFractionDigits = 1
+            percentage.roundingMode = .halfUp
+        }
+
+        private static func decimal(locale: Locale) -> NumberFormatter {
+            let formatter = NumberFormatter()
+            formatter.locale = locale
+            formatter.numberStyle = .decimal
+            formatter.generatesDecimalNumbers = true
+            return formatter
+        }
     }
 }
