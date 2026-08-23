@@ -83,10 +83,22 @@ final class BoxBudgetTests: XCTestCase {
 
     func testABudgetedWalkReadsFarLessOfTheTree() {
         let capped = TreemapLayout.layout(tree: wide, viewport: large, budget: .boxes(400))
-        // The cost that matters is the children read, not the nodes that exist:
-        // a region left unopened is never asked for its contents.
+        let uncapped = TreemapLayout.layout(tree: wide, viewport: large)
+
+        // The cost that matters is the children read, not the nodes that
+        // exist: a region left unopened is never asked for its contents. So
+        // the comparison is against the same walk without a cap, not against a
+        // fraction of the tree — a directory the cap *does* let through is read
+        // in full, because folding its tail still has to see the tail. On this
+        // fixture the cap opens 125 of 259 directories and reads 2,226 of
+        // 5,442 children; 82 leaf directories of 24 files account for 1,968 of
+        // them on their own, so no constant fraction of the node count is a
+        // meaningful bound here.
         XCTAssertLessThan(
-            capped.statistics.preparedChildCount, capped.statistics.placedNodeCount / 3
+            capped.statistics.preparedChildCount, uncapped.statistics.preparedChildCount / 2
+        )
+        XCTAssertLessThan(
+            capped.statistics.visitedDirectoryCount, uncapped.statistics.visitedDirectoryCount / 2
         )
         XCTAssertLessThan(capped.statistics.visitedDirectoryCount, 400)
     }
