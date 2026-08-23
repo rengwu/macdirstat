@@ -118,11 +118,17 @@ struct InspectorContentBuilder {
             rows.append(.init(label: "Content length", value: length))
         }
         if node.isDirectoryLike {
-            let contents = SubtreeCounts.scannerCounts(of: node)
+            // **Scanner semantics, both halves.** A package's internals count
+            // here, because "Contains" is asking what is inside this item
+            // (ticket 01, decision 10) — which is exactly where this parts
+            // company with the tree's Items column. Both numbers are read from
+            // the node: `fileCount` is maintained live by the scan, and the
+            // folder tally is folded before the tree is published, so selecting
+            // a large directory no longer walks it.
             rows.append(
                 .init(
                     label: "Contains",
-                    value: "\(formatter.count(contents.files)) files · \(formatter.count(contents.folders)) folders"
+                    value: "\(formatter.count(node.fileCount)) files · \(formatter.count(Int64(node.folderDescendantCount))) folders"
                 )
             )
         }
@@ -530,27 +536,5 @@ struct InspectorContentBuilder {
             url.appendPathComponent(component)
         }
         return url.path
-    }
-}
-
-/// Subtree tallies the scanner keeps only half of.
-///
-/// `ScanNode.fileCount` is maintained live during the scan; a folder count is
-/// not, so the inspector's "Contains" row walks for it. That walk is O(subtree)
-/// and runs once per selection change on an in-memory frozen tree — never on
-/// the scan's hot path.
-enum SubtreeCounts {
-    /// The **scanner's** numbers, not the tree's: a package's internals count
-    /// here, because "Contains" is asking what is inside this item (ticket 01,
-    /// decision 10). The status bar's tally deliberately answers a different
-    /// question.
-    static func scannerCounts(of node: ScanNode) -> (files: Int64, folders: Int64) {
-        var folders: Int64 = 0
-        var stack = node.children
-        while let current = stack.popLast() {
-            if current.isDirectoryLike { folders += 1 }
-            stack.append(contentsOf: current.children)
-        }
-        return (node.fileCount, folders)
     }
 }

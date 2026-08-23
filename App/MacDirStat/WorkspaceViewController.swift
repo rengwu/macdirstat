@@ -252,8 +252,11 @@ final class DirectoryTreeViewController: NSViewController, NSOutlineViewDataSour
         case .size:
             cell.textField?.stringValue = formatter.bytes(node.subtreeDiskBytes)
         case .items:
+            // Read, not walked. The count was folded once on the scan's own
+            // thread before the tree was published, so a wide folder paints its
+            // rows without re-counting a subtree for each of them.
             cell.textField?.stringValue = node.isDirectoryLike
-                ? formatter.count(Int64(VisibleTreeCounts.countItems(beneath: node)))
+                ? formatter.count(Int64(node.presentedDescendantCount))
                 : "—"
         case .percent:
             break
@@ -288,8 +291,8 @@ final class DirectoryTreeViewController: NSViewController, NSOutlineViewDataSour
                 if lhs.subtreeDiskBytes == rhs.subtreeDiskBytes { return NameOrder.precedes(lhs.name, rhs.name) }
                 return sortAscending ? lhs.subtreeDiskBytes < rhs.subtreeDiskBytes : lhs.subtreeDiskBytes > rhs.subtreeDiskBytes
             case .items:
-                let left = VisibleTreeCounts.countItems(beneath: lhs)
-                let right = VisibleTreeCounts.countItems(beneath: rhs)
+                let left = lhs.presentedDescendantCount
+                let right = rhs.presentedDescendantCount
                 if left == right { return NameOrder.precedes(lhs.name, rhs.name) }
                 return sortAscending ? left < right : left > right
             }
@@ -391,16 +394,6 @@ private final class PercentTableCellView: NSTableCellView {
 }
 
 enum VisibleTreeCounts {
-    static func countItems(beneath node: ScanNode) -> Int {
-        var count = 0
-        var stack = node.children
-        while let current = stack.popLast() {
-            count += 1
-            if current.kind != .package { stack.append(contentsOf: current.children) }
-        }
-        return count
-    }
-
     static func totals(in root: ScanNode) -> (files: Int, folders: Int) {
         var files = 0
         var folders = 0

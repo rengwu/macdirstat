@@ -30,6 +30,7 @@
 		AB000000000000000000B019 /* TreemapViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F01E /* TreemapViewTests.swift */; };
 		AB000000000000000000B030 /* TreemapThreadingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F030 /* TreemapThreadingTests.swift */; };
 		AB000000000000000000B040 /* PublishedTreeIntegrityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F040 /* PublishedTreeIntegrityTests.swift */; };
+		AB000000000000000000B050 /* TreeCountConsumerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F050 /* TreeCountConsumerTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -68,6 +69,7 @@
 		AB000000000000000000F01E /* TreemapViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TreemapViewTests.swift; sourceTree = "<group>"; };
 		AB000000000000000000F030 /* TreemapThreadingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TreemapThreadingTests.swift; sourceTree = "<group>"; };
 		AB000000000000000000F040 /* PublishedTreeIntegrityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PublishedTreeIntegrityTests.swift; sourceTree = "<group>"; };
+		AB000000000000000000F050 /* TreeCountConsumerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TreeCountConsumerTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -148,6 +150,7 @@
 				AB000000000000000000F01E /* TreemapViewTests.swift */,
 				AB000000000000000000F030 /* TreemapThreadingTests.swift */,
 				AB000000000000000000F040 /* PublishedTreeIntegrityTests.swift */,
+				AB000000000000000000F050 /* TreeCountConsumerTests.swift */,
 				AB000000000000000000F007 /* MacDirStatScaffoldTests.swift */,
 			);
 			path = MacDirStatTests;
@@ -291,6 +294,7 @@
 				AB000000000000000000B019 /* TreemapViewTests.swift in Sources */,
 				AB000000000000000000B030 /* TreemapThreadingTests.swift in Sources */,
 				AB000000000000000000B040 /* PublishedTreeIntegrityTests.swift in Sources */,
+				AB000000000000000000B050 /* TreeCountConsumerTests.swift in Sources */,
 				AB000000000000000000B006 /* MacDirStatScaffoldTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
