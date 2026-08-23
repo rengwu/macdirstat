@@ -476,10 +476,28 @@ final class TreemapView: NSView {
             return
         }
 
+        let textRect = NSRect(x: rect.minX + 4, y: rect.minY + 3, width: rect.width - 8, height: 14)
+        (text as NSString).draw(
+            with: textRect, options: [.usesLineFragmentOrigin], attributes: Self.labelAttributes
+        )
+    }
+
+    /// Every label draws with the same font, halo and truncation: none of it
+    /// varies by node or by frame, so building a paragraph style and an
+    /// attributes dictionary per labelled box was pure per-repaint garbage.
+    ///
+    /// The label colours are fixed values rather than dynamic system ones, so
+    /// this does not need rebuilding when the appearance changes. `TreemapView`
+    /// is main-actor isolated and so is this static, which is what keeps the
+    /// AppKit objects in it off other threads; nothing mutates the paragraph
+    /// style after it is stored here.
+    private static let labelAttributes: [NSAttributedString.Key: Any] = {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingTail
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: CGFloat(TreemapMetrics.labelFontSizePoints), weight: .semibold),
+        return [
+            .font: NSFont.systemFont(
+                ofSize: CGFloat(TreemapMetrics.labelFontSizePoints), weight: .semibold
+            ),
             .foregroundColor: TreemapChrome.labelForeground,
             // A negative stroke width fills *and* strokes, which is the halo
             // §6.3 asks for in one pass.
@@ -487,9 +505,7 @@ final class TreemapView: NSView {
             .strokeWidth: -3.0,
             .paragraphStyle: paragraph,
         ]
-        let textRect = NSRect(x: rect.minX + 4, y: rect.minY + 3, width: rect.width - 8, height: 14)
-        (text as NSString).draw(with: textRect, options: [.usesLineFragmentOrigin], attributes: attributes)
-    }
+    }()
 
     // MARK: - Hit testing (spec §6.4)
 
