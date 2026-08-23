@@ -45,6 +45,53 @@ final class WorkspaceOutlineView: NSOutlineView {
     }
 }
 
+/// The sorted child arrays the outline view is currently asking about,
+/// memoised per node.
+///
+/// **Why this can exist at all.** The scan tree is published once, with the
+/// terminal event, and is immutable from that moment. A sorted array of a
+/// node's children can therefore be computed once and handed back for as long
+/// as the root and the sort descriptor stand.
+///
+/// **Why it has to.** `NSOutlineView` asks for children one index at a time, so
+/// a directory with `N` children used to pay `N` complete `O(N log N)` sorts
+/// while its rows were materialised — and the count query paid another one just
+/// to read `.count`.
+///
+/// Only nodes AppKit actually asks about get an entry: nothing pre-sorts or
+/// pre-caches the tree. Entries key on node identity and are dropped wholesale
+/// when the root or the sort descriptor changes, so a cached array can never
+/// outlive the tree it came from.
+@MainActor
+final class SortedChildrenCache {
+    private var entries: [ObjectIdentifier: [ScanNode]] = [:]
+    /// How many arrays this cache has actually sorted.
+    ///
+    /// A diagnostic, and the only honest way to test the claim: "each requested
+    /// node is sorted at most once per sort configuration" is a statement about
+    /// work done, and asserting it with a stopwatch would be flaky on every
+    /// machine but the one it was written on. Monotonic — invalidation does not
+    /// reset it — so a test can prove a *re*-sort happened.
+    private(set) var misses = 0
+
+    /// Nodes currently held. Zero after an invalidation, which is what "does
+    /// not retain an obsolete root" means in practice.
+    var entryCount: Int { entries.count }
+
+    func children(of node: ScanNode, orderedBy precedes: (ScanNode, ScanNode) -> Bool) -> [ScanNode] {
+        let key = ObjectIdentifier(node)
+        if let cached = entries[key] { return cached }
+        misses += 1
+        let sorted = node.children.sorted(by: precedes)
+        entries[key] = sorted
+        return sorted
+    }
+
+    func removeAll() {
+        entries.removeAll()
+    }
+}
+
 @MainActor
 final class DirectoryTreeViewController: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate {
     let outlineView = WorkspaceOutlineView()
@@ -52,6 +99,10 @@ final class DirectoryTreeViewController: NSViewController, NSOutlineViewDataSour
     private var root: ScanNode?
     private var sortColumn: TreeColumn = .size
     private var sortAscending = false
+    /// The sorted child arrays AppKit is currently asking about. Internal so
+    /// the tests can read its miss counter; nothing outside this target has a
+    /// reason to touch it.
+    let childOrder = SortedChildrenCache()
     private var isApplyingSharedSelection = false
 
     /// The one shared selection (spec §7.2). The tree writes it when a row is
@@ -107,6 +158,9 @@ final class DirectoryTreeViewController: NSViewController, NSOutlineViewDataSour
 
     func setRoot(_ root: ScanNode?) {
         self.root = root
+        // Every cached array holds children of the tree that is going away.
+        // Nothing may outlive the root it was sorted from.
+        childOrder.removeAll()
         outlineView.reloadData()
         if root != nil { outlineView.expandItem(root) }
         reapplySharedSelection()
@@ -210,12 +264,16 @@ final class DirectoryTreeViewController: NSViewController, NSOutlineViewDataSour
     func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
         if item == nil { return root == nil ? 0 : 1 }
         guard let node = item as? ScanNode else { return 0 }
-        return sortedChildren(of: node).count
+        // How many children a node has does not depend on the order they are
+        // in, and this is asked once per directory the outline view opens.
+        // Sorting to read `.count` was a whole `O(N log N)` for a number the
+        // array already knows.
+        return node.children.count
     }
 
     func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
         if item == nil { return root as Any }
-        return sortedChildren(of: item as! ScanNode)[index]
+        return childOrder.children(of: item as! ScanNode, orderedBy: precedes)[index]
     }
 
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
@@ -270,32 +328,38 @@ final class DirectoryTreeViewController: NSViewController, NSOutlineViewDataSour
               let column = TreeColumn(rawValue: key) else { return }
         sortColumn = column
         sortAscending = descriptor.ascending
+        // Every cached order was computed for the descriptor that just went
+        // away. One cache for the controller's current descriptor is smaller
+        // and simpler than keying every entry by (node, column, direction),
+        // and the user changes sort far less often than the outline view asks
+        // for a row.
+        childOrder.removeAll()
         outlineView.reloadData()
     }
 
+    /// The row order for the active column and direction.
+    ///
     /// Names are compared with ``NameOrder/precedes(_:_:)`` — the engine's own
     /// order, and the treemap's (spec §6.1) — rather than with `String <`, so a
     /// row and the box it is selected with never disagree about which of two
-    /// siblings comes first.
-    private func sortedChildren(of node: ScanNode) -> [ScanNode] {
-        node.children.sorted { lhs, rhs in
-            switch sortColumn {
-            case .name:
-                return sortAscending
-                    ? NameOrder.precedes(lhs.name, rhs.name)
-                    : NameOrder.precedes(rhs.name, lhs.name)
-            case .size:
-                if lhs.subtreeDiskBytes == rhs.subtreeDiskBytes { return NameOrder.precedes(lhs.name, rhs.name) }
-                return sortAscending ? lhs.subtreeDiskBytes < rhs.subtreeDiskBytes : lhs.subtreeDiskBytes > rhs.subtreeDiskBytes
-            case .percent:
-                if lhs.subtreeDiskBytes == rhs.subtreeDiskBytes { return NameOrder.precedes(lhs.name, rhs.name) }
-                return sortAscending ? lhs.subtreeDiskBytes < rhs.subtreeDiskBytes : lhs.subtreeDiskBytes > rhs.subtreeDiskBytes
-            case .items:
-                let left = lhs.presentedDescendantCount
-                let right = rhs.presentedDescendantCount
-                if left == right { return NameOrder.precedes(lhs.name, rhs.name) }
-                return sortAscending ? left < right : left > right
-            }
+    /// siblings comes first. That is also why every other column falls back to
+    /// it on a tie instead of to a localized comparison.
+    private func precedes(_ lhs: ScanNode, _ rhs: ScanNode) -> Bool {
+        switch sortColumn {
+        case .name:
+            return sortAscending
+                ? NameOrder.precedes(lhs.name, rhs.name)
+                : NameOrder.precedes(rhs.name, lhs.name)
+        case .size, .percent:
+            // Percent is size, divided by a constant per parent: the same
+            // order, and deliberately the same code.
+            if lhs.subtreeDiskBytes == rhs.subtreeDiskBytes { return NameOrder.precedes(lhs.name, rhs.name) }
+            return sortAscending ? lhs.subtreeDiskBytes < rhs.subtreeDiskBytes : lhs.subtreeDiskBytes > rhs.subtreeDiskBytes
+        case .items:
+            let left = lhs.presentedDescendantCount
+            let right = rhs.presentedDescendantCount
+            if left == right { return NameOrder.precedes(lhs.name, rhs.name) }
+            return sortAscending ? left < right : left > right
         }
     }
 
