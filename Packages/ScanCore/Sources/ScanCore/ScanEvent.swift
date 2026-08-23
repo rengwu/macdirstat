@@ -90,6 +90,14 @@ public struct ScanResult: Sendable {
     /// What was skipped on purpose, counted by reason (spec §3.4, §3.5). Not
     /// errors — the tree is still Exact.
     public let exclusions: ExclusionSummary
+    /// The root's presented file and folder tallies, folded on the scan's own
+    /// thread while the tree was finalized (§7.3).
+    ///
+    /// They travel with the result rather than being recomputed because the
+    /// status line is rebuilt whenever the presentation model changes, and a
+    /// whole-tree walk on the main actor per rebuild is what made selecting a
+    /// large root stall.
+    public let visibleTotals: VisibleTreeTotals
     /// Volume scans only, reported separately from any attributed byte count.
     public let volumeCapacity: VolumeCapacity?
     public let elapsed: TimeInterval
@@ -100,6 +108,7 @@ public struct ScanResult: Sendable {
         completeness: Completeness,
         errors: ErrorSummary = .empty,
         exclusions: ExclusionSummary = .empty,
+        visibleTotals: VisibleTreeTotals = .zero,
         volumeCapacity: VolumeCapacity?,
         elapsed: TimeInterval
     ) {
@@ -108,6 +117,7 @@ public struct ScanResult: Sendable {
         self.completeness = completeness
         self.errors = errors
         self.exclusions = exclusions
+        self.visibleTotals = visibleTotals
         self.volumeCapacity = volumeCapacity
         self.elapsed = elapsed
     }

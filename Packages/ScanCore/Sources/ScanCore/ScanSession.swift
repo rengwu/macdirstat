@@ -124,6 +124,13 @@ final class ScanSession {
 
         let stoppedEarly = traverse()
 
+        // One bounded post-order pass over the tree the walk built, on the
+        // walk's own thread, while nothing else can see it. It writes the
+        // per-node counts the tree and inspector read in O(1) and hands back
+        // the root totals the status line reads, so no pane ever walks a
+        // subtree to answer a question about names.
+        let visibleTotals = TreeCountFinalization.finalize(root)
+
         emitFinalProgress()
         sink.emit(.finished(ScanResult(
             // Cancellation is terminal: once requested, a scan never reports
@@ -135,6 +142,7 @@ final class ScanSession {
             completeness: completeness(stoppedEarly: stoppedEarly),
             errors: diagnostics.errors,
             exclusions: diagnostics.exclusions,
+            visibleTotals: visibleTotals,
             volumeCapacity: volumeCapacity,
             elapsed: max(0, clock.now - startedAt)
         )))

@@ -112,6 +112,41 @@ public final class ScanNode: @unchecked Sendable {
     /// which is exactly when it has an attributed descendant.
     public private(set) var attributedNodeCount: Int
 
+    /// How many entries a view showing this node's subtree would list beneath
+    /// it — **presentation semantics**, which is what the tree's Items column
+    /// means (§7.2).
+    ///
+    /// Every direct child counts as one, and the walk continues into it unless
+    /// it is a package: a package presents as a single collapsed item, so its
+    /// interior contributes nothing to an *ancestor's* Items value. The
+    /// package's own value still describes its own contents — the rule is
+    /// about descending past a package, not about the package row itself.
+    ///
+    /// Names, not bytes. A zero-byte file, an empty directory, a symlink, an
+    /// unreadable entry, a hard-link non-owner and a re-entered directory name
+    /// all count: they are all things a person sees a row for.
+    /// ``attributedNodeCount`` deliberately excludes exactly those, because it
+    /// answers the treemap's question — how many rectangles — and is not a
+    /// substitute for this.
+    ///
+    /// Finalized once, off the main actor, before the tree is published; see
+    /// ``TreeCountFinalization``. It is zero until then, which is safe because
+    /// no reader exists until the terminal event.
+    public private(set) var presentedDescendantCount: Int
+    /// Every directory-like descendant of this node — **scanner semantics**,
+    /// which is what the inspector's "Contains" row means (ticket 01,
+    /// decision 10).
+    ///
+    /// Packages count, *and* the walk continues through them: "Contains" is
+    /// asking what is inside this item, and the inside of an app bundle is
+    /// inside it. That is precisely where this parts company with
+    /// ``presentedDescendantCount``.
+    ///
+    /// Its partner, the file half of that row, is ``fileCount``, which the
+    /// scanner already maintains live. Finalized on the same pass as the count
+    /// above.
+    public private(set) var folderDescendantCount: Int
+
     public private(set) var attribution: Attribution
     public private(set) var readState: ReadState
 
@@ -126,6 +161,8 @@ public final class ScanNode: @unchecked Sendable {
         self.subtreeContentBytes = 0
         self.fileCount = 0
         self.attributedNodeCount = 0
+        self.presentedDescendantCount = 0
+        self.folderDescendantCount = 0
         self.attribution = .owned
         self.readState = .complete
     }
@@ -209,6 +246,20 @@ public final class ScanNode: @unchecked Sendable {
         guard !wasAttributed, subtreeDiskBytes > 0 else { return false }
         attributedNodeCount += 1
         return true
+    }
+
+    /// Writes the two derived subtree counts, once, on the finalization pass
+    /// that runs after traversal and before the tree is published
+    /// (``TreeCountFinalization``).
+    ///
+    /// Deliberately not folded into ``accumulate(diskBytes:contentBytes:files:attributedNodes:)``:
+    /// that walk is driven by leaves that carry bytes, and these counts must
+    /// include the entries it never visits — empty directories, zero-byte
+    /// files, deduplicated names — while stopping at a package boundary the
+    /// byte roll-up has no reason to know about.
+    func finalizeDescendantCounts(presented: Int, folders: Int) {
+        presentedDescendantCount = presented
+        folderDescendantCount = folders
     }
 
     /// Records that this name's bytes were already counted at `owner`. The node
