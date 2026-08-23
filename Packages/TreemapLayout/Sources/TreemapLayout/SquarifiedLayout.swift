@@ -41,17 +41,31 @@ enum SquarifiedLayout {
             let short = free.shortestSide
 
             // Grow the row while the worst aspect ratio in it keeps improving.
+            //
+            // The row's worst ratio is decided by its smallest and its largest
+            // weight (see ``worstAspectRatio``), so the row carries those two
+            // along with its sum instead of being rescanned per candidate. A
+            // candidate's own extrema stay in locals until it is admitted: a
+            // rejected weight must leave no trace in the row it failed to join.
             let rowStart = index
             var rowSum = 0.0
+            var rowSmallest = 0.0
+            var rowLargest = 0.0
             var best = Double.infinity
             while index < weights.count {
-                let candidateSum = rowSum + weights[index]
+                let weight = weights[index]
+                let startsTheRow = index == rowStart
+                let candidateSum = rowSum + weight
+                let candidateSmallest = startsTheRow ? weight : min(rowSmallest, weight)
+                let candidateLargest = startsTheRow ? weight : max(rowLargest, weight)
                 let candidate = worstAspectRatio(
-                    weights: weights, range: rowStart..<(index + 1),
+                    smallestWeight: candidateSmallest, largestWeight: candidateLargest,
                     sum: candidateSum, shortSide: short, scale: scale
                 )
-                if index > rowStart, candidate > best { break }
+                if !startsTheRow, candidate > best { break }
                 rowSum = candidateSum
+                rowSmallest = candidateSmallest
+                rowLargest = candidateLargest
                 best = candidate
                 index += 1
             }
@@ -98,22 +112,35 @@ enum SquarifiedLayout {
 
     /// The worst width-to-height ratio a row would have if laid out at
     /// `thickness = sum × scale / shortSide`. Lower is squarer.
+    ///
+    /// Only two of a row's weights can produce that ratio. At a fixed
+    /// thickness, `max(length / thickness, thickness / length)` grows as a
+    /// rectangle gets longer *and* as it gets shorter, so it peaks at one end
+    /// of the row's range of lengths; length is monotone in weight, so those
+    /// ends are the row's smallest and largest weights. Reading the row for
+    /// them turned a row of `k` entries into `1 + 2 + … + k` ratio evaluations,
+    /// which is why the caller carries them instead.
+    ///
+    /// This is a claim about **values, not positions**. The weights arriving
+    /// here are not sorted: `TreemapLayout.pack` appends the merged aggregate
+    /// last, and a sum of folded children can outweigh the survivors in front
+    /// of it, so `[100, 1, 50]` reaches this file with its minimum in the
+    /// middle. Taking the first and last entries as the extremes would miss it.
     private static func worstAspectRatio(
-        weights: [Double],
-        range: Range<Int>,
+        smallestWeight: Double,
+        largestWeight: Double,
         sum: Double,
         shortSide: Double,
         scale: Double
     ) -> Double {
-        guard !range.isEmpty else { return .infinity }
         let thickness = (sum * scale) / shortSide
         guard thickness > 0 else { return .infinity }
-        var worst = 0.0
-        for i in range {
-            let length = (weights[i] * scale) / thickness
-            guard length > 0 else { return .infinity }
-            worst = max(worst, max(length / thickness, thickness / length))
-        }
-        return worst
+        let shortest = (smallestWeight * scale) / thickness
+        let longest = (largestWeight * scale) / thickness
+        // A length that underflowed to zero would be divided by below. The
+        // smallest weight is where that happens first, but both are checked
+        // rather than reasoned about.
+        guard shortest > 0, longest > 0 else { return .infinity }
+        return max(longest / thickness, thickness / shortest)
     }
 }
