@@ -632,6 +632,92 @@ final class TreemapView: NSView {
         selectionModel?.select(selection, source: .treemap)
     }
 
+    // MARK: - Keyboard navigation (§9.4)
+
+    /// Activated by Return, the way a tree row is.
+    var onActivate: (() -> Void)?
+
+    /// Arrow keys walk the rectangles; Return opens what is selected.
+    ///
+    /// The map published accessibility elements for every rectangle long before
+    /// it could be reached from the keyboard, which left it a mouse-only view
+    /// for anyone driving the app by keyboard without VoiceOver.
+    override func keyDown(with event: NSEvent) {
+        let direction: NavigationDirection?
+        switch event.keyCode {
+        case 123: direction = .left
+        case 124: direction = .right
+        case 125: direction = .down
+        case 126: direction = .up
+        default: direction = nil
+        }
+        if let direction {
+            if moveSelection(direction) { return }
+            return
+        }
+        // 36 is Return, 76 the keypad's — the same pair the tree answers to.
+        if event.keyCode == 36 || event.keyCode == 76 {
+            onActivate?()
+            return
+        }
+        super.keyDown(with: event)
+    }
+
+    enum NavigationDirection {
+        case left, right, up, down
+    }
+
+    /// Moves the shared selection to the nearest rectangle in `direction`.
+    ///
+    /// "Nearest" weighs drift across the axis of travel more heavily than
+    /// distance along it, so pressing Right in a row of boxes walks the row
+    /// instead of darting to whatever happens to be closest in a straight line.
+    /// Returns whether anything moved.
+    @discardableResult
+    func moveSelection(_ direction: NavigationDirection) -> Bool {
+        guard let result = currentLayout() else { return false }
+        let candidates = result.boxes.indices.filter { !result.boxes[$0].isSubdivided }
+        guard !candidates.isEmpty else { return false }
+
+        guard let currentIndex = selectedBoxIndex(in: result) else {
+            // Nothing selected yet: start at the biggest rectangle, which is
+            // the one the eye starts on too.
+            guard let first = candidates.max(by: {
+                result.boxes[$0].frame.width * result.boxes[$0].frame.height
+                    < result.boxes[$1].frame.width * result.boxes[$1].frame.height
+            }), let selection = selection(atBoxIndex: first) else { return false }
+            selectionModel?.select(selection, source: .treemap)
+            return true
+        }
+
+        let origin = center(of: result.boxes[currentIndex].frame)
+        var best: (index: Int, score: Double)?
+        for index in candidates where index != currentIndex {
+            let point = center(of: result.boxes[index].frame)
+            let dx = point.x - origin.x
+            let dy = point.y - origin.y
+            // y grows downward in this view, so "up" is a smaller y.
+            let along: Double
+            let across: Double
+            switch direction {
+            case .left: along = -dx; across = abs(dy)
+            case .right: along = dx; across = abs(dy)
+            case .up: along = -dy; across = abs(dx)
+            case .down: along = dy; across = abs(dx)
+            }
+            guard along > 0.5 else { continue }
+            let score = along + 2 * across
+            if best == nil || score < best!.score { best = (index, score) }
+        }
+        guard let best, let selection = selection(atBoxIndex: best.index) else { return false }
+        selectionModel?.select(selection, source: .treemap)
+        return true
+    }
+
+    private func center(of frame: TreemapRect) -> (x: Double, y: Double) {
+        (frame.x + frame.width / 2, frame.y + frame.height / 2)
+    }
+
     /// Right-click selects first, so the menu always acts on what it points at,
     /// and offers Open and Reveal and only ever those two (ticket 01,
     /// decision 3). An aggregate is not a file, so it gets no menu at all.
@@ -762,12 +848,19 @@ final class TreemapAccessibilityElement: NSAccessibilityElement {
     }
 }
 
-/// The read-only file-action menu, in one place so the tree's context menu, the
-/// treemap's context menu and the main menu cannot drift apart — and so "only
-/// ever those two items" is one assertion (ticket 01, decision 3; §7.1).
+/// The read-only context menu, in one place so the tree's, the treemap's and
+/// the main menu's version cannot drift apart (ticket 01, decision 3; §7.1).
+///
+/// **On the third item.** Decision 3 fixed this menu at Open and Reveal so that
+/// a command which *changes a file* could not arrive here by accident. Copy
+/// Path is a third item and does not weaken that: it reads a path the app
+/// already prints in the detail pane and writes it to the pasteboard, touching
+/// no file. What the decision protects — "nothing here mutates the disk" — is
+/// still exactly true, and is still asserted, item by item, in the tests.
 enum FileActionMenu {
     static let openTitle = "Open"
     static let revealTitle = "Reveal in Finder"
+    static let copyPathTitle = MainMenu.copyPathTitle
 
     static func make() -> NSMenu {
         let menu = NSMenu()
@@ -777,8 +870,15 @@ enum FileActionMenu {
             action: #selector(FileActionResponding.revealSelectedItem(_:)),
             keyEquivalent: ""
         )
+        let copyPath = NSMenuItem(
+            title: copyPathTitle,
+            action: #selector(PathCopying.copySelectedPath(_:)),
+            keyEquivalent: ""
+        )
         menu.addItem(open)
         menu.addItem(reveal)
+        menu.addItem(.separator())
+        menu.addItem(copyPath)
         return menu
     }
 }

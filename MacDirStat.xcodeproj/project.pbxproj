@@ -11,6 +11,8 @@
 		AB000000000000000000B002 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F002 /* AppDelegate.swift */; };
 		AB000000000000000000B003 /* MainWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F003 /* MainWindowController.swift */; };
 		AB000000000000000000B004 /* MainMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F004 /* MainMenu.swift */; };
+		AB000000000000000000B0F2 /* ScanCompletionNotifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F0F2 /* ScanCompletionNotifier.swift */; };
+		AB000000000000000000B0F1 /* Preferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F0F1 /* Preferences.swift */; };
 		AB000000000000000000B006 /* MacDirStatScaffoldTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F007 /* MacDirStatScaffoldTests.swift */; };
 		AB000000000000000000B00A /* ScanCore in Frameworks */ = {isa = PBXBuildFile; productRef = AB000000000000000000EB01 /* ScanCore */; };
 		AB000000000000000000B00B /* TreemapLayout in Frameworks */ = {isa = PBXBuildFile; productRef = AB000000000000000000EB02 /* TreemapLayout */; };
@@ -25,6 +27,7 @@
 		AB000000000000000000B014 /* InspectorContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F019 /* InspectorContent.swift */; };
 		AB000000000000000000B015 /* InspectorViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F01A /* InspectorViewController.swift */; };
 		AB000000000000000000B016 /* WorkspaceTestHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F01B /* WorkspaceTestHarness.swift */; };
+		AB000000000000000000B0F3 /* WorkspaceUXTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F0F3 /* WorkspaceUXTests.swift */; };
 		AB000000000000000000B017 /* InspectorContentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F01C /* InspectorContentTests.swift */; };
 		AB000000000000000000B018 /* SelectionAndActionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F01D /* SelectionAndActionTests.swift */; };
 		AB000000000000000000B019 /* TreemapViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F01E /* TreemapViewTests.swift */; };
@@ -49,6 +52,8 @@
 		AB000000000000000000F002 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		AB000000000000000000F003 /* MainWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainWindowController.swift; sourceTree = "<group>"; };
 		AB000000000000000000F004 /* MainMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainMenu.swift; sourceTree = "<group>"; };
+		AB000000000000000000F0F2 /* ScanCompletionNotifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanCompletionNotifier.swift; sourceTree = "<group>"; };
+		AB000000000000000000F0F1 /* Preferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Preferences.swift; sourceTree = "<group>"; };
 		AB000000000000000000F006 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		AB000000000000000000F007 /* MacDirStatScaffoldTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacDirStatScaffoldTests.swift; sourceTree = "<group>"; };
 		AB000000000000000000F00B /* CI.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = text; path = CI.xctestplan; sourceTree = "<group>"; };
@@ -65,6 +70,7 @@
 		AB000000000000000000F019 /* InspectorContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorContent.swift; sourceTree = "<group>"; };
 		AB000000000000000000F01A /* InspectorViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorViewController.swift; sourceTree = "<group>"; };
 		AB000000000000000000F01B /* WorkspaceTestHarness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceTestHarness.swift; sourceTree = "<group>"; };
+		AB000000000000000000F0F3 /* WorkspaceUXTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceUXTests.swift; sourceTree = "<group>"; };
 		AB000000000000000000F01C /* InspectorContentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorContentTests.swift; sourceTree = "<group>"; };
 		AB000000000000000000F01D /* SelectionAndActionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectionAndActionTests.swift; sourceTree = "<group>"; };
 		AB000000000000000000F01E /* TreemapViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TreemapViewTests.swift; sourceTree = "<group>"; };
@@ -128,6 +134,8 @@
 				AB000000000000000000F002 /* AppDelegate.swift */,
 				AB000000000000000000F003 /* MainWindowController.swift */,
 				AB000000000000000000F004 /* MainMenu.swift */,
+				AB000000000000000000F0F2 /* ScanCompletionNotifier.swift */,
+				AB000000000000000000F0F1 /* Preferences.swift */,
 				AB000000000000000000F011 /* DisplayFormatting.swift */,
 				AB000000000000000000F012 /* SourceChooser.swift */,
 				AB000000000000000000F013 /* ScanPresentationModel.swift */,
@@ -147,6 +155,7 @@
 			isa = PBXGroup;
 			children = (
 				AB000000000000000000F01B /* WorkspaceTestHarness.swift */,
+				AB000000000000000000F0F3 /* WorkspaceUXTests.swift */,
 				AB000000000000000000F01C /* InspectorContentTests.swift */,
 				AB000000000000000000F01D /* SelectionAndActionTests.swift */,
 				AB000000000000000000F01E /* TreemapViewTests.swift */,
@@ -272,6 +281,8 @@
 			files = (
 				AB000000000000000000B002 /* AppDelegate.swift in Sources */,
 				AB000000000000000000B004 /* MainMenu.swift in Sources */,
+				AB000000000000000000B0F2 /* ScanCompletionNotifier.swift in Sources */,
+				AB000000000000000000B0F1 /* Preferences.swift in Sources */,
 				AB000000000000000000B003 /* MainWindowController.swift in Sources */,
 				AB000000000000000000B00C /* DisplayFormatting.swift in Sources */,
 				AB000000000000000000B00D /* SourceChooser.swift in Sources */,
@@ -292,6 +303,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				AB000000000000000000B016 /* WorkspaceTestHarness.swift in Sources */,
+				AB000000000000000000B0F3 /* WorkspaceUXTests.swift in Sources */,
 				AB000000000000000000B017 /* InspectorContentTests.swift in Sources */,
 				AB000000000000000000B018 /* SelectionAndActionTests.swift in Sources */,
 				AB000000000000000000B019 /* TreemapViewTests.swift in Sources */,

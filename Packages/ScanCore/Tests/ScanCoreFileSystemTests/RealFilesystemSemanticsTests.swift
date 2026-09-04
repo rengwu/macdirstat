@@ -53,6 +53,36 @@ final class RealFilesystemSemanticsTests: RealFixtureTestCase {
         XCTAssertEqual(final.currentPathTail, "", "the last snapshot is not still scanning something")
     }
 
+    func test_fastModeMeasuresAPackageAsOneAtomicNode() async throws {
+        let options = ScanOptions(
+            progressInterval: .infinity,
+            packageScanMode: .summarized
+        )
+        let fastEvents = await runProductionScan(root: scanRoot, options: options)
+        let fastResult = try XCTUnwrap(fastEvents.result)
+        let package = try XCTUnwrap(node(fastResult.root, at: "Fixture.app"))
+
+        XCTAssertTrue(package.isPackageSummary)
+        XCTAssertTrue(package.children.isEmpty, "fast mode must not build the app's interior tree")
+        XCTAssertEqual(
+            package.subtreeDiskBytes,
+            blocks("Fixture.app/Contents/Info.plist")
+                + blocks("Fixture.app/Contents/Resources/Sparse.bin")
+        )
+        XCTAssertEqual(
+            package.subtreeContentBytes,
+            manifest.infoPlistBytes + RealFixtureManifest.packageSparseBytes
+        )
+        XCTAssertEqual(package.fileCount, 2)
+        XCTAssertEqual(package.folderDescendantCount, 2)
+        XCTAssertEqual(
+            fastResult.root.folderDescendantCount,
+            Int(manifest.expectedDirectoryCount - 1)
+        )
+        XCTAssertEqual(fastResult.root.subtreeDiskBytes, manifest.expectedAttributedDiskBytes)
+        XCTAssertEqual(fastResult.root.subtreeContentBytes, manifest.expectedAttributedContentBytes)
+    }
+
     func test_aFolderScanReportsNoCapacityAndNoCompletionFraction() async throws {
         try await scan()
 

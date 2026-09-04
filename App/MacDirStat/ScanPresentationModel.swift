@@ -17,6 +17,7 @@ final class ScanPresentationModel {
     private(set) var phase: ScanPhase = .empty
     private(set) var rootURL: URL?
     private(set) var mode: ScanMode = .folder
+    private(set) var packageScanMode: PackageScanMode = .detailed
     private(set) var progress: ProgressSnapshot?
     private(set) var root: ScanNode?
     private(set) var result: ScanResult?
@@ -33,13 +34,18 @@ final class ScanPresentationModel {
         self.scanner = scanner
     }
 
-    func start(root url: URL, mode: ScanMode) {
+    func start(
+        root url: URL,
+        mode: ScanMode,
+        packageScanMode: PackageScanMode = .detailed
+    ) {
         consumingTask?.cancel()
         scanner.cancel()
 
         phase = .scanning
         rootURL = url
         self.mode = mode
+        self.packageScanMode = packageScanMode
         progress = nil
         root = nil
         result = nil
@@ -51,7 +57,10 @@ final class ScanPresentationModel {
             root: url,
             mode: mode,
             probe: FileManagerDirectoryProbe(),
-            options: ScanOptions(progressInterval: Self.progressInterval)
+            options: ScanOptions(
+                progressInterval: Self.progressInterval,
+                packageScanMode: packageScanMode
+            )
         )
 
         consumingTask = Task { [weak self] in

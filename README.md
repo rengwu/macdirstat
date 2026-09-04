@@ -14,6 +14,7 @@ file actions are Open and Reveal.
 | `Packages/ScanCore` | Foundation-only scan engine: traversal, aggregation, cancellation, progress, errors |
 | `Packages/TreemapLayout` | Foundation-only rectangle layout: squarified geometry and the merge rule |
 | `TestPlans/CI.xctestplan` | The one test plan |
+| `Makefile` | Build, run and test tasks — `make help` lists them |
 
 The two packages import Foundation and nothing else — not AppKit, not SwiftUI,
 not even CoreGraphics — so they test headlessly and own their own geometry
@@ -31,25 +32,50 @@ sudo xcode-select -s /Applications/Xcode.app
 
 Deployment floor: **macOS 14**.
 
+## Building and running
+
+`make` wraps the `xcodebuild` invocations; `make help` lists every target.
+Everything builds into `.build/xcode`, which is gitignored.
+
+```sh
+make run      # build the debug app and launch it
+make rerun    # quit a running instance, rebuild, launch again
+make console  # launch in the terminal with its console output attached
+make stop     # quit a running instance
+make release  # build the release app
+```
+
+The window remembers its dividers, column layout, sort order, Fast mode and
+recent folders between launches. To get a first run back:
+
+```sh
+make reset
+```
+
 ## Running the tests
 
-The packages test on their own, headlessly and in about three seconds:
+The packages test on their own, headlessly:
+
+```sh
+make test-packages
+```
+
+Everything, including the app target, runs sequentially so a package failure
+cannot be hidden by a green app test result:
+
+```sh
+make test
+```
+
+The underlying commands, if you would rather run them directly:
 
 ```sh
 swift test --package-path Packages/ScanCore
 swift test --package-path Packages/TreemapLayout
-```
 
-Everything, including the app target:
-
-```sh
 xcodebuild test -project MacDirStat.xcodeproj -scheme MacDirStat-CI \
   -testPlan CI -destination 'platform=macOS'
-```
 
-And to build the app:
-
-```sh
 xcodebuild build -project MacDirStat.xcodeproj -scheme MacDirStat \
   -configuration Release -destination 'platform=macOS'
 ```
@@ -76,6 +102,12 @@ how many bytes the content is; it is carried beside on-disk size and drives
 nothing, so the inspector can explain the visible figure where the two diverge —
 a sparse disk image, a compressed binary, a cloud placeholder. `CONTEXT.md` has
 the full vocabulary.
+
+The source chooser and folder picker also offer **Fast mode**. macOS does not
+publish a reliable recursive size for directories, so the scanner still visits
+the files inside an application bundle, but it requests only size metadata and
+keeps the bundle as one aggregate node. It avoids sorting and materializing the
+often enormous internal app tree while retaining the app's measured total.
 
 ## Design record
 

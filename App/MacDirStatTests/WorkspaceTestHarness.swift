@@ -77,8 +77,12 @@ final class ScannedFixture {
 
     /// A workspace wired to this fixture's already-finished scan, with spies in
     /// place of `NSWorkspace` and the VoiceOver announcer.
+    /// Every fixture workspace gets a store of its own: the persisted facts —
+    /// the sort, the divider, the recents — are per installation, and a test
+    /// that shares them with the next test is a test that depends on order.
     func makeWorkspace(
-        locale: Locale = Locale(identifier: "en_US")
+        locale: Locale = Locale(identifier: "en_US"),
+        preferences: Preferences? = nil
     ) -> (WorkspaceSplitViewController, WorkspaceActionSpy, AnnouncementSpy) {
         let actions = WorkspaceActionSpy()
         let announcer = AnnouncementSpy()
@@ -86,7 +90,8 @@ final class ScannedFixture {
             model: model,
             formatter: DisplayFormatter(locale: locale),
             workspaceActions: actions,
-            announcer: announcer
+            announcer: announcer,
+            preferences: preferences ?? Preferences(store: InMemoryPreferenceStore())
         )
         // Force the whole three-pane hierarchy to load and settle, then hand it
         // the finished scan the way a live scan's terminal event would. The
@@ -215,13 +220,22 @@ let mutationVerbs = [
     "Compress", "Erase", "Empty", "Download", "Write", "Save",
 ]
 
+/// Labels that contain a mutation verb and are nonetheless known not to touch
+/// a file.
+///
+/// Matched **exactly**, never as a substring, which is the point: "Copy" and
+/// "Copy Path" are on the list, and "Copy to Folder…" could never join them by
+/// accident. Everything here writes to the pasteboard or to a text field, and
+/// the pasteboard is not the disk.
+let clipboardLabels: Set<String> = ["Copy", "Cut", "Paste", "Copy Path"]
+
 func assertNoMutationAffordance(
     in labels: [String],
     context: String,
     file: StaticString = #filePath,
     line: UInt = #line
 ) {
-    for label in labels {
+    for label in labels where !clipboardLabels.contains(label) {
         for verb in mutationVerbs {
             XCTAssertFalse(
                 label.localizedCaseInsensitiveContains(verb),

@@ -29,6 +29,9 @@ final class ScanSession {
         /// the visited-directory index: two volume roots may share an inode
         /// number, and skipping one would lose everything only it can reach.
         var isMountPoint: Bool = false
+        /// Fast mode may replace this package's detailed walk with one
+        /// aggregate measurement when the probe supports it.
+        var summarizePackage: Bool = false
         var entries: [EntryMeta] = []
         var cursor: Int = 0
         var listed: Bool = false
@@ -249,6 +252,41 @@ final class ScanSession {
                 continue
             }
 
+            if !stack[top].listed, stack[top].summarizePackage,
+               let summarizer = probe as? any PackageSummarizingProbe {
+                currentPathTail = Self.pathTail(of: stack[top].url)
+                let summary = summarizer.summarizePackage(
+                    stack[top].url,
+                    onVolume: rootVolume,
+                    shouldStop: { [token] in token.isCancelled || Task.isCancelled }
+                )
+
+                if let summary {
+                    attributePackageSummary(stack[top].node, summary)
+                    diagnostics.exclude(.remoteOnlyCloud, count: summary.remoteOnlyItems)
+                    diagnostics.exclude(
+                        .crossedVolumeBoundary,
+                        count: summary.crossedVolumeBoundaries
+                    )
+                    if !summary.isComplete {
+                        recordIncompletePackageSummary(stack[top].node)
+                    }
+                    stack.removeLast()
+                    emitIfDue()
+                    continue
+                }
+
+                // `nil` normally means the lightweight facility was
+                // unavailable, in which case accuracy wins and this package
+                // falls back to the ordinary detailed walk. If cancellation
+                // interrupted the aggregate pass, stop before doing that work
+                // all over again.
+                if isCancellationRequested {
+                    stopAtCancellation(openFrames(stack, deferredMounts))
+                    return true
+                }
+            }
+
             if !stack[top].listed {
                 currentPathTail = Self.pathTail(of: stack[top].url)
                 do {
@@ -320,7 +358,9 @@ final class ScanSession {
                             node: node,
                             url: childURL,
                             identity: meta.fileIdentity,
-                            isMountPoint: isMountPoint
+                            isMountPoint: isMountPoint,
+                            summarizePackage: kind == .package
+                                && request.options.packageScanMode == .summarized
                         )
                         if isMountPoint {
                             deferredMounts.append(frame)
@@ -431,7 +471,40 @@ final class ScanSession {
 
         node.attribute(diskBytes: bytes, contentBytes: contentBytes, isRegularFile: isRegularFile)
 
-        guard bytes > 0 || contentBytes > 0 || isRegularFile else { return }
+        rollUp(
+            from: node,
+            diskBytes: bytes,
+            contentBytes: contentBytes,
+            files: isRegularFile ? 1 : 0
+        )
+    }
+
+    private func attributePackageSummary(_ node: ScanNode, _ summary: PackageSummary) {
+        let bytes = max(0, summary.diskBytes)
+        let contentBytes = max(0, summary.contentBytes)
+        node.attributePackageSummary(
+            diskBytes: bytes,
+            contentBytes: contentBytes,
+            files: summary.fileCount,
+            directories: summary.directoryCount
+        )
+        filesSeen += summary.fileCount
+        directoriesSeen += Int64(summary.directoryCount)
+        rollUp(
+            from: node,
+            diskBytes: bytes,
+            contentBytes: contentBytes,
+            files: summary.fileCount
+        )
+    }
+
+    private func rollUp(
+        from node: ScanNode,
+        diskBytes bytes: Int64,
+        contentBytes: Int64,
+        files: Int64
+    ) {
+        guard bytes > 0 || contentBytes > 0 || files > 0 else { return }
         // Roll up to every ancestor, so each open directory's total is live at
         // every instant (spec §3.1). A deduplicated name rolls up zero bytes —
         // it is still one entry, just not a second copy of the bytes.
@@ -447,11 +520,25 @@ final class ScanSession {
             if current.accumulate(
                 diskBytes: bytes,
                 contentBytes: contentBytes,
-                files: isRegularFile ? 1 : 0,
+                files: files,
                 attributedNodes: newlyAttributed
             ) {
                 newlyAttributed += 1
             }
+            ancestor = current.parent
+        }
+    }
+
+    private func recordIncompletePackageSummary(_ node: ScanNode) {
+        node.markIncomplete()
+        diagnostics.recordError(
+            .unreadableDirectory,
+            at: node,
+            message: "Some items inside this app could not be measured in fast mode."
+        )
+        var ancestor = node.parent
+        while let current = ancestor {
+            current.markIncomplete()
             ancestor = current.parent
         }
     }

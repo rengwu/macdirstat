@@ -128,8 +128,9 @@ struct ScanDiagnostics {
         details.append(ErrorRecord(path: node.pathComponents(), category: category, message: message()))
     }
 
-    mutating func exclude(_ reason: ExclusionReason) {
-        byReason[reason, default: 0] += 1
+    mutating func exclude(_ reason: ExclusionReason, count: Int = 1) {
+        guard count > 0 else { return }
+        byReason[reason, default: 0] += count
     }
 
     var errors: ErrorSummary {

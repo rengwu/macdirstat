@@ -48,3 +48,41 @@ final class SystemAccessibilityAnnouncer: AccessibilityAnnouncing {
         )
     }
 }
+
+/// Putting the selected item's path on the pasteboard.
+///
+/// Deliberately *not* a third case in ``FileActionResponding``: that protocol's
+/// guarantee is that the two file actions are all there are, and this does not
+/// touch a file at all. It reads a path the app already displays and writes it
+/// to the pasteboard — the same thing ⌘C does in any text field.
+@MainActor
+@objc
+protocol PathCopying: AnyObject {
+    @objc func copySelectedPath(_ sender: Any?)
+}
+
+/// Choosing what to scan, from the menu bar rather than the toolbar button.
+@MainActor
+@objc
+protocol ScanSourceChoosing: AnyObject {
+    @objc func chooseScanSource(_ sender: Any?)
+    /// `sender.representedObject` carries the `URL` to scan.
+    @objc func openRecentScan(_ sender: Any?)
+    @objc func clearRecentScans(_ sender: Any?)
+}
+
+/// The one Help item. Named as its own contract for the same reason the
+/// others are: what a menu can send is declared, not discovered.
+@MainActor
+@objc
+protocol ScanHelpPresenting: AnyObject {
+    @objc func showScanHelp(_ sender: Any?)
+}
+
+/// Showing and hiding the detail pane, which can be collapsed and — until this
+/// existed — could not be brought back.
+@MainActor
+@objc
+protocol DetailPaneToggling: AnyObject {
+    @objc func toggleDetailPane(_ sender: Any?)
+}

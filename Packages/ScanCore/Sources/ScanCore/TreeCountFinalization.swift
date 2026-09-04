@@ -98,7 +98,13 @@ enum TreeCountFinalization {
                     // Opening a frame for it would double the walk's traffic on
                     // a tree that is mostly leaves.
                     stack[top].presented += 1
-                    if child.isDirectoryLike { stack[top].folders += 1 }
+                    if child.isDirectoryLike {
+                        // An ordinary leaf has no folder descendants. A fast-
+                        // summarized package is also a leaf in the materialized
+                        // tree, but carries the interior count measured by its
+                        // aggregate pass.
+                        stack[top].folders += 1 + child.folderDescendantCount
+                    }
                     if child.kind == .directory { stack[top].presentedDirectories += 1 }
                 } else {
                     stack.append(Frame(child))

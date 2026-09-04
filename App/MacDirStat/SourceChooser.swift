@@ -1,4 +1,5 @@
 import AppKit
+import ScanCore
 
 enum SourceEligibility: Equatable {
     case eligible
@@ -128,10 +129,23 @@ final class SourceChooserViewController: NSViewController {
 
     private let choices: [SourceChoice]
     private var indexedChoices: [Int: SourceChoice] = [:]
+    private let fastModeCheckbox = NSButton(
+        checkboxWithTitle: "Fast mode — summarize app bundles",
+        target: nil,
+        action: nil
+    )
 
-    init(choices: [SourceChoice]) {
+    var packageScanMode: PackageScanMode {
+        fastModeCheckbox.state == .on ? .summarized : .detailed
+    }
+
+    /// `packageScanMode` seeds the Fast mode checkbox from what the user
+    /// chose last time, rather than asking the same question from scratch on
+    /// every scan.
+    init(choices: [SourceChoice], packageScanMode: PackageScanMode = .detailed) {
         self.choices = choices
         super.init(nibName: nil, bundle: nil)
+        fastModeCheckbox.state = packageScanMode == .summarized ? .on : .off
         preferredContentSize = NSSize(width: 560, height: 360)
     }
 
@@ -202,7 +216,10 @@ final class SourceChooserViewController: NSViewController {
         buttons.orientation = .horizontal
         buttons.spacing = 8
 
-        [title, scrollView, buttons].forEach {
+        fastModeCheckbox.toolTip =
+            "Measure each app as one item without building its internal file tree."
+
+        [title, scrollView, fastModeCheckbox, buttons].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview($0)
         }
@@ -212,7 +229,9 @@ final class SourceChooserViewController: NSViewController {
             scrollView.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 12),
             scrollView.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12),
             scrollView.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
-            buttons.topAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: 12),
+            fastModeCheckbox.topAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: 10),
+            fastModeCheckbox.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
+            buttons.topAnchor.constraint(equalTo: fastModeCheckbox.bottomAnchor, constant: 10),
             buttons.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
             buttons.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -16),
             scrollView.heightAnchor.constraint(greaterThanOrEqualToConstant: 220),

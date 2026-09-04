@@ -94,6 +94,52 @@ final class SortedChildrenCache {
 
 @MainActor
 final class DirectoryTreeViewController: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate {
+    /// The four columns, in order, with the width each opens at and the width
+    /// it will not go below.
+    ///
+    /// The pane is sized from this table rather than the other way round —
+    /// see ``minimumPaneWidth`` and ``designPaneWidth`` — so the tree pane
+    /// shows all four columns at every width it can be dragged to. Columns
+    /// wider than the pane they live in are columns nobody can read.
+    static let columnLayout: [(column: TreeColumn, width: CGFloat, minWidth: CGFloat)] = [
+        (.name, 190, 100),
+        (.size, 78, 66),
+        (.percent, 82, 72),
+        (.items, 62, 50),
+    ]
+
+    /// A dense row, from the prototype's 24 px `.trow` minus the padding a
+    /// table draws for itself. The pane's job is to fit as many rows on screen
+    /// as it can; nothing in a row needs more than this.
+    static let rowHeight: CGFloat = 20
+    static let intercellWidth: CGFloat = 4
+
+    /// What the table spends beside its columns: one intercell gap per column,
+    /// and the edge inset the full-width style draws inside. Measured from a
+    /// laid-out table, and held to it by
+    /// `test_atItsFloorTheTreeStillShowsEveryColumn` — a pane sized from a
+    /// guess is a pane with a column hanging off its right edge.
+    static let tableChromeWidth: CGFloat = intercellWidth * CGFloat(columnLayout.count) + 8
+
+    private static func paneWidth(for widths: [CGFloat]) -> CGFloat {
+        widths.reduce(0, +) + tableChromeWidth
+    }
+
+    /// The narrowest pane that still shows every column.
+    ///
+    /// Only the name column follows the pane (`firstColumnOnlyAutoresizing`),
+    /// so the floor is the name at *its* minimum with the three numeric
+    /// columns still at the width their figures need. Squeeze past this and
+    /// the table stops shrinking and starts scrolling sideways, which is how
+    /// the Items column ends up off the edge.
+    static var minimumPaneWidth: CGFloat {
+        paneWidth(for: columnLayout.map { $0.column == .name ? $0.minWidth : $0.width })
+    }
+
+    /// The width the columns are designed at, and so the width the pane opens
+    /// at.
+    static var designPaneWidth: CGFloat { paneWidth(for: columnLayout.map(\.width)) }
+
     let outlineView = WorkspaceOutlineView()
     private let formatter: DisplayFormatter
     private var root: ScanNode?
@@ -119,8 +165,13 @@ final class DirectoryTreeViewController: NSViewController, NSOutlineViewDataSour
     var onPackageExpansionChange: ((ScanNode, Bool) -> Void)?
     var onRowActivated: ((ScanNode) -> Void)?
 
-    init(formatter: DisplayFormatter) {
+    /// What the pane remembers between launches: its column layout is
+    /// `NSOutlineView`'s own business, its sort order is not.
+    let preferences: Preferences
+
+    init(formatter: DisplayFormatter, preferences: Preferences? = nil) {
         self.formatter = formatter
+        self.preferences = preferences ?? .shared
         super.init(nibName: nil, bundle: nil)
         title = "Directory Tree"
     }
@@ -128,27 +179,52 @@ final class DirectoryTreeViewController: NSViewController, NSOutlineViewDataSour
     required init?(coder: NSCoder) { nil }
 
     override func loadView() {
-        outlineView.style = .sourceList
-        outlineView.rowSizeStyle = .default
+        // A four-column table with a header, not a source list: the source
+        // list style is built for a short list of destinations, and spends the
+        // row height and the inset that costs on rows that are neither.
+        outlineView.style = .fullWidth
+        outlineView.rowSizeStyle = .custom
+        outlineView.rowHeight = Self.rowHeight
+        outlineView.intercellSpacing = NSSize(width: Self.intercellWidth, height: 0)
         outlineView.usesAlternatingRowBackgroundColors = false
         outlineView.headerView = NSTableHeaderView()
+        // Column widths and order are remembered; which rows were open is not.
+        // The tree is rebuilt from a fresh scan every time, so a remembered
+        // expansion refers to nodes that no longer exist.
+        outlineView.autosaveName = "MacDirStatDirectoryTree"
+        outlineView.autosaveTableColumns = true
         outlineView.autosaveExpandedItems = false
-        outlineView.indentationPerLevel = 14
+        outlineView.indentationPerLevel = 12
+        // The name column absorbs every point the pane gains or loses, and
+        // keeps that width across a disclosure: the stock behaviour widens the
+        // outline column on every expand, which walks the three numeric
+        // columns off the right edge one folder at a time.
+        outlineView.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
+        outlineView.autoresizesOutlineColumn = false
         outlineView.dataSource = self
         outlineView.delegate = self
 
-        addColumn(.name, width: 220, minWidth: 150)
-        addColumn(.size, width: 90, minWidth: 76)
-        addColumn(.percent, width: 116, minWidth: 96)
-        addColumn(.items, width: 72, minWidth: 62)
+        for entry in Self.columnLayout {
+            addColumn(entry.column, width: entry.width, minWidth: entry.minWidth)
+        }
         outlineView.outlineTableColumn = outlineView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier(TreeColumn.name.rawValue))
-        outlineView.sortDescriptors = [NSSortDescriptor(key: TreeColumn.size.rawValue, ascending: false)]
+        // Column autosave covers width and order and stops short of the sort,
+        // so the sort is restored by hand. Size-descending is the fallback,
+        // and the only order a first run has ever wanted.
+        let sort = preferences.treeSort ?? (column: .size, ascending: false)
+        outlineView.sortDescriptors = [NSSortDescriptor(key: sort.column.rawValue, ascending: sort.ascending)]
 
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = true
         scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
+        // The pane is opaque (the prototype's `--sidebar-bg`), not the
+        // vibrant material an AppKit sidebar puts behind its rows: a dense
+        // table reads badly over whatever happens to be behind the window.
+        scrollView.drawsBackground = true
+        scrollView.backgroundColor = .controlBackgroundColor
+        outlineView.backgroundColor = .controlBackgroundColor
         scrollView.documentView = outlineView
         view = scrollView
 
@@ -256,7 +332,11 @@ final class DirectoryTreeViewController: NSViewController, NSOutlineViewDataSour
         tableColumn.title = column.title
         tableColumn.width = width
         tableColumn.minWidth = minWidth
-        tableColumn.resizingMask = [.autoresizingMask, .userResizingMask]
+        // Only the name column follows the pane; the numeric three keep the
+        // width they were given so their figures stay in one place.
+        tableColumn.resizingMask = column == .name
+            ? [.autoresizingMask, .userResizingMask]
+            : [.userResizingMask]
         tableColumn.sortDescriptorPrototype = NSSortDescriptor(key: column.rawValue, ascending: column != .size)
         outlineView.addTableColumn(tableColumn)
     }
@@ -288,6 +368,19 @@ final class DirectoryTreeViewController: NSViewController, NSOutlineViewDataSour
         guard let node = item as? ScanNode, let tableColumn,
               let column = TreeColumn(rawValue: tableColumn.identifier.rawValue) else { return nil }
 
+        if column == .name {
+            let identifier = NSUserInterfaceItemIdentifier("NameCell")
+            let cell = (outlineView.makeView(withIdentifier: identifier, owner: self) as? NameTableCellView)
+                ?? NameTableCellView(identifier: identifier)
+            cell.configure(
+                name: node.name,
+                icon: icon(for: node),
+                badge: badge(for: node),
+                spokenName: presentedName(node)
+            )
+            return cell
+        }
+
         if column == .percent {
             let identifier = NSUserInterfaceItemIdentifier("PercentCell")
             let cell = (outlineView.makeView(withIdentifier: identifier, owner: self) as? PercentTableCellView)
@@ -304,9 +397,8 @@ final class DirectoryTreeViewController: NSViewController, NSOutlineViewDataSour
         let cell = (outlineView.makeView(withIdentifier: identifier, owner: self) as? NSTableCellView)
             ?? makeTextCell(identifier: identifier, column: column)
         switch column {
-        case .name:
-            cell.textField?.stringValue = presentedName(node)
-            cell.imageView?.image = icon(for: node)
+        case .name, .percent:
+            break // Both have their own cell, returned above.
         case .size:
             cell.textField?.stringValue = formatter.bytes(node.subtreeDiskBytes)
         case .items:
@@ -316,13 +408,15 @@ final class DirectoryTreeViewController: NSViewController, NSOutlineViewDataSour
             cell.textField?.stringValue = node.isDirectoryLike
                 ? formatter.count(Int64(node.presentedDescendantCount))
                 : "—"
-        case .percent:
-            break
         }
         return cell
     }
 
     func outlineView(_ outlineView: NSOutlineView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
+        if let descriptor = outlineView.sortDescriptors.first,
+           let column = descriptor.key.flatMap(TreeColumn.init(rawValue:)) {
+            preferences.treeSort = (column, descriptor.ascending)
+        }
         guard let descriptor = outlineView.sortDescriptors.first,
               let key = descriptor.key,
               let column = TreeColumn(rawValue: key) else { return }
@@ -363,50 +457,50 @@ final class DirectoryTreeViewController: NSViewController, NSOutlineViewDataSour
         }
     }
 
+    /// A numeric cell: right-aligned, one line, and in the tabular face, so a
+    /// column of figures lines up on its digits.
     private func makeTextCell(identifier: NSUserInterfaceItemIdentifier, column: TreeColumn) -> NSTableCellView {
         let cell = NSTableCellView()
         cell.identifier = identifier
         let text = NSTextField(labelWithString: "")
-        text.lineBreakMode = .byTruncatingMiddle
-        text.alignment = column == .name ? .left : .right
+        text.font = TreeRowMetrics.valueFont
+        text.textColor = .secondaryLabelColor
+        text.lineBreakMode = .byTruncatingTail
+        text.alignment = .right
         text.translatesAutoresizingMaskIntoConstraints = false
         cell.textField = text
         cell.addSubview(text)
-
-        if column == .name {
-            let image = NSImageView()
-            image.translatesAutoresizingMaskIntoConstraints = false
-            image.imageScaling = .scaleProportionallyDown
-            cell.imageView = image
-            cell.addSubview(image)
-            NSLayoutConstraint.activate([
-                image.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 3),
-                image.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-                image.widthAnchor.constraint(equalToConstant: 16),
-                image.heightAnchor.constraint(equalToConstant: 16),
-                text.leadingAnchor.constraint(equalTo: image.trailingAnchor, constant: 4),
-                text.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
-                text.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            ])
-        } else {
-            NSLayoutConstraint.activate([
-                text.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
-                text.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6),
-                text.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            ])
-        }
+        NSLayoutConstraint.activate([
+            text.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
+            text.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6),
+            text.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+        ])
         return cell
     }
 
-    private func presentedName(_ node: ScanNode) -> String {
+    /// The row's read state as a tag, or `nil` when there is nothing to say.
+    ///
+    /// This used to be two spaces and a word glued onto the name. It read as
+    /// part of the filename, it was the first thing the middle-truncation ate,
+    /// and it pushed the name itself out of a column that has no width to
+    /// spare (`core-workspace-prototype.html`, `.tag`).
+    private func badge(for node: ScanNode) -> TreeRowBadge? {
         switch node.readState {
         case .complete:
-            return node.kind == .package ? "\(node.name)  Package" : node.name
+            return node.kind == .package ? TreeRowBadge(title: "Package", tint: .controlAccentColor) : nil
         case .incomplete:
-            return "\(node.name)  Incomplete"
+            return TreeRowBadge(title: "Incomplete", tint: .systemYellow)
         case .unreadable:
-            return "\(node.name)  Unreadable"
+            return TreeRowBadge(title: "Unreadable", tint: .systemRed)
         }
+    }
+
+    /// The name as VoiceOver hears it. The badge is a colour and a corner
+    /// radius to a sighted reader and nothing at all to anyone else, so the
+    /// state stays in the spoken label.
+    private func presentedName(_ node: ScanNode) -> String {
+        guard let badge = badge(for: node) else { return node.name }
+        return "\(node.name), \(badge.title)"
     }
 
     private func icon(for node: ScanNode) -> NSImage? {
@@ -416,6 +510,123 @@ final class DirectoryTreeViewController: NSViewController, NSOutlineViewDataSour
         case .symbolicLink: return NSImage(named: NSImage.followLinkFreestandingTemplateName)
         case .file, .other: return NSImage(named: NSImage.multipleDocumentsName)
         }
+    }
+}
+
+/// The type sizes a tree row is drawn at. Smaller than the system default on
+/// purpose: this pane is a table of figures, and the row it lives in is 20 pt.
+enum TreeRowMetrics {
+    static let nameFont = NSFont.systemFont(ofSize: 12)
+    static let valueFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+    static let badgeFont = NSFont.systemFont(ofSize: 10, weight: .medium)
+    static let iconSide: CGFloat = 14
+}
+
+struct TreeRowBadge {
+    let title: String
+    let tint: NSColor
+}
+
+/// The prototype's `.tag`: a word in a tinted, rounded chip.
+@MainActor
+private final class BadgeView: NSView {
+    private let label = NSTextField(labelWithString: "")
+    private var tint: NSColor = .secondaryLabelColor
+
+    init() {
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.cornerRadius = 4
+        label.font = TreeRowMetrics.badgeFont
+        label.lineBreakMode = .byClipping
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 5),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -5),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            heightAnchor.constraint(equalToConstant: 14),
+        ])
+        // The chip is never what gives way: a name too long for the column is
+        // truncated, and the tag beside it stays whole.
+        setContentHuggingPriority(.required, for: .horizontal)
+        setContentCompressionResistancePriority(.required, for: .horizontal)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        layer?.backgroundColor = tint.withAlphaComponent(0.16).cgColor
+    }
+
+    /// The tint is a dynamic colour, so it is resolved when the layer is drawn
+    /// rather than stored as a `CGColor` that would keep one appearance's value
+    /// after the user switches to the other.
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+
+    func configure(_ badge: TreeRowBadge) {
+        label.stringValue = badge.title
+        label.textColor = badge.tint
+        tint = badge.tint
+        needsDisplay = true
+    }
+}
+
+/// The name cell: icon, name, and — only when there is something to say — the
+/// read-state tag.
+@MainActor
+private final class NameTableCellView: NSTableCellView {
+    private let icon = NSImageView()
+    private let badge = BadgeView()
+
+    init(identifier: NSUserInterfaceItemIdentifier) {
+        super.init(frame: .zero)
+        self.identifier = identifier
+        icon.imageScaling = .scaleProportionallyDown
+        let text = NSTextField(labelWithString: "")
+        text.font = TreeRowMetrics.nameFont
+        text.lineBreakMode = .byTruncatingMiddle
+        text.cell?.usesSingleLineMode = true
+        textField = text
+        imageView = icon
+
+        let stack = NSStackView(views: [icon, text, badge])
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.spacing = 4
+        stack.edgeInsets = NSEdgeInsets(top: 0, left: 2, bottom: 0, right: 4)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: TreeRowMetrics.iconSide),
+            icon.heightAnchor.constraint(equalToConstant: TreeRowMetrics.iconSide),
+        ])
+        // The name is the one part of the row that stretches and the one part
+        // that is allowed to be cut short.
+        text.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        text.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        icon.setContentHuggingPriority(.required, for: .horizontal)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    func configure(name: String, icon image: NSImage?, badge model: TreeRowBadge?, spokenName: String) {
+        textField?.stringValue = name
+        imageView?.image = image
+        // A hidden arranged subview is dropped from the stack's layout, gap
+        // and all, so an unbadged row spends none of the column on it.
+        badge.isHidden = model == nil
+        if let model { badge.configure(model) }
+        toolTip = spokenName
+        setAccessibilityLabel(spokenName)
     }
 }
 
@@ -432,7 +643,10 @@ private final class PercentTableCellView: NSTableCellView {
         bar.isIndeterminate = false
         bar.controlSize = .small
         let text = NSTextField(labelWithString: "")
+        text.font = TreeRowMetrics.valueFont
+        text.textColor = .secondaryLabelColor
         text.alignment = .right
+        text.lineBreakMode = .byClipping
         text.translatesAutoresizingMaskIntoConstraints = false
         bar.translatesAutoresizingMaskIntoConstraints = false
         textField = text
@@ -441,9 +655,9 @@ private final class PercentTableCellView: NSTableCellView {
         NSLayoutConstraint.activate([
             bar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
             bar.centerYAnchor.constraint(equalTo: centerYAnchor),
-            bar.widthAnchor.constraint(equalToConstant: 42),
-            bar.heightAnchor.constraint(equalToConstant: 6),
-            text.leadingAnchor.constraint(equalTo: bar.trailingAnchor, constant: 5),
+            bar.widthAnchor.constraint(equalToConstant: 30),
+            bar.heightAnchor.constraint(equalToConstant: 5),
+            text.leadingAnchor.constraint(equalTo: bar.trailingAnchor, constant: 4),
             text.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -5),
             text.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
@@ -532,6 +746,23 @@ final class TreemapPaneViewController: NSViewController {
 @MainActor
 final class EmptyStateView: NSStackView {
     var onChoose: (() -> Void)?
+    var onRescan: ((URL) -> Void)?
+
+    /// The folder the app scanned last, offered as a second button.
+    ///
+    /// Relaunching never re-walks a disk on its own — a volume scan is minutes
+    /// of work nobody asked for twice — but making the user find the same
+    /// folder again through two sheets is the other extreme.
+    var lastScannedSource: URL? {
+        didSet {
+            rescanButton.isHidden = lastScannedSource == nil
+            guard let url = lastScannedSource else { return }
+            rescanButton.title = "Scan “\(url.lastPathComponent)” Again"
+            rescanButton.toolTip = url.path
+        }
+    }
+
+    private let rescanButton = NSButton(title: "", target: nil, action: nil)
 
     init() {
         super.init(frame: .zero)
@@ -546,16 +777,26 @@ final class EmptyStateView: NSStackView {
         subtitle.textColor = .secondaryLabelColor
         let button = NSButton(title: "Choose…", target: self, action: #selector(choose(_:)))
         button.bezelStyle = .rounded
+        rescanButton.bezelStyle = .accessoryBarAction
+        rescanButton.target = self
+        rescanButton.action = #selector(rescan(_:))
+        rescanButton.isHidden = true
         addArrangedSubview(image)
         addArrangedSubview(title)
         addArrangedSubview(subtitle)
         addArrangedSubview(button)
+        addArrangedSubview(rescanButton)
         setCustomSpacing(14, after: subtitle)
     }
 
     required init?(coder: NSCoder) { nil }
 
     @objc private func choose(_ sender: Any?) { onChoose?() }
+
+    @objc private func rescan(_ sender: Any?) {
+        guard let url = lastScannedSource else { return }
+        onRescan?(url)
+    }
 }
 
 @MainActor
@@ -674,7 +915,8 @@ final class ScanProgressCardView: NSVisualEffectView {
 final class StatusBarViewController: NSViewController {
     private let formatter: DisplayFormatter
     private let summary = NSTextField(labelWithString: "Ready")
-    private let legend = NSStackView()
+    private let legend = WrappingRowView()
+    private var legendHeight: NSLayoutConstraint!
     var onHeightChange: ((CGFloat) -> Void)?
 
     init(formatter: DisplayFormatter) {
@@ -689,9 +931,6 @@ final class StatusBarViewController: NSViewController {
         summary.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         summary.translatesAutoresizingMaskIntoConstraints = false
 
-        legend.orientation = .horizontal
-        legend.alignment = .centerY
-        legend.spacing = 8
         // The settled palette itself, so the swatch and the rectangle it
         // explains can never be two different colours (§6.3). Twelve kind
         // groups plus the merge bucket (ticket 01, decision 6).
@@ -699,9 +938,10 @@ final class StatusBarViewController: NSViewController {
             ($0.displayName, TreemapChrome.legendColor(for: $0))
         }
         entries.append(("Merged", TreemapChrome.legendMergedColor))
-        entries.forEach { legend.addArrangedSubview(legendItem(name: $0.0, color: $0.1)) }
+        legend.setItems(entries.map { legendItem(name: $0.0, color: $0.1) })
         legend.translatesAutoresizingMaskIntoConstraints = false
         legend.isHidden = true
+        legendHeight = legend.heightAnchor.constraint(equalToConstant: 0)
 
         root.addSubview(summary)
         root.addSubview(legend)
@@ -710,8 +950,11 @@ final class StatusBarViewController: NSViewController {
             summary.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -12),
             summary.topAnchor.constraint(equalTo: root.topAnchor, constant: 6),
             legend.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12),
-            legend.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -12),
+            // Pinned to the trailing edge, not merely kept inside it: the
+            // width is what the wrap is computed from.
+            legend.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
             legend.topAnchor.constraint(equalTo: summary.bottomAnchor, constant: 7),
+            legendHeight,
         ])
         view = root
     }
@@ -719,11 +962,47 @@ final class StatusBarViewController: NSViewController {
     /// What the status bar is showing, for tests and for the accessibility tree.
     var summaryText: String { summary.stringValue }
 
+    /// The bar with the summary line and nothing else.
+    static let summaryOnlyHeight: CGFloat = 26
+    /// Between the summary line and the first legend row.
+    private static let legendGap: CGFloat = 7
+
+    private var showsLegend = false
+    private var reportedHeight: CGFloat = summaryOnlyHeight
+
+    /// The legend wraps, so its height depends on how wide the window is.
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        refreshHeight()
+    }
+
+    /// Reports a new height only when it actually changed: this runs from
+    /// `viewDidLayout` and changes a constraint, which lays out again.
+    private func refreshHeight() {
+        let height: CGFloat
+        if showsLegend {
+            let available = max(0, view.bounds.width - 24)
+            let rows = legend.height(forWidth: available)
+            // Before the first layout there is no width to wrap into, and a
+            // zero-height legend would report a bar with no room for it.
+            guard rows > 0 else { return }
+            legendHeight.constant = rows
+            height = Self.summaryOnlyHeight + Self.legendGap + rows
+        } else {
+            legendHeight.constant = 0
+            height = Self.summaryOnlyHeight
+        }
+        guard height != reportedHeight else { return }
+        reportedHeight = height
+        onHeightChange?(height)
+    }
+
     func update(model: ScanPresentationModel) {
         let shouldShowLegend = (model.root?.subtreeDiskBytes ?? 0) > 0
-        if legend.isHidden == shouldShowLegend {
+        if showsLegend != shouldShowLegend {
+            showsLegend = shouldShowLegend
             legend.isHidden = !shouldShowLegend
-            onHeightChange?(shouldShowLegend ? 52 : 26)
+            refreshHeight()
         }
 
         summary.stringValue = Self.text(
@@ -819,6 +1098,72 @@ final class StatusBarViewController: NSViewController {
     }
 }
 
+/// Lays its subviews out left to right and wraps to a new row when the next
+/// one will not fit.
+///
+/// The legend is thirteen swatches wide. In a horizontal `NSStackView` pinned
+/// with a `lessThanOrEqualTo` trailing constraint, the ones past the window's
+/// edge were simply not drawn — no ellipsis, no scroll, nothing to say that a
+/// colour the treemap is using has no key. Wrapping shows all of them and
+/// costs the status bar a second row when it needs one.
+@MainActor
+final class WrappingRowView: NSView {
+    var horizontalSpacing: CGFloat = 12
+    var verticalSpacing: CGFloat = 4
+
+    private var items: [NSView] = []
+
+    /// Top-down, so the first row is the top row.
+    override var isFlipped: Bool { true }
+
+    func setItems(_ views: [NSView]) {
+        items.forEach { $0.removeFromSuperview() }
+        items = views
+        for view in views {
+            // These items are framed manually in `layout()`. Leaving the
+            // autoresizing mask enabled gives a freshly-created stack a
+            // required zero-width constraint while `fittingSize` is solving
+            // its 9 pt swatch and label, producing thousands of false layout
+            // conflicts in the app test log.
+            view.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(view)
+        }
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+        layOut(inWidth: bounds.width, placing: true)
+    }
+
+    /// The height the current items need at `width`, without moving anything.
+    func height(forWidth width: CGFloat) -> CGFloat {
+        layOut(inWidth: width, placing: false)
+    }
+
+    @discardableResult
+    private func layOut(inWidth width: CGFloat, placing: Bool) -> CGFloat {
+        guard !items.isEmpty else { return 0 }
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        for item in items {
+            let size = item.fittingSize
+            // Never wrap the first item of a row: an item wider than the whole
+            // view has to overflow somewhere, and a blank row helps nobody.
+            if x > 0, x + size.width > width {
+                x = 0
+                y += rowHeight + verticalSpacing
+                rowHeight = 0
+            }
+            if placing { item.frame = NSRect(x: x, y: y, width: size.width, height: size.height) }
+            x += size.width + horizontalSpacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        return y + rowHeight
+    }
+}
+
 /// A view that paints one colour, following the appearance.
 ///
 /// Layer-backed on purpose. `layer.backgroundColor` takes a *resolved*
@@ -859,11 +1204,166 @@ final class BackgroundView: NSView {
     }
 }
 
+/// A workspace split view, with the two things a stock one leaves to chance on
+/// a dark, custom-drawn workspace: a divider you can *see*, and a resize cursor
+/// over the whole band you can actually grab it by.
+///
+/// A 1 pt hairline over a treemap is invisible, and a divider nobody can find
+/// is a divider nobody believes drags — which is exactly the report this
+/// answers. The cursor rects are the same band
+/// ``GrabbableSplitViewController/grabBand(forDividerAt:)`` hit-tests, so what
+/// the pointer promises and what the click does are one measurement.
 @MainActor
-final class WorkspaceSplitViewController: NSSplitViewController, FileActionResponding, NSMenuItemValidation {
+final class WorkspaceSplitView: NSSplitView {
+    override var dividerColor: NSColor { .separatorColor }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        guard let controller = delegate as? GrabbableSplitViewController else { return }
+        let cursor: NSCursor = isVertical ? .resizeLeftRight : .resizeUpDown
+        for divider in 0..<max(0, arrangedSubviews.count - 1) {
+            let band = controller.grabBand(forDividerAt: divider)
+            guard !band.isEmpty else { continue }
+            addCursorRect(band, cursor: cursor)
+        }
+    }
+}
+
+/// A split view controller whose dividers can be caught by a band wider than
+/// the hairline they are drawn as — in either orientation, because the
+/// workspace now stacks one split view inside another (§7.2, "every split
+/// divider drags").
+@MainActor
+class GrabbableSplitViewController: NSSplitViewController {
+    /// A hairline divider is 1 pt wide, which is not a thing a pointer can
+    /// reliably catch. The prototype gave every divider a few points of slop on
+    /// each side (`core-workspace-prototype.html`, `.divider::after`); this is
+    /// that slop, in the split view's own coordinates.
+    static let dividerGrabSlop: CGFloat = 8
+
+    /// The holding priority for the pane that keeps the size it is given while
+    /// the other one takes the slack.
+    ///
+    /// It is one point above `.defaultLow`, which is where AppKit expects it —
+    /// sidebars use exactly this. It is emphatically *not* `.defaultHigh`:
+    /// holding priority is the priority of the constraint pinning the pane's
+    /// thickness, and AppKit drags a divider with a constraint of its own at
+    /// `.dragThatCannotResizeWindow` (492). A pane held at `.defaultHigh` (750)
+    /// therefore outranks the drag and simply refuses to move — the divider
+    /// looks alive, takes the cursor, and goes nowhere. It also pins the pane
+    /// to its `minimumThickness` and makes `setPosition` a no-op, which is what
+    /// the opening height used to be fought for.
+    static let holdsItsSize = NSLayoutConstraint.Priority(260)
+
+    override func splitView(
+        _ splitView: NSSplitView,
+        additionalEffectiveRectOfDividerAt dividerIndex: Int
+    ) -> NSRect {
+        grabBand(forDividerAt: dividerIndex)
+    }
+
+    /// The band the pointer may grab this divider by: the hairline, plus a few
+    /// points of slop on each side. Empty when there is no divider to grab.
+    func grabBand(forDividerAt dividerIndex: Int) -> NSRect {
+        let divider = dividerRect(at: dividerIndex)
+        guard !divider.isEmpty else { return .zero }
+        return splitView.isVertical
+            ? divider.insetBy(dx: -Self.dividerGrabSlop, dy: 0)
+            : divider.insetBy(dx: 0, dy: -Self.dividerGrabSlop)
+    }
+
+    /// The divider's own rect. The arranged subviews abut — the hairline is
+    /// drawn over their shared edge rather than in a gap between them — so the
+    /// divider is `dividerThickness` centred on that edge. The edge is read off
+    /// the two panes rather than assumed, so one piece of arithmetic serves a
+    /// split view laid out leading-to-trailing and one laid out top-to-bottom.
+    /// A collapsed pane has no divider to widen, and returns an empty rect
+    /// rather than a band lying over its neighbour's content.
+    private func dividerRect(at dividerIndex: Int) -> NSRect {
+        let panes = splitView.arrangedSubviews
+        guard dividerIndex >= 0, dividerIndex + 1 < panes.count else { return .zero }
+        guard !splitViewItems[dividerIndex].isCollapsed,
+              !splitViewItems[dividerIndex + 1].isCollapsed else { return .zero }
+        let thickness = splitView.dividerThickness
+        let first = panes[dividerIndex].frame
+        let second = panes[dividerIndex + 1].frame
+        if splitView.isVertical {
+            let edge = (max(first.minX, second.minX) + min(first.maxX, second.maxX)) / 2
+            return NSRect(
+                x: edge - thickness / 2,
+                y: splitView.bounds.minY,
+                width: thickness,
+                height: splitView.bounds.height
+            )
+        }
+        let edge = (max(first.minY, second.minY) + min(first.maxY, second.maxY)) / 2
+        return NSRect(
+            x: splitView.bounds.minX,
+            y: edge - thickness / 2,
+            width: splitView.bounds.width,
+            height: thickness
+        )
+    }
+}
+
+/// The workspace's top row: the file list, with the detail for whatever is
+/// selected in it alongside on the right.
+///
+/// These two are one reading of the tree — a row, and what that row *is* — so
+/// they share a row and a divider. The treemap is a different reading of the
+/// same tree, and it is below them with the full width of the window to be
+/// read in, because area is the only thing it has to say anything with.
+@MainActor
+final class ListDetailSplitViewController: GrabbableSplitViewController {
     let treeViewController: DirectoryTreeViewController
-    let treemapViewController = TreemapPaneViewController()
-    let inspectorViewController = InspectorViewController()
+    let inspectorViewController: InspectorViewController
+
+    init(tree: DirectoryTreeViewController, inspector: InspectorViewController) {
+        treeViewController = tree
+        inspectorViewController = inspector
+        super.init(nibName: nil, bundle: nil)
+        splitView = WorkspaceSplitView()
+        splitView.isVertical = true
+
+        // A plain pane, not an AppKit sidebar. The sidebar behaviour put a
+        // vibrant material behind a dense table of figures and handed AppKit
+        // its own opinion of how wide the pane should be; the tree is a
+        // four-column table with a header, and it is sized by its columns.
+        //
+        // It is also the pane that *grows*: every point the window gains across
+        // this row goes to the file names, not to a detail pane that has a
+        // fixed amount to say. That is what the low holding priority buys, and
+        // it is why this pane needs no opening width of its own — unlike the
+        // three-across arrangement this replaced, where the map took the slack
+        // and the list opened at its floor.
+        let list = NSSplitViewItem(viewController: tree)
+        list.minimumThickness = WorkspaceSplitViewController.treeMinimumThickness
+        // Collapsing it would leave nothing to drag it back with: there is no
+        // toolbar toggle for this pane, unlike the inspector.
+        list.canCollapse = false
+        list.holdingPriority = .defaultLow
+
+        let detail = NSSplitViewItem(inspectorWithViewController: inspector)
+        detail.minimumThickness = WorkspaceSplitViewController.inspectorMinimumThickness
+        detail.maximumThickness = WorkspaceSplitViewController.inspectorMaximumThickness
+        detail.preferredThicknessFraction = 300.0 / 1_100.0
+        detail.canCollapse = true
+        detail.holdingPriority = GrabbableSplitViewController.holdsItsSize
+
+        addSplitViewItem(list)
+        addSplitViewItem(detail)
+    }
+
+    required init?(coder: NSCoder) { nil }
+}
+
+@MainActor
+final class WorkspaceSplitViewController: GrabbableSplitViewController,
+    FileActionResponding, PathCopying, DetailPaneToggling, NSMenuItemValidation {
+    let listDetailViewController: ListDetailSplitViewController
+    let treeViewController: DirectoryTreeViewController
+    let treemapViewController: TreemapPaneViewController
+    let inspectorViewController: InspectorViewController
     let model: ScanPresentationModel
     let formatter: DisplayFormatter
     let selectionModel = SelectionModel()
@@ -876,10 +1376,25 @@ final class WorkspaceSplitViewController: NSSplitViewController, FileActionRespo
     /// every click.
     var onScanModelChange: (() -> Void)?
     var onChooseRequest: (() -> Void)?
+    /// Asked to pick the last scan up again, from the empty state.
+    var onRescanRequest: ((URL) -> Void)?
+    /// The folder the empty state offers to scan again, or `nil` on a machine
+    /// that has never scanned anything.
+    var lastScannedSource: URL? {
+        didSet { treemapViewController.emptyState.lastScannedSource = lastScannedSource }
+    }
+    /// What this window remembers between launches, shared with its tree.
+    let preferences: Preferences
     private var displayedRoot: ScanNode?
+    /// What the pasteboard is written through, so a test can read it back
+    /// without touching the user's clipboard.
+    var pasteboard: NSPasteboard = .general
 
-    convenience init(formatter: DisplayFormatter = DisplayFormatter()) {
-        self.init(model: ScanPresentationModel(), formatter: formatter)
+    convenience init(
+        formatter: DisplayFormatter = DisplayFormatter(),
+        preferences: Preferences? = nil
+    ) {
+        self.init(model: ScanPresentationModel(), formatter: formatter, preferences: preferences)
     }
 
     /// The two seams default to the real thing, constructed here rather than in
@@ -889,109 +1404,173 @@ final class WorkspaceSplitViewController: NSSplitViewController, FileActionRespo
         model: ScanPresentationModel,
         formatter: DisplayFormatter,
         workspaceActions: WorkspaceActing? = nil,
-        announcer: AccessibilityAnnouncing? = nil
+        announcer: AccessibilityAnnouncing? = nil,
+        preferences: Preferences? = nil
     ) {
         let announcer = announcer ?? SystemAccessibilityAnnouncer()
+        // One store for the whole window, handed down rather than looked up,
+        // so a test that wants a first run gets one everywhere at once.
+        let preferences = preferences ?? .shared
+        self.preferences = preferences
+        let tree = DirectoryTreeViewController(formatter: formatter, preferences: preferences)
+        let inspector = InspectorViewController()
+        let treemap = TreemapPaneViewController()
         self.model = model
         self.formatter = formatter
         self.workspaceActions = workspaceActions ?? SystemWorkspaceActions()
         contentBuilder = InspectorContentBuilder(formatter: formatter)
-        treeViewController = DirectoryTreeViewController(formatter: formatter)
+        treeViewController = tree
+        inspectorViewController = inspector
+        treemapViewController = treemap
+        listDetailViewController = ListDetailSplitViewController(tree: tree, inspector: inspector)
         super.init(nibName: nil, bundle: nil)
-        splitView.isVertical = true
+        splitView = WorkspaceSplitView()
+        // The workspace stacks: list and detail across the top, treemap across
+        // the whole width below them.
+        splitView.isVertical = false
 
-        treemapViewController.treemapView.selectionModel = selectionModel
-        treemapViewController.treemapView.contentBuilder = contentBuilder
-        treemapViewController.treemapView.announcer = announcer
-        treeViewController.selectionModel = selectionModel
-        treeViewController.onPackageExpansionChange = { [weak self] node, expanded in
+        treemap.treemapView.selectionModel = selectionModel
+        // Return in the map opens the selection, the same as Return on a row.
+        treemap.treemapView.onActivate = { [weak self] in self?.openSelection() }
+        treemap.treemapView.contentBuilder = contentBuilder
+        treemap.treemapView.announcer = announcer
+        tree.selectionModel = selectionModel
+        tree.onPackageExpansionChange = { [weak self] node, expanded in
             self?.treemapViewController.treemapView.setPackage(node, expanded: expanded)
         }
-        treeViewController.onRowActivated = { [weak self] _ in self?.openSelection() }
-        inspectorViewController.onOpen = { [weak self] in self?.openSelection() }
-        inspectorViewController.onReveal = { [weak self] in self?.revealSelection() }
+        tree.onRowActivated = { [weak self] _ in self?.openSelection() }
+        inspector.onOpen = { [weak self] in self?.openSelection() }
+        inspector.onReveal = { [weak self] in self?.revealSelection() }
         selectionModel.addObserver { [weak self] change in
             self?.selectionDidChange(change)
         }
 
-        // The tree pane is dragged, not fixed. Its ceiling is wide enough to
-        // show all four columns at once (220 + 90 + 116 + 72, plus intercell
-        // spacing and a scroller), which is where a user who drags this
-        // divider is usually headed.
-        let left = NSSplitViewItem(sidebarWithViewController: treeViewController)
-        left.minimumThickness = Self.treeMinimumThickness
-        left.maximumThickness = Self.treeMaximumThickness
-        left.holdingPriority = .defaultHigh
+        let top = NSSplitViewItem(viewController: listDetailViewController)
+        top.minimumThickness = Self.listDetailMinimumHeight
+        // Neither half of the workspace collapses: there is no toolbar toggle
+        // to bring either back, and a window showing only one of the two
+        // readings is not the workspace §7.1 describes.
+        top.canCollapse = false
+        // A treemap says what it has to say with area, and says it at any size;
+        // a list says it one row at a time. So the map keeps the height it is
+        // given and the list takes what a taller window offers.
+        top.holdingPriority = .defaultLow
 
-        let center = NSSplitViewItem(viewController: treemapViewController)
-        center.minimumThickness = 320
-        center.canCollapse = false
-        center.holdingPriority = .defaultLow
+        let bottom = NSSplitViewItem(viewController: treemap)
+        bottom.minimumThickness = Self.treemapMinimumHeight
+        bottom.canCollapse = false
+        bottom.holdingPriority = Self.holdsItsSize
 
-        let right = NSSplitViewItem(inspectorWithViewController: inspectorViewController)
-        right.minimumThickness = 260
-        right.maximumThickness = 360
-        right.preferredThicknessFraction = 300.0 / 1_100.0
-        right.canCollapse = true
-        right.holdingPriority = .defaultHigh
-
-        addSplitViewItem(left)
-        addSplitViewItem(center)
-        addSplitViewItem(right)
+        addSplitViewItem(top)
+        addSplitViewItem(bottom)
 
         model.onChange = { [weak self] in self?.refresh() }
-        treemapViewController.emptyState.onChoose = { [weak self] in self?.onChooseRequest?() }
-        treemapViewController.scanCard.onCancel = { [weak model] in model?.cancel() }
-        treemapViewController.show(.empty, progress: nil, formatter: formatter)
+        treemap.emptyState.onChoose = { [weak self] in self?.onChooseRequest?() }
+        treemap.emptyState.onRescan = { [weak self] url in self?.onRescanRequest?(url) }
+        treemap.scanCard.onCancel = { [weak model] in model?.cancel() }
+        treemap.show(.empty, progress: nil, formatter: formatter)
     }
 
     required init?(coder: NSCoder) { nil }
 
-    /// The tree pane's drag range (§7.2, "every split divider drags"). The
-    /// pane opens at its minimum, so the minimum is also the width the window
-    /// starts with.
-    static let treeMinimumThickness: CGFloat = 240
-    static let treeMaximumThickness: CGFloat = 620
+    /// The file list's drag range (§7.2, "every split divider drags").
+    ///
+    /// The floor is the width its columns need, not a round number: a pane
+    /// narrower than ``DirectoryTreeViewController/minimumPaneWidth`` is one
+    /// with columns hidden off its right edge, which is what dragging this
+    /// divider left used to do. There is no ceiling: the list is the pane that
+    /// takes the slack, and what stops the drag right is the detail pane
+    /// reaching *its* floor.
+    static let treeMinimumThickness: CGFloat = DirectoryTreeViewController.minimumPaneWidth
 
-    /// A hairline divider is 1 pt wide, which is not a thing a pointer can
-    /// reliably catch. The prototype gave every divider a few points of slop on
-    /// each side (`core-workspace-prototype.html`, `.divider::after`); this is
-    /// that slop, in the split view's own coordinates.
-    static let dividerGrabSlop: CGFloat = 4
+    static let inspectorMinimumThickness: CGFloat = 260
+    static let inspectorMaximumThickness: CGFloat = 360
 
-    override func splitView(
-        _ splitView: NSSplitView,
-        additionalEffectiveRectOfDividerAt dividerIndex: Int
-    ) -> NSRect {
-        let divider = dividerRect(at: dividerIndex)
-        guard !divider.isEmpty else { return .zero }
-        return divider.insetBy(dx: -Self.dividerGrabSlop, dy: 0)
+    /// The treemap spans the window now, so its floor is a width no arrangement
+    /// of the row above it can push past — the row's own two minimums added up
+    /// are wider than this — and it is kept only so the constant means
+    /// something if the columns above ever shrink.
+    static let treemapMinimumWidth: CGFloat = 320
+
+    /// The narrowest window the two panes of the top row both fit in at once,
+    /// their divider included, and never narrower than the map below them
+    /// wants. The window's minimum size is held at or above this: below it the
+    /// split view has less room than its own minimums demand, and the pane that
+    /// loses the argument is squeezed to nothing.
+    static var minimumWorkspaceWidth: CGFloat {
+        max(treeMinimumThickness + inspectorMinimumThickness + 1, treemapMinimumWidth)
     }
 
-    /// The divider's own rect. The arranged subviews abut — the hairline is
-    /// drawn over their shared edge rather than in a gap between them — so the
-    /// divider is `dividerThickness` centred on that edge. A collapsed pane has
-    /// no divider to widen, and returns an empty rect rather than a band lying
-    /// over its neighbour's content.
-    private func dividerRect(at dividerIndex: Int) -> NSRect {
-        let panes = splitView.arrangedSubviews
-        guard splitView.isVertical, dividerIndex >= 0, dividerIndex + 1 < panes.count else { return .zero }
-        guard !splitViewItems[dividerIndex].isCollapsed,
-              !splitViewItems[dividerIndex + 1].isCollapsed else { return .zero }
-        let thickness = splitView.dividerThickness
-        return NSRect(
-            x: panes[dividerIndex].frame.maxX - thickness / 2,
-            y: splitView.bounds.minY,
-            width: thickness,
-            height: splitView.bounds.height
+    /// A file list shorter than this is a handful of rows and a header, and a
+    /// treemap shorter than this is a band of stripes: neither is worth the
+    /// pane it is in.
+    static let listDetailMinimumHeight: CGFloat = 200
+    static let treemapMinimumHeight: CGFloat = 200
+
+    /// The shortest window that holds both rows at their own minimums, with
+    /// the divider between them.
+    static var minimumWorkspaceHeight: CGFloat {
+        listDetailMinimumHeight + treemapMinimumHeight + 12
+    }
+
+    /// The height the treemap opens at — a little under half of the window the
+    /// app opens in, which is the proportion the layout sketch draws.
+    static let treemapOpeningHeight: CGFloat = 320
+
+    /// Whether the treemap has been opened at ``treemapOpeningHeight`` yet.
+    ///
+    /// Persisted, because the opening height is a first-run courtesy: once the
+    /// split view's own autosave has a divider position to restore, placing it
+    /// again would throw away the height the user chose.
+    var hasPlacedTreemapDivider: Bool {
+        get { preferences.hasPlacedTreemapDivider }
+        set { preferences.hasPlacedTreemapDivider = newValue }
+    }
+
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        placeTreemapDivider()
+        restoreDetailPaneState()
+    }
+
+    /// Collapsing is the one split-view state `autosaveName` does not carry,
+    /// so a pane hidden before quitting comes back visible without this.
+    private func restoreDetailPaneState() {
+        guard !hasRestoredDetailPaneState else { return }
+        hasRestoredDetailPaneState = true
+        listDetailViewController.splitViewItems[1].isCollapsed = preferences.isDetailPaneCollapsed
+    }
+
+    private var hasRestoredDetailPaneState = false
+
+    /// Opens the treemap at its band, once, the first time the workspace has a
+    /// height to divide.
+    ///
+    /// A split view controller gives the holding pane whatever its constraints
+    /// say, which at first layout is its `minimumThickness` — a 200 pt strip is
+    /// not a treemap. `setPosition` is what moves it, and it only moves it
+    /// because the map is held at ``holdsItsSize`` rather than at
+    /// `.defaultHigh`; see that constant for why the difference is the whole
+    /// story. Once placed, the map keeps this height and the row above takes
+    /// what a taller window offers.
+    func placeTreemapDivider() {
+        guard !hasPlacedTreemapDivider, splitView.bounds.height > 0 else { return }
+        hasPlacedTreemapDivider = true
+        splitView.setPosition(
+            splitView.bounds.height - Self.treemapOpeningHeight - splitView.dividerThickness,
+            ofDividerAt: 0
         )
     }
 
-    func start(root: URL, mode: ScanMode) {
+    func start(
+        root: URL,
+        mode: ScanMode,
+        packageScanMode: PackageScanMode = .detailed
+    ) {
         // A new scan invalidates every node identity the selection could name.
         selectionModel.clear()
         treemapViewController.treemapView.resetPackageExpansion()
-        model.start(root: root, mode: mode)
+        model.start(root: root, mode: mode, packageScanMode: packageScanMode)
     }
 
     /// The facts a selection is described against. `nil` until a scan has a
@@ -1028,12 +1607,45 @@ final class WorkspaceSplitViewController: NSSplitViewController, FileActionRespo
 
     @objc func revealSelectedItem(_ sender: Any?) { revealSelection() }
 
+    /// Puts the selected item's path on the pasteboard.
+    ///
+    /// The detail pane has always shown the full path and there was no way to
+    /// get it out of the app. This writes a string; it does not touch the file.
+    @objc func copySelectedPath(_ sender: Any?) {
+        guard let url = selectedURL else { return }
+        pasteboard.clearContents()
+        pasteboard.setString(url.path, forType: .string)
+    }
+
+    /// Shows or hides the detail pane.
+    ///
+    /// The pane collapses, and until this existed nothing brought it back:
+    /// there is no disclosure control on a collapsed split view item.
+    @objc func toggleDetailPane(_ sender: Any?) {
+        let item = listDetailViewController.splitViewItems[1]
+        let collapsed = !item.isCollapsed
+        item.animator().isCollapsed = collapsed
+        preferences.isDetailPaneCollapsed = collapsed
+    }
+
+    var isDetailPaneCollapsed: Bool {
+        listDetailViewController.splitViewItems[1].isCollapsed
+    }
+
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         switch menuItem.action {
-        case #selector(openSelectedItem(_:)), #selector(revealSelectedItem(_:)):
-            // Nothing to act on is the only reason either is ever disabled;
-            // there is no state in which a third command becomes available.
+        case #selector(openSelectedItem(_:)), #selector(revealSelectedItem(_:)),
+             #selector(copySelectedPath(_:)):
+            // Nothing to act on is the only reason any of them is ever
+            // disabled; there is no state in which a mutating command becomes
+            // available. An aggregate is not a file, so it has no path either.
             return selectedURL != nil
+        case #selector(toggleDetailPane(_:)):
+            // Always available, and says which way it will go.
+            menuItem.title = isDetailPaneCollapsed
+                ? MainMenu.showDetailsTitle
+                : MainMenu.hideDetailsTitle
+            return true
         default:
             return true
         }

@@ -21,7 +21,7 @@ import Foundation
 /// traverses mount points, which would silently leave the root's device; the
 /// engine recurses itself so every descent passes the boundary check
 /// (spec §3.3, §5.4).
-public struct FileManagerDirectoryProbe: DirectoryProbe {
+public struct FileManagerDirectoryProbe: PackageSummarizingProbe {
     public init() {}
 
     /// The prefetch key set — exactly the facts `EntryMeta` carries.
@@ -125,6 +125,109 @@ public struct FileManagerDirectoryProbe: DirectoryProbe {
             paths.insert(path)
         }
         return paths
+    }
+
+    /// Measures a package as a flat aggregate. Unlike the detailed scanner,
+    /// this pass requests only the metadata needed for the two totals and
+    /// counts, does not sort directory listings, and creates no node per
+    /// descendant. Files still have to be visited because macOS does not store
+    /// a reliable recursive size on a directory.
+    public func summarizePackage(
+        _ url: URL,
+        onVolume rootVolume: FileSystemIdentity?,
+        shouldStop: @Sendable () -> Bool
+    ) -> PackageSummary? {
+        let keys: [URLResourceKey] = [
+            .isDirectoryKey,
+            .isRegularFileKey,
+            .isSymbolicLinkKey,
+            .fileAllocatedSizeKey,
+            .fileSizeKey,
+            .linkCountKey,
+            .fileResourceIdentifierKey,
+            .volumeIdentifierKey,
+            .isUbiquitousItemKey,
+            .ubiquitousItemDownloadingStatusKey,
+        ]
+
+        var encounteredError = false
+        guard let enumerator = FileManager.default.enumerator(
+            at: url,
+            includingPropertiesForKeys: keys,
+            options: [],
+            errorHandler: { _, _ in
+                encounteredError = true
+                return true
+            }
+        ) else { return nil }
+
+        var diskBytes: Int64 = 0
+        var contentBytes: Int64 = 0
+        var fileCount: Int64 = 0
+        var directoryCount = 0
+        var remoteOnlyItems = 0
+        var crossedVolumeBoundaries = 0
+        var hardLinkOwners = Set<FileSystemIdentity>()
+
+        for case let child as URL in enumerator {
+            if shouldStop() { return nil }
+
+            let values: URLResourceValues
+            do {
+                values = try child.resourceValues(forKeys: Set(keys))
+            } catch {
+                encounteredError = true
+                continue
+            }
+
+            if values.isSymbolicLink == true { continue }
+
+            if values.ubiquitousItemDownloadingStatus == .notDownloaded {
+                remoteOnlyItems += 1
+                if values.isDirectory == true { enumerator.skipDescendants() }
+                continue
+            }
+
+            if let rootVolume,
+               let itemVolume = values.volumeIdentifier as? NSObject,
+               FileSystemIdentity(itemVolume) != rootVolume {
+                crossedVolumeBoundaries += 1
+                if values.isDirectory == true { enumerator.skipDescendants() }
+                continue
+            }
+
+            if values.isDirectory == true {
+                directoryCount += 1
+                continue
+            }
+            guard values.isRegularFile == true else { continue }
+
+            guard let allocation = values.fileAllocatedSize else {
+                encounteredError = true
+                continue
+            }
+
+            if let links = values.linkCount, links > 1,
+               let object = values.fileResourceIdentifier as? NSObject {
+                let identity = FileSystemIdentity(object)
+                guard hardLinkOwners.insert(identity).inserted else { continue }
+            }
+
+            let measured = Int64(max(0, allocation))
+            diskBytes += measured
+            contentBytes += Int64(max(0, values.fileSize ?? allocation))
+            fileCount += 1
+        }
+
+        return PackageSummary(
+            diskBytes: diskBytes,
+            contentBytes: contentBytes,
+            fileCount: fileCount,
+            directoryCount: directoryCount,
+            isComplete: !encounteredError,
+            remoteOnlyItems: remoteOnlyItems,
+            crossedVolumeBoundaries: crossedVolumeBoundaries
+        )
     }
 
     // MARK: - Building an `EntryMeta`

@@ -18,7 +18,8 @@ on a Release build that launches and scans a real volume.
   for a human instead.
 - **Read the decisions block at the top of `spec.md` first.** A human took four decisions on
   2026-08-18 that supersede both the spec body and the older entries below: the floor is
-  macOS 14 and the build is no longer a universal slice; the tree is published once with the
+  macOS 14 and the build is no longer pinned to a universal slice; Xcode's standard
+  architectures may still produce one. The tree is published once with the
   terminal event, never mid-scan; emission cadence is a plain interval in seconds; and the
   whole verification surface is one test plan and one app test target. Anything below
   describing a universal build, a macOS 11 floor, a mid-scan tree feed, frozen snapshots,

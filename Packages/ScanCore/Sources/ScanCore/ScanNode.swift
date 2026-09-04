@@ -147,6 +147,10 @@ public final class ScanNode: @unchecked Sendable {
     /// above.
     public private(set) var folderDescendantCount: Int
 
+    /// `true` when fast mode measured this package as one aggregate and did
+    /// not materialize its interior nodes.
+    public private(set) var isPackageSummary: Bool
+
     public private(set) var attribution: Attribution
     public private(set) var readState: ReadState
 
@@ -163,6 +167,7 @@ public final class ScanNode: @unchecked Sendable {
         self.attributedNodeCount = 0
         self.presentedDescendantCount = 0
         self.folderDescendantCount = 0
+        self.isPackageSummary = false
         self.attribution = .owned
         self.readState = .complete
     }
@@ -198,12 +203,9 @@ public final class ScanNode: @unchecked Sendable {
 
     /// The children a view shows before the user drills in.
     ///
-    /// A package is **measured through** during the scan — its real children
-    /// are right here and its aggregate is already exact — but it presents as
-    /// one collapsed item and one treemap box until the user expands it
-    /// (spec §3.4). Materializing that hierarchy later is a presentation
-    /// change; because the bytes were counted at scan time, it cannot move the
-    /// aggregate.
+    /// A detailed scan measures a package through and retains its real
+    /// children here. Fast mode keeps the same collapsed presentation but
+    /// stores only its aggregate, so there is deliberately nothing to expand.
     public var initiallyPresentedChildren: [ScanNode] {
         kind == .package ? [] : children
     }
@@ -224,6 +226,27 @@ public final class ScanNode: @unchecked Sendable {
         // length and no blocks — a cloud placeholder — has no rectangle, so
         // folding it into an aggregate hides nothing.
         attributedNodeCount = diskBytes > 0 ? 1 : 0
+    }
+
+    /// Attributes a package aggregate produced by fast mode. The bytes are
+    /// stored on the package node because there are deliberately no descendant
+    /// nodes to own them; its file/folder counts still describe the measured
+    /// interior.
+    func attributePackageSummary(
+        diskBytes: Int64,
+        contentBytes: Int64,
+        files: Int64,
+        directories: Int
+    ) {
+        ownDiskBytes = diskBytes
+        subtreeDiskBytes = diskBytes
+        ownContentBytes = contentBytes
+        subtreeContentBytes = contentBytes
+        fileCount = files
+        attributedNodeCount = diskBytes > 0 ? 1 : 0
+        presentedDescendantCount = max(0, Int(files) + directories)
+        folderDescendantCount = max(0, directories)
+        isPackageSummary = true
     }
 
     /// Adds a leaf's contribution to this ancestor. The roll-up walks the

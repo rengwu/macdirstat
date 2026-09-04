@@ -41,15 +41,17 @@ final class EventSink: @unchecked Sendable {
             }
         case .started, .finished, .failed:
             queue.append(.reliable(event))
-            if event.isTerminal {
-                producerFinished = true
-            }
         }
 
         handOffLocked()
     }
 
     /// Ends the stream. Anything already queued is still delivered first.
+    ///
+    /// A terminal event does not end the stream by itself. `ScanSession` emits
+    /// that event, releases security-scoped access, and only then calls this
+    /// method. Ending on emission let a fast consumer observe end-of-stream
+    /// before that cleanup had happened.
     func finish() {
         lock.lock()
         producerFinished = true

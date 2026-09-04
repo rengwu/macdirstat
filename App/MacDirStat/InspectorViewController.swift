@@ -70,6 +70,11 @@ struct InspectorRootView: View {
                     InspectorBody(content: content, onOpen: state.onOpen, onReveal: state.onReveal)
                         .padding(14)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        // The path is, as the builder says, the whole point —
+                        // and until this was here there was no way to get it
+                        // out of the app. Selection is read-only by
+                        // construction: it copies, it cannot edit.
+                        .textSelection(.enabled)
                 }
             } else {
                 Text("Select an item in the tree\nor treemap to see its details.")

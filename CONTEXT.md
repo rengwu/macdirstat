@@ -51,9 +51,10 @@ to. Cancelling makes a result Incomplete; excluding a mounted volume does not.
 
 **Root** — the one folder or volume a scan was pointed at. One per scan.
 
-**Package** — a directory macOS presents as a single item. Measured *through* — its
-descendants are all counted — while presenting as one row and one box until the user
-drills in. Drilling in cannot move the total, because the bytes were counted at scan time.
+**Package** — a directory macOS presents as a single item. A detailed scan measures
+*through* it and retains its descendants. Fast mode instead measures those descendants in
+one lightweight aggregate pass and retains only the package node. Both present one row and
+one box; only a detailed package can be drilled into.
 
 **Aggregate** — one treemap box standing in for many entries too small to draw. It reports
 how many entries it folded. It is not a node and has no path, so it cannot be opened.

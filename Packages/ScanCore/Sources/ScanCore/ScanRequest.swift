@@ -7,6 +7,16 @@ public enum ScanMode: Sendable, Equatable {
     case volumeRoot
 }
 
+/// How application bundles and other macOS packages are scanned.
+public enum PackageScanMode: Sendable, Equatable {
+    /// Build the complete hierarchy inside every package.
+    case detailed
+    /// Measure each package in a lightweight aggregate pass and keep it as one
+    /// atomic node. This avoids sorting and materializing the many small files
+    /// inside an app bundle while retaining its total size.
+    case summarized
+}
+
 /// The engine's time source, injectable so throttling is deterministic in
 /// tests. `now` is elapsed seconds from an arbitrary origin and must be
 /// monotonic.
@@ -36,6 +46,9 @@ public struct ScanOptions: Sendable {
     /// running total. The category counts stay exact either way — this bounds
     /// memory, not honesty.
     public var maxDetailedErrors: Int
+    /// Whether packages are expanded into the scan tree or represented by one
+    /// measured aggregate node.
+    public var packageScanMode: PackageScanMode
     public var clock: ScanClock
     /// The visited-directory guard's off switch (``VisitedDirectoryIndex``).
     ///
@@ -54,11 +67,13 @@ public struct ScanOptions: Sendable {
         progressInterval: TimeInterval = ScanOptions.defaultProgressInterval,
         cancellationBatchSize: Int = 256,
         maxDetailedErrors: Int = 1_000,
+        packageScanMode: PackageScanMode = .detailed,
         clock: ScanClock = MonotonicClock()
     ) {
         self.progressInterval = max(0, progressInterval)
         self.cancellationBatchSize = max(1, cancellationBatchSize)
         self.maxDetailedErrors = max(0, maxDetailedErrors)
+        self.packageScanMode = packageScanMode
         self.clock = clock
     }
 }

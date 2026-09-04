@@ -60,3 +60,46 @@ public extension DirectoryProbe {
         []
     }
 }
+
+/// The result of measuring a package without materializing its interior as
+/// scan nodes.
+public struct PackageSummary: Sendable, Equatable {
+    public var diskBytes: Int64
+    public var contentBytes: Int64
+    public var fileCount: Int64
+    public var directoryCount: Int
+    public var isComplete: Bool
+    public var remoteOnlyItems: Int
+    public var crossedVolumeBoundaries: Int
+
+    public init(
+        diskBytes: Int64,
+        contentBytes: Int64,
+        fileCount: Int64,
+        directoryCount: Int,
+        isComplete: Bool = true,
+        remoteOnlyItems: Int = 0,
+        crossedVolumeBoundaries: Int = 0
+    ) {
+        self.diskBytes = max(0, diskBytes)
+        self.contentBytes = max(0, contentBytes)
+        self.fileCount = max(0, fileCount)
+        self.directoryCount = max(0, directoryCount)
+        self.isComplete = isComplete
+        self.remoteOnlyItems = max(0, remoteOnlyItems)
+        self.crossedVolumeBoundaries = max(0, crossedVolumeBoundaries)
+    }
+}
+
+/// An optional capability used only by ``PackageScanMode/summarized``.
+///
+/// It remains read-only: implementations may inspect directory entries and
+/// metadata, but never file contents. A probe without this capability simply
+/// falls back to the detailed package walk.
+public protocol PackageSummarizingProbe: DirectoryProbe {
+    func summarizePackage(
+        _ url: URL,
+        onVolume volume: FileSystemIdentity?,
+        shouldStop: @Sendable () -> Bool
+    ) -> PackageSummary?
+}

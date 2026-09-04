@@ -413,69 +413,339 @@ final class AppShellTests: XCTestCase {
 
         let controller = MainWindowController()
         let workspace = controller.workspaceViewController
-        XCTAssertEqual(workspace.splitViewItems.count, 3)
-        XCTAssertTrue(workspace.splitViewItems[0].viewController is DirectoryTreeViewController)
+        // The workspace stacks: list and detail across the top, the treemap
+        // across the whole width below them.
+        XCTAssertFalse(workspace.splitView.isVertical)
+        XCTAssertEqual(workspace.splitViewItems.count, 2)
+        XCTAssertTrue(workspace.splitViewItems[0].viewController is ListDetailSplitViewController)
         XCTAssertTrue(workspace.splitViewItems[1].viewController is TreemapPaneViewController)
-        XCTAssertTrue(workspace.splitViewItems[2].viewController is InspectorViewController)
+        XCTAssertFalse(workspace.splitViewItems[0].canCollapse)
         XCTAssertFalse(workspace.splitViewItems[1].canCollapse)
-        XCTAssertTrue(workspace.splitViewItems[2].canCollapse)
-        XCTAssertEqual(workspace.splitViewItems[2].preferredThicknessFraction, 300.0 / 1_100.0, accuracy: 0.0001)
-        XCTAssertEqual(workspace.splitViewItems[2].minimumThickness, 260)
-        XCTAssertEqual(workspace.splitViewItems[2].maximumThickness, 360)
-        XCTAssertLessThan(workspace.splitViewItems[1].holdingPriority, workspace.splitViewItems[2].holdingPriority)
+        XCTAssertLessThan(
+            workspace.splitViewItems[0].holdingPriority,
+            workspace.splitViewItems[1].holdingPriority,
+            "extra height belongs to the list, not the map"
+        )
+
+        let row = workspace.listDetailViewController
+        XCTAssertTrue(row.splitView.isVertical)
+        XCTAssertEqual(row.splitViewItems.count, 2)
+        XCTAssertTrue(row.splitViewItems[0].viewController is DirectoryTreeViewController)
+        XCTAssertTrue(row.splitViewItems[1].viewController is InspectorViewController)
+        XCTAssertFalse(row.splitViewItems[0].canCollapse)
+        XCTAssertTrue(row.splitViewItems[1].canCollapse)
+        XCTAssertEqual(row.splitViewItems[1].preferredThicknessFraction, 300.0 / 1_100.0, accuracy: 0.0001)
+        XCTAssertEqual(row.splitViewItems[1].minimumThickness, 260)
+        XCTAssertEqual(row.splitViewItems[1].maximumThickness, 360)
+        XCTAssertLessThan(
+            row.splitViewItems[0].holdingPriority,
+            row.splitViewItems[1].holdingPriority,
+            "extra width belongs to the list, not the detail pane"
+        )
         XCTAssertNotNil(controller.window?.toolbar)
         XCTAssertEqual(controller.window?.toolbarStyle, .unified)
         XCTAssertNotNil(controller.statusBarController.view.superview)
     }
 
-    /// §7.2: "every split divider drags". The tree pane's own drag has to have
-    /// somewhere to go, and has to be catchable on a 1 pt hairline.
-    func test_treePaneIsResizableAndItsDividerIsCatchable() {
+    /// §7.2: "every split divider drags". Both of the workspace's dividers
+    /// have to have somewhere to go, and both have to be catchable on a 1 pt
+    /// hairline — the vertical one between the list and the detail, and the
+    /// horizontal one the treemap hangs under.
+    func test_everySplitDividerDragsAndIsCatchable() {
         let controller = MainWindowController()
-        let workspace = controller.workspaceViewController
-        let tree = workspace.splitViewItems[0]
-
-        XCTAssertEqual(tree.minimumThickness, WorkspaceSplitViewController.treeMinimumThickness)
-        XCTAssertEqual(tree.maximumThickness, WorkspaceSplitViewController.treeMaximumThickness)
-        XCTAssertGreaterThan(
-            tree.maximumThickness - tree.minimumThickness, 200,
-            "a range this pane cannot travel in is a fixed pane wearing a divider"
-        )
-        // Wide enough for all four columns at their design widths at once.
-        XCTAssertGreaterThanOrEqual(tree.maximumThickness, 220 + 90 + 116 + 72)
-
         controller.window?.setContentSize(NSSize(width: 1_400, height: 800))
-        workspace.splitView.layoutSubtreeIfNeeded()
-        let split = workspace.splitView
+        let workspace = controller.workspaceViewController
+        let row = workspace.listDetailViewController
+        let list = row.splitViewItems[0]
+        let detail = row.splitViewItems[1]
 
-        for dividerIndex in 0..<2 {
-            let grab = workspace.splitView(split, additionalEffectiveRectOfDividerAt: dividerIndex)
-            let edge = split.arrangedSubviews[dividerIndex].frame.maxX
-            XCTAssertLessThan(grab.minX, edge, "divider \(dividerIndex) has no slop on its leading side")
-            XCTAssertGreaterThan(grab.maxX, edge, "divider \(dividerIndex) has no slop on its trailing side")
-            XCTAssertEqual(
-                grab.width,
-                split.dividerThickness + 2 * WorkspaceSplitViewController.dividerGrabSlop,
-                accuracy: 0.001
-            )
-            XCTAssertEqual(grab.height, split.bounds.height, accuracy: 0.001)
-        }
+        // The opening height is applied by raising the treemap's floor for one
+        // layout pass and handing it back on the next turn of the run loop, so
+        // the settled floors are the ones to assert on.
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        XCTAssertEqual(list.minimumThickness, WorkspaceSplitViewController.treeMinimumThickness)
+        XCTAssertGreaterThanOrEqual(list.minimumThickness, DirectoryTreeViewController.minimumPaneWidth)
+        XCTAssertEqual(list.maximumThickness, NSSplitViewItem.unspecifiedDimension,
+                       "the list takes the slack; what stops the drag is the detail pane's floor")
+        XCTAssertGreaterThan(
+            detail.maximumThickness - detail.minimumThickness, 80,
+            "a range this divider cannot travel in is a fixed pane wearing a divider"
+        )
+        XCTAssertFalse(list.canCollapse, "a pane with no toolbar toggle must not be collapsible")
+
+        XCTAssertGreaterThan(
+            workspace.splitView.bounds.height
+                - WorkspaceSplitViewController.listDetailMinimumHeight
+                - WorkspaceSplitViewController.treemapMinimumHeight,
+            200,
+            "the horizontal divider has nowhere to travel in this window"
+        )
+
+        workspace.view.layoutSubtreeIfNeeded()
+        workspace.splitView.layoutSubtreeIfNeeded()
+        row.splitView.layoutSubtreeIfNeeded()
+
+        // The vertical divider, between the list and the detail.
+        let rowSplit = row.splitView
+        let vertical = row.splitView(rowSplit, additionalEffectiveRectOfDividerAt: 0)
+        let verticalEdge = rowSplit.arrangedSubviews[0].frame.maxX
+        XCTAssertLessThan(vertical.minX, verticalEdge, "the list divider has no slop on its leading side")
+        XCTAssertGreaterThan(vertical.maxX, verticalEdge, "the list divider has no slop on its trailing side")
+        XCTAssertEqual(
+            vertical.width,
+            rowSplit.dividerThickness + 2 * GrabbableSplitViewController.dividerGrabSlop,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(vertical.height, rowSplit.bounds.height, accuracy: 0.001)
+
+        // The horizontal one, between the top row and the treemap. The band is
+        // the full width of the window, so it is caught wherever the pointer
+        // happens to be along it.
+        let split = workspace.splitView
+        let panes = split.arrangedSubviews.map(\.frame)
+        let horizontal = workspace.splitView(split, additionalEffectiveRectOfDividerAt: 0)
+        let horizontalEdge = (max(panes[0].minY, panes[1].minY) + min(panes[0].maxY, panes[1].maxY)) / 2
+        XCTAssertLessThan(horizontal.minY, horizontalEdge, "the treemap divider has no slop below it")
+        XCTAssertGreaterThan(horizontal.maxY, horizontalEdge, "the treemap divider has no slop above it")
+        XCTAssertEqual(
+            horizontal.height,
+            split.dividerThickness + 2 * GrabbableSplitViewController.dividerGrabSlop,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(horizontal.width, split.bounds.width, accuracy: 0.001)
+
+        // The pointer is told the same thing the hit test knows: both split
+        // views draw a visible divider and put a resize cursor over the whole
+        // band, so a divider that drags also *looks* like one.
+        XCTAssertTrue(split is WorkspaceSplitView)
+        XCTAssertTrue(rowSplit is WorkspaceSplitView)
+        XCTAssertEqual(split.dividerColor, .separatorColor)
+        XCTAssertEqual(rowSplit.dividerColor, .separatorColor)
+        XCTAssertEqual(workspace.grabBand(forDividerAt: 0), horizontal)
+        XCTAssertEqual(row.grabBand(forDividerAt: 0), vertical)
 
         // A collapsed pane has no hairline, so it gets no band over the pane
         // that took its place.
-        workspace.splitViewItems[2].isCollapsed = true
-        split.layoutSubtreeIfNeeded()
-        XCTAssertEqual(workspace.splitView(split, additionalEffectiveRectOfDividerAt: 1), .zero)
+        detail.isCollapsed = true
+        rowSplit.layoutSubtreeIfNeeded()
+        XCTAssertEqual(row.splitView(rowSplit, additionalEffectiveRectOfDividerAt: 0), .zero)
     }
 
-    func test_treeUsesSourceListWithSettledColumnsAndDefaultSizeSort() {
+    func test_treeUsesACompactTableWithSettledColumnsAndDefaultSizeSort() {
         let controller = DirectoryTreeViewController(formatter: DisplayFormatter(locale: Locale(identifier: "en_US")))
         controller.loadView()
+        let outline = controller.outlineView
 
-        XCTAssertEqual(controller.outlineView.style, .sourceList)
-        XCTAssertEqual(controller.outlineView.tableColumns.map(\.title), ["Name", "Size", "%", "Items"])
-        XCTAssertEqual(controller.outlineView.sortDescriptors.first?.key, TreeColumn.size.rawValue)
-        XCTAssertEqual(controller.outlineView.sortDescriptors.first?.ascending, false)
+        XCTAssertEqual(outline.style, .fullWidth)
+        XCTAssertEqual(outline.tableColumns.map(\.title), ["Name", "Size", "%", "Items"])
+        XCTAssertEqual(outline.sortDescriptors.first?.key, TreeColumn.size.rawValue)
+        XCTAssertEqual(outline.sortDescriptors.first?.ascending, false)
+
+        // A row is worth as many bytes of information as it can carry, and no
+        // more height than that needs.
+        XCTAssertEqual(outline.rowSizeStyle, .custom)
+        XCTAssertEqual(outline.rowHeight, DirectoryTreeViewController.rowHeight)
+        XCTAssertLessThanOrEqual(outline.rowHeight, 22)
+
+        // Only the name column moves with the pane, and it does not creep
+        // wider on every disclosure.
+        XCTAssertEqual(outline.columnAutoresizingStyle, .firstColumnOnlyAutoresizingStyle)
+        XCTAssertFalse(outline.autoresizesOutlineColumn)
+    }
+
+    /// The tree's columns and the pane it lives in are one measurement, and
+    /// the window is another: a window that cannot hold the three panes at
+    /// their minimums is a window in which one pane loses its width to the
+    /// others and its divider stops moving.
+    func test_everyColumnFitsTheNarrowestPaneInTheNarrowestWindow() {
+        let controller = DirectoryTreeViewController(formatter: DisplayFormatter(locale: Locale(identifier: "en_US")))
+        controller.loadView()
+        let outline = controller.outlineView
+
+        // Only the name column gives way, so the floor counts it at its
+        // minimum and the other three at the width their figures need.
+        let expectedFloor = DirectoryTreeViewController.columnLayout
+            .reduce(0) { $0 + ($1.column == .name ? $1.minWidth : $1.width) }
+            + DirectoryTreeViewController.tableChromeWidth
+        XCTAssertEqual(DirectoryTreeViewController.minimumPaneWidth, expectedFloor, accuracy: 0.001)
+        XCTAssertEqual(outline.tableColumns.count, 4)
+
+        XCTAssertLessThanOrEqual(
+            DirectoryTreeViewController.minimumPaneWidth,
+            WorkspaceSplitViewController.treeMinimumThickness,
+            "the pane cannot be narrower than the columns it has to show"
+        )
+
+        let window = MainWindowController().window
+        XCTAssertGreaterThanOrEqual(
+            window?.minSize.width ?? 0,
+            WorkspaceSplitViewController.minimumWorkspaceWidth
+        )
+    }
+}
+
+@MainActor
+final class TreePaneWidthTests: XCTestCase {
+    /// §7.2 again, from the other end: a divider that drags is no use if the
+    /// pane opens too narrow to read and the user has to drag it every launch.
+    /// The list is the pane the top row's slack goes to, so it opens wider than
+    /// the width its columns are designed at.
+    func test_theFileListOpensWideEnoughForEveryColumn() throws {
+        let controller = MainWindowController()
+        controller.window?.setContentSize(NSSize(width: 1_400, height: 800))
+        let workspace = controller.workspaceViewController
+        workspace.view.layoutSubtreeIfNeeded()
+        workspace.splitView.layoutSubtreeIfNeeded()
+
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        workspace.view.layoutSubtreeIfNeeded()
+        let row = workspace.listDetailViewController
+        row.splitView.layoutSubtreeIfNeeded()
+        let pane = row.splitView.arrangedSubviews[0].frame.width
+        XCTAssertGreaterThanOrEqual(pane, DirectoryTreeViewController.designPaneWidth)
+
+        // Nothing hangs off the right edge: what the table wants is what the
+        // pane shows.
+        let outline = workspace.treeViewController.outlineView
+        let visible = try XCTUnwrap(outline.enclosingScrollView).contentView.bounds.width
+        XCTAssertGreaterThanOrEqual(visible + 0.5, outline.frame.width)
+
+        // And it is still free to travel down to its floor.
+        XCTAssertEqual(
+            row.splitViewItems[0].minimumThickness,
+            WorkspaceSplitViewController.treeMinimumThickness
+        )
+    }
+
+    /// The treemap opens as a band worth reading area in — a little under half
+    /// the window — rather than the 200 pt strip its floor alone would give it
+    /// under a list holding all the height.
+    func test_theTreemapOpensAtABandWorthReading() {
+        let controller = MainWindowController(preferences: Preferences(store: InMemoryPreferenceStore()))
+        controller.window?.setContentSize(NSSize(width: 1_400, height: 800))
+        let workspace = controller.workspaceViewController
+        workspace.view.layoutSubtreeIfNeeded()
+        workspace.viewDidAppear()
+        workspace.splitView.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(
+            workspace.splitView.arrangedSubviews[1].frame.height,
+            WorkspaceSplitViewController.treemapOpeningHeight,
+            accuracy: 1
+        )
+        XCTAssertGreaterThan(
+            WorkspaceSplitViewController.treemapOpeningHeight,
+            WorkspaceSplitViewController.treemapMinimumHeight,
+            "an opening height equal to the floor is a map that never opens wider than a strip"
+        )
+        // The list takes the rest, and takes what a taller window adds.
+        XCTAssertGreaterThan(workspace.splitView.arrangedSubviews[0].frame.height, 400)
+        XCTAssertLessThan(
+            workspace.splitViewItems[0].holdingPriority,
+            workspace.splitViewItems[1].holdingPriority
+        )
+    }
+
+    /// The bug this guards against: a pane held at `.defaultHigh` (750)
+    /// outranks the constraint AppKit drags a divider with
+    /// (`.dragThatCannotResizeWindow`, 492), so the divider takes the cursor
+    /// and then refuses to move. Every holding pane sits at
+    /// ``GrabbableSplitViewController/holdsItsSize`` instead, which is under
+    /// it — §7.2, "every split divider drags".
+    func test_noPaneIsHeldTooHardToDrag() {
+        let controller = MainWindowController()
+        let workspace = controller.workspaceViewController
+        let items = workspace.splitViewItems + workspace.listDetailViewController.splitViewItems
+
+        for item in items {
+            XCTAssertLessThan(
+                item.holdingPriority,
+                NSLayoutConstraint.Priority.dragThatCannotResizeWindow,
+                "a pane held at or above the drag's own priority cannot be dragged"
+            )
+        }
+        XCTAssertLessThan(
+            GrabbableSplitViewController.holdsItsSize,
+            NSLayoutConstraint.Priority.dragThatCannotResizeWindow
+        )
+        XCTAssertGreaterThan(GrabbableSplitViewController.holdsItsSize, .defaultLow)
+    }
+
+    /// Placing the map does not pin it there: its floor is the strip height all
+    /// along, so the divider drags the whole way down.
+    func test_theTreemapKeepsItsFloorWhileItIsPlaced() {
+        let controller = MainWindowController(preferences: Preferences(store: InMemoryPreferenceStore()))
+        controller.window?.setContentSize(NSSize(width: 1_400, height: 800))
+        let workspace = controller.workspaceViewController
+        workspace.view.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(
+            workspace.splitViewItems[1].minimumThickness,
+            WorkspaceSplitViewController.treemapMinimumHeight
+        )
+        XCTAssertFalse(workspace.hasPlacedTreemapDivider)
+
+        workspace.viewDidAppear()
+        XCTAssertTrue(workspace.hasPlacedTreemapDivider)
+        XCTAssertEqual(
+            workspace.splitViewItems[1].minimumThickness,
+            WorkspaceSplitViewController.treemapMinimumHeight
+        )
+
+        // The divider goes where it is put, in both directions.
+        workspace.splitView.setPosition(500, ofDividerAt: 0)
+        workspace.splitView.layoutSubtreeIfNeeded()
+        XCTAssertEqual(workspace.splitView.arrangedSubviews[0].frame.height, 500, accuracy: 1)
+
+        workspace.splitView.setPosition(250, ofDividerAt: 0)
+        workspace.splitView.layoutSubtreeIfNeeded()
+        XCTAssertEqual(workspace.splitView.arrangedSubviews[0].frame.height, 250, accuracy: 1)
+
+        // Pushed past the end, it stops exactly at the map's floor — the map
+        // really can be dragged all the way down to a strip.
+        workspace.splitView.setPosition(10_000, ofDividerAt: 0)
+        workspace.splitView.layoutSubtreeIfNeeded()
+        XCTAssertEqual(
+            workspace.splitView.arrangedSubviews[1].frame.height,
+            WorkspaceSplitViewController.treemapMinimumHeight,
+            accuracy: 1
+        )
+    }
+
+    /// The floor is a width the tree can actually be read at: squeezed all
+    /// the way down, the name gives way and every column is still on screen.
+    func test_atItsFloorTheTreeStillShowsEveryColumn() throws {
+        let controller = MainWindowController()
+        controller.window?.setContentSize(NSSize(width: 1_400, height: 800))
+        let workspace = controller.workspaceViewController
+        workspace.view.layoutSubtreeIfNeeded()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+
+        // Pin the pane to its floor the way a drag to the left end would.
+        let row = workspace.listDetailViewController
+        let list = row.splitViewItems[0]
+        list.maximumThickness = WorkspaceSplitViewController.treeMinimumThickness
+        row.splitView.layoutSubtreeIfNeeded()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        defer { list.maximumThickness = NSSplitViewItem.unspecifiedDimension }
+
+        XCTAssertEqual(
+            row.splitView.arrangedSubviews[0].frame.width,
+            WorkspaceSplitViewController.treeMinimumThickness,
+            accuracy: 1
+        )
+        let outline = workspace.treeViewController.outlineView
+        let visible = try XCTUnwrap(outline.enclosingScrollView).contentView.bounds.width
+        XCTAssertGreaterThanOrEqual(
+            visible + 0.5, outline.frame.width,
+            "a column is scrolled off the pane's right edge at its narrowest"
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(outline.tableColumns.first).width,
+            DirectoryTreeViewController.columnLayout[0].minWidth,
+            accuracy: 1,
+            "the name column is the one that gives way"
+        )
     }
 }
 

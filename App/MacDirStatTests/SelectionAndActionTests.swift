@@ -310,7 +310,10 @@ final class ReadOnlyActionTests: XCTestCase {
                 at: NSPoint(x: file.frame.x + file.frame.width / 2, y: file.frame.y + file.frame.height / 2)
             )
         )
-        XCTAssertEqual(menu.items.map(\.title), [FileActionMenu.openTitle, FileActionMenu.revealTitle])
+        XCTAssertEqual(
+            menu.items.filter { !$0.isSeparatorItem }.map(\.title),
+            [FileActionMenu.openTitle, FileActionMenu.revealTitle, FileActionMenu.copyPathTitle]
+        )
         XCTAssertEqual(
             workspace.selectionModel.selection?.node?.name,
             "dominant.mp4",
@@ -335,9 +338,21 @@ final class ReadOnlyActionTests: XCTestCase {
 
         let contextMenu = FileActionMenu.make()
         XCTAssertEqual(
-            contextMenu.items.map(\.title),
-            [FileActionMenu.openTitle, FileActionMenu.revealTitle],
-            "the context menu is these two items and never gains a third"
+            contextMenu.items.filter { !$0.isSeparatorItem }.map(\.title),
+            [FileActionMenu.openTitle, FileActionMenu.revealTitle, FileActionMenu.copyPathTitle],
+            "the context menu is these three and never gains a fourth"
+        )
+        // The point of ticket 01, decision 3 restated as what it protects:
+        // every item here either reads a file or reads a path. None writes.
+        XCTAssertTrue(
+            contextMenu.items.filter { !$0.isSeparatorItem }.allSatisfy { item in
+                [
+                    #selector(FileActionResponding.openSelectedItem(_:)),
+                    #selector(FileActionResponding.revealSelectedItem(_:)),
+                    #selector(PathCopying.copySelectedPath(_:)),
+                ].contains(item.action)
+            },
+            "a context-menu item that sends anything but the three read-only actions"
         )
 
         let mainMenuTitles = MainMenu.make().items.flatMap { item in
@@ -400,8 +415,10 @@ final class WorkspaceLayoutTests: XCTestCase {
         XCTAssertEqual(hosted?.contentHuggingPriority(for: .horizontal), .defaultLow)
     }
 
-    /// And the three panes then fill the height the window gives them.
-    func test_theThreePanesFillTheContainer() throws {
+    /// And the panes then fill the space the window gives them: the two rows
+    /// span the workspace's height between them, and the top row's own two
+    /// panes are each as tall as that row.
+    func test_theWorkspacePanesFillTheContainer() throws {
         let controller = MainWindowController()
         let container = try XCTUnwrap(controller.contentViewController?.view)
         container.frame = NSRect(x: 0, y: 0, width: 1_100, height: 700)
@@ -409,10 +426,22 @@ final class WorkspaceLayoutTests: XCTestCase {
 
         let statusHeight = controller.statusBarController.view.frame.height
         XCTAssertGreaterThan(statusHeight, 0)
-        for item in controller.workspaceViewController.splitViewItems {
+        let workspace = controller.workspaceViewController
+        XCTAssertEqual(workspace.view.frame.height, 700 - statusHeight, accuracy: 0.5)
+
+        let rows = workspace.splitView.arrangedSubviews.map(\.frame)
+        XCTAssertEqual(rows.count, 2)
+        for row in rows {
+            XCTAssertGreaterThan(row.height, 0, "a row squeezed to nothing is a row nobody can read")
+        }
+        let spanned = (rows.map(\.maxY).max() ?? 0) - (rows.map(\.minY).min() ?? 0)
+        XCTAssertEqual(spanned, workspace.splitView.bounds.height, accuracy: 1)
+
+        let row = workspace.listDetailViewController
+        for item in row.splitViewItems {
             XCTAssertEqual(
                 item.viewController.view.frame.height,
-                700 - statusHeight,
+                row.view.frame.height,
                 accuracy: 0.5,
                 "\(type(of: item.viewController)) is \(item.viewController.view.frame.height) pt tall"
             )

@@ -1,12 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-   MacDirStat-CI — the one-command local gate (spec §9.1).
+   MacDirStat-CI — the app-test part of the local gate (spec §9.1).
 
-   Runs every test target except performance. The default plan is CI; an RC
-   additionally runs the CI-ThreadSanitizer plan once as a diagnostic:
-
-      xcodebuild test -project MacDirStat.xcodeproj -scheme MacDirStat-CI \
-         -testPlan CI -destination 'platform=macOS'
+   The package suites run through SwiftPM before this scheme. `make test`
+   performs both package tests and then this app test action.
 -->
 <Scheme
    LastUpgradeVersion = "1520"
@@ -40,9 +37,6 @@
          <TestPlanReference
             reference = "container:TestPlans/CI.xctestplan"
             default = "YES">
-         </TestPlanReference>
-         <TestPlanReference
-            reference = "container:TestPlans/CI-ThreadSanitizer.xctestplan">
          </TestPlanReference>
       </TestPlans>
    </TestAction>

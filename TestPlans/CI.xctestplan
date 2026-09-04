@@ -16,27 +16,6 @@
   "testTargets": [
     {
       "target": {
-        "containerPath": "container:Packages/ScanCore",
-        "identifier": "ScanCoreTests",
-        "name": "ScanCoreTests"
-      }
-    },
-    {
-      "target": {
-        "containerPath": "container:Packages/ScanCore",
-        "identifier": "ScanCoreFileSystemTests",
-        "name": "ScanCoreFileSystemTests"
-      }
-    },
-    {
-      "target": {
-        "containerPath": "container:Packages/TreemapLayout",
-        "identifier": "TreemapLayoutTests",
-        "name": "TreemapLayoutTests"
-      }
-    },
-    {
-      "target": {
         "containerPath": "container:MacDirStat.xcodeproj",
         "identifier": "AB000000000000000000A002",
         "name": "MacDirStatTests"
