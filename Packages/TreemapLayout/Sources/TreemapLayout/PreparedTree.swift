@@ -35,19 +35,24 @@ enum PreparedTree<Node: TreemapInputNode> {
     /// Zero attributed bytes means no area, so no rectangle and no subtree
     /// (spec §6.2). The entry stays in the tree view; it simply has nothing to
     /// draw.
-    static func children(of node: Node) -> [PreparedChild<Node>] {
+    static func children(of node: Node, shouldCancel: () -> Bool = { false }) -> [PreparedChild<Node>]? {
         var prepared: [PreparedChild<Node>] = []
         var ordinal = 0
-        for child in node.treemapPresentedChildren {
+        let completed = node.treemapForEachPresentedChild { child in
+            if ordinal & 255 == 0, shouldCancel() { return false }
             let bytes = child.treemapAttributedBytes
-            guard bytes > 0 else { continue }
+            guard bytes > 0 else { return true }
             prepared.append(
                 PreparedChild(node: child, bytes: bytes, name: child.treemapName, ordinal: ordinal)
             )
             ordinal += 1
+            return true
         }
-        prepared.sort(by: precedes)
-        return prepared
+        guard completed, !shouldCancel() else { return nil }
+        if !node.treemapPresentedChildrenAreInLayoutOrder {
+            prepared.sort(by: precedes)
+        }
+        return shouldCancel() ? nil : prepared
     }
 
     /// Child order (spec §6.1): **bytes descending, ties by name ascending in

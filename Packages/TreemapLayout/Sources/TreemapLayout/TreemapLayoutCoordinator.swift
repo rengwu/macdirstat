@@ -22,12 +22,10 @@ public enum TreemapLayoutExecution: Sendable, Equatable {
 /// and the view redraws when it does.
 ///
 /// **One at a time, newest wins.** A request that arrives while a layout is
-/// running does not start a second one — it replaces what runs next. During a
-/// live resize that means the coordinator lags by at most one layout instead of
-/// queueing dozens, and it never occupies more than one core. The running
-/// layout is always allowed to finish rather than being abandoned: it is a
-/// synchronous, allocation-light walk with nowhere to check for cancellation,
-/// and its result is still a better picture than none.
+/// running does not start a second one — it replaces what runs next and
+/// cancels the obsolete walk at its next bounded checkpoint. During a live
+/// resize that means stale geometry stops consuming CPU while the newest size
+/// waits, without ever occupying more than one core.
 ///
 /// The coordinator owns *when*, never *what*: the geometry is
 /// ``TreemapLayout/layout(tree:viewport:budget:)``'s, unchanged and identical
@@ -69,8 +67,11 @@ public final class TreemapLayoutCoordinator<Node: TreemapInputNode & Sendable> {
     public private(set) var layoutCount = 0
     public private(set) var lastLayoutSeconds: TimeInterval = 0
     public private(set) var maximumLayoutSeconds: TimeInterval = 0
+    /// Work stopped because a newer request (or invalidation) made it stale.
+    public private(set) var cancelledLayoutCount = 0
 
     private var inFlight: Request?
+    private var inFlightTask: Task<Void, Never>?
     private var pending: (tree: Node, request: Request)?
     private var settleWaiters: [CheckedContinuation<Void, Never>] = []
 
@@ -95,16 +96,27 @@ public final class TreemapLayoutCoordinator<Node: TreemapInputNode & Sendable> {
         case .immediate:
             adopt(compute(tree: tree, request: request), for: request)
         case .background:
-            guard inFlight != request else { return }
+            if resultRequest == request {
+                pending = nil
+                inFlightTask?.cancel()
+                return
+            }
+            if inFlight == request, pending == nil, inFlightTask?.isCancelled == false { return }
+            if pending?.request == request { return }
             pending = (tree, request)
-            if inFlight == nil { startPending() }
+            if inFlight == nil {
+                startPending()
+            } else {
+                inFlightTask?.cancel()
+            }
         }
     }
 
     /// Forgets the held draw list — there is nothing to show. Any layout
-    /// already running still lands; it is simply for a request nobody wants,
-    /// and the next `request` supersedes it.
+    /// already running is cancelled at its next checkpoint.
     public func invalidate() {
+        pending = nil
+        inFlightTask?.cancel()
         guard result != nil || resultRequest != nil else { return }
         result = nil
         resultRequest = nil
@@ -128,18 +140,32 @@ public final class TreemapLayoutCoordinator<Node: TreemapInputNode & Sendable> {
         inFlight = request
         // Copied out so the detached task captures a value, not the actor.
         let budget = self.budget
-        Task.detached(priority: .userInitiated) { [weak self] in
+        inFlightTask = Task.detached(priority: .userInitiated) { [weak self] in
             let began = ProcessInfo.processInfo.systemUptime
-            let computed = TreemapLayout.layout(tree: tree, viewport: request.viewport, budget: budget)
+            let computed = TreemapLayout.layoutCancellable(
+                tree: tree,
+                viewport: request.viewport,
+                budget: budget,
+                shouldCancel: { Task.isCancelled }
+            )
             let elapsed = ProcessInfo.processInfo.systemUptime - began
             await self?.finish(computed, for: request, seconds: elapsed)
         }
     }
 
-    private func finish(_ computed: TreemapLayoutResult<Node>, for request: Request, seconds: TimeInterval) {
+    private func finish(_ computed: TreemapLayoutResult<Node>?, for request: Request, seconds: TimeInterval) {
+        guard inFlight == request else { return }
         inFlight = nil
-        record(seconds: seconds)
-        adopt(computed, for: request)
+        inFlightTask = nil
+        if let computed {
+            record(seconds: seconds)
+            // A newer pending request owns the screen; never flash stale
+            // geometry if this walk crossed the finish line while cancellation
+            // was being delivered.
+            if pending == nil { adopt(computed, for: request) }
+        } else {
+            cancelledLayoutCount += 1
+        }
         if pending != nil {
             startPending()
         } else {

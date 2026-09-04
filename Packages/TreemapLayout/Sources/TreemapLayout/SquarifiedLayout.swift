@@ -16,16 +16,25 @@ enum SquarifiedLayout {
     ///   - rect: the region to tile.
     /// - Returns: one rectangle per weight, in input order.
     static func tile(weights: [Double], in rect: TreemapRect) -> [TreemapRect] {
-        guard !weights.isEmpty, rect.width > 0, rect.height > 0 else { return [] }
+        var placed: [TreemapRect] = []
+        tile(weights: weights, in: rect, into: &placed)
+        return placed
+    }
+
+    /// Buffer-reusing form used by the full tree walk. A layout opens many
+    /// directories, so retaining this capacity avoids a weights-sized result
+    /// allocation for every squarify pass and every merge round.
+    static func tile(weights: [Double], in rect: TreemapRect, into placed: inout [TreemapRect]) {
+        placed.removeAll(keepingCapacity: true)
+        guard !weights.isEmpty, rect.width > 0, rect.height > 0 else { return }
         var total = 0.0
         for weight in weights { total += weight }
-        guard total > 0 else { return [] }
+        guard total > 0 else { return }
 
         // Points² per unit of weight. Fixed once for the whole rectangle, so
         // rows never renormalize and cumulative rounding cannot creep in.
         let scale = rect.area / total
 
-        var placed: [TreemapRect] = []
         placed.reserveCapacity(weights.count)
 
         // Rows consume the rectangle's area exactly, so the free region should
@@ -107,7 +116,6 @@ enum SquarifiedLayout {
         while placed.count < weights.count {
             placed.append(TreemapRect(x: free.x, y: free.y, width: 0, height: 0))
         }
-        return placed
     }
 
     /// The worst width-to-height ratio a row would have if laid out at

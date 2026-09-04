@@ -66,6 +66,17 @@ public protocol TreemapInputNode {
     /// unreadable entries of unknowable size) report `0` and get no rectangle.
     var treemapAttributedBytes: Int64 { get }
     var treemapPresentedChildren: [Self] { get }
+    /// Visits the presented children without requiring an intermediate array.
+    /// Production adapters that already own reference-typed children can
+    /// override this; the default preserves the convenient array seam for
+    /// fixtures and small value trees.
+    /// Return `false` from `visit` to stop early.
+    @discardableResult
+    func treemapForEachPresentedChild(_ visit: (Self) -> Bool) -> Bool
+    /// `true` when the visitor already emits positive-byte children in the
+    /// layout's bytes/name/discovery order. Such adapters can cache that order
+    /// with their immutable source tree and avoid sorting on every relayout.
+    var treemapPresentedChildrenAreInLayoutOrder: Bool { get }
     /// Entries with positive attributed bytes in this entry's *presented*
     /// subtree, counting this entry. Exactly the entries that would get a
     /// rectangle if the whole subtree were drawn — which is the number an
@@ -77,6 +88,14 @@ public protocol TreemapInputNode {
 }
 
 extension TreemapInputNode {
+    @discardableResult
+    public func treemapForEachPresentedChild(_ visit: (Self) -> Bool) -> Bool {
+        for child in treemapPresentedChildren where !visit(child) { return false }
+        return true
+    }
+
+    public var treemapPresentedChildrenAreInLayoutOrder: Bool { false }
+
     /// The walking default: correct for any conformer, and O(subtree).
     ///
     /// Iterative rather than recursive, for the same reason the layout is: a
@@ -87,8 +106,9 @@ extension TreemapInputNode {
         var stack: [Self] = [self]
         while let node = stack.popLast() {
             count += 1
-            for child in node.treemapPresentedChildren where child.treemapAttributedBytes > 0 {
-                stack.append(child)
+            node.treemapForEachPresentedChild { child in
+                if child.treemapAttributedBytes > 0 { stack.append(child) }
+                return true
             }
         }
         return count
