@@ -2,6 +2,184 @@ import AppKit
 import ScanCore
 import TreemapLayout
 
+/// Geometry-derived data compiled once when a layout arrives. Drawing and
+/// interaction used to rediscover all of this by linearly scanning and
+/// re-snapping the complete box list on every mouse event and every dirty-rect
+/// repaint.
+private struct TreemapRenderSnapshot {
+    typealias Request = TreemapLayoutCoordinator<TreemapNodeRef>.Request
+
+    let request: Request
+    let backingScale: Double
+    let snappedRects: [NSRect]
+    let filledIndices: [Int]
+    let labelledIndices: [Int]
+    let outlinedIndices: [Int]
+    let nodeBoxByIdentity: [ObjectIdentifier: Int]
+    let aggregateBoxByDirectoryIdentity: [ObjectIdentifier: Int]
+    let spatialIndex: TreemapSpatialIndex
+
+    init(result: TreemapLayoutResult<TreemapNodeRef>, request: Request, backingScale: Double) {
+        self.request = request
+        self.backingScale = backingScale
+
+        var snapped: [NSRect] = []
+        var filled: [Int] = []
+        var labelled: [Int] = []
+        var outlined: [Int] = []
+        var nodes: [ObjectIdentifier: Int] = [:]
+        var aggregates: [ObjectIdentifier: Int] = [:]
+        snapped.reserveCapacity(result.boxes.count)
+        filled.reserveCapacity(result.statistics.visibleBoxCount)
+        labelled.reserveCapacity(result.statistics.visibleBoxCount / 8)
+        outlined.reserveCapacity(result.statistics.subdividedBoxCount)
+        nodes.reserveCapacity(result.boxes.count - result.statistics.aggregateBoxCount)
+        aggregates.reserveCapacity(result.statistics.aggregateBoxCount)
+
+        for (index, box) in result.boxes.enumerated() {
+            let frame = box.frame.snapped(toBackingScale: backingScale)
+            snapped.append(NSRect(x: frame.x, y: frame.y, width: frame.width, height: frame.height))
+
+            if let node = box.node?.node {
+                nodes[ObjectIdentifier(node)] = index
+            }
+            if box.isSubdivided {
+                if box.depth > 0,
+                   box.depth <= TreemapMetrics.directoryOutlineMaximumDepth,
+                   box.frame.shortestSide >= TreemapMetrics.directoryOutlineMinimumSidePoints {
+                    outlined.append(index)
+                }
+                continue
+            }
+
+            filled.append(index)
+            if box.fitsLabel { labelled.append(index) }
+            if box.isAggregate,
+               let parentIndex = box.parentIndex,
+               let directory = result.boxes[parentIndex].node?.node {
+                aggregates[ObjectIdentifier(directory)] = index
+            }
+        }
+
+        snappedRects = snapped
+        filledIndices = filled
+        labelledIndices = labelled
+        outlinedIndices = outlined
+        nodeBoxByIdentity = nodes
+        aggregateBoxByDirectoryIdentity = aggregates
+        spatialIndex = TreemapSpatialIndex(
+            viewport: result.viewport,
+            boxes: result.boxes,
+            filledIndices: filled
+        )
+    }
+
+    func boxIndex(for selection: WorkspaceSelection?) -> Int? {
+        switch selection {
+        case .node(let node):
+            return nodeBoxByIdentity[ObjectIdentifier(node)]
+        case .aggregate(let descriptor):
+            return aggregateBoxByDirectoryIdentity[ObjectIdentifier(descriptor.directory)]
+        case nil:
+            return nil
+        }
+    }
+}
+
+/// A compact uniform grid over the non-overlapping filled rectangles. At the
+/// standard 30k-box budget it turns a pointer lookup from 30k containment
+/// checks into a handful, while preserving the layout's half-open edge rule.
+private struct TreemapSpatialIndex {
+    private let viewport: TreemapSize
+    private let columns: Int
+    private let rows: Int
+    private let cells: [[Int]]
+
+    init(
+        viewport: TreemapSize,
+        boxes: [TreemapBox<TreemapNodeRef>],
+        filledIndices: [Int]
+    ) {
+        self.viewport = viewport
+        guard viewport.isDrawable, !filledIndices.isEmpty else {
+            columns = 0
+            rows = 0
+            cells = []
+            return
+        }
+
+        // Aim for roughly eight rectangles per cell. Because filled boxes tile
+        // without overlap, the total number of cell memberships stays close to
+        // the number of boxes plus boundary crossings.
+        let aspect = viewport.width / viewport.height
+        let targetCells = max(1.0, Double(filledIndices.count) / 8.0)
+        let columnCount = max(1, min(128, Int(ceil(sqrt(targetCells * aspect)))))
+        let rowCount = max(1, min(128, Int(ceil(targetCells / Double(columnCount)))))
+        columns = columnCount
+        rows = rowCount
+
+        func columnIndex(for x: Double) -> Int {
+            max(0, min(columnCount - 1, Int((x / viewport.width) * Double(columnCount))))
+        }
+        func rowIndex(for y: Double) -> Int {
+            max(0, min(rowCount - 1, Int((y / viewport.height) * Double(rowCount))))
+        }
+
+        var buckets = Array(repeating: [Int](), count: columnCount * rowCount)
+        for index in filledIndices {
+            let frame = boxes[index].frame
+            let minColumn = columnIndex(for: frame.minX)
+            let maxColumn = columnIndex(for: frame.maxX.nextDown)
+            let minRow = rowIndex(for: frame.minY)
+            let maxRow = rowIndex(for: frame.maxY.nextDown)
+            guard minColumn <= maxColumn, minRow <= maxRow else { continue }
+            for rowIndex in minRow...maxRow {
+                for columnIndex in minColumn...maxColumn {
+                    buckets[rowIndex * columnCount + columnIndex].append(index)
+                }
+            }
+        }
+        cells = buckets
+    }
+
+    func candidates(at point: TreemapPoint) -> [Int] {
+        guard columns > 0, rows > 0,
+              point.x >= 0, point.x < viewport.width,
+              point.y >= 0, point.y < viewport.height else { return [] }
+        return cells[row(for: point.y) * columns + column(for: point.x)]
+    }
+
+    func candidates(intersecting rect: NSRect, all filledIndices: [Int]) -> [Int] {
+        guard columns > 0, rows > 0, rect.width > 0, rect.height > 0 else { return [] }
+        if rect.minX <= 0, rect.minY <= 0,
+           rect.maxX >= viewport.width, rect.maxY >= viewport.height {
+            return filledIndices
+        }
+
+        let clippedMinX = max(0, min(viewport.width.nextDown, Double(rect.minX)))
+        let clippedMaxX = max(0, min(viewport.width.nextDown, Double(rect.maxX)))
+        let clippedMinY = max(0, min(viewport.height.nextDown, Double(rect.minY)))
+        let clippedMaxY = max(0, min(viewport.height.nextDown, Double(rect.maxY)))
+        guard clippedMaxX >= clippedMinX, clippedMaxY >= clippedMinY else { return [] }
+
+        var unique = Set<Int>()
+        for rowIndex in row(for: clippedMinY)...row(for: clippedMaxY) {
+            for columnIndex in column(for: clippedMinX)...column(for: clippedMaxX) {
+                unique.formUnion(cells[rowIndex * columns + columnIndex])
+            }
+        }
+        return unique.sorted()
+    }
+
+    private func column(for x: Double) -> Int {
+        max(0, min(columns - 1, Int((x / viewport.width) * Double(columns))))
+    }
+
+    private func row(for y: Double) -> Int {
+        max(0, min(rows - 1, Int((y / viewport.height) * Double(rows))))
+    }
+}
+
 /// The classic-flat treemap: a custom Core Graphics `NSView` over the
 /// `TreemapLayout` draw list (spec §4.1, §6.3, §6.4).
 ///
@@ -69,6 +247,8 @@ final class TreemapView: NSView {
     private var contentRevision = 0
     private var accessibilityChildElements: [TreemapAccessibilityElement] = []
     private var accessibilityRequest: TreemapLayoutCoordinator<TreemapNodeRef>.Request?
+    private var renderSnapshot: TreemapRenderSnapshot?
+    private var paintedSelectionIndex: Int?
     private var hoveredBoxIndex: Int?
     private var trackingArea: NSTrackingArea?
 
@@ -92,6 +272,8 @@ final class TreemapView: NSView {
         )
         coordinator.onResult = { [weak self] in self?.layoutDidArrive() }
         accessibilityRequest = nil
+        renderSnapshot = nil
+        paintedSelectionIndex = nil
     }
 
     /// Waits for the background layout to settle. Tests only — nothing on a
@@ -112,6 +294,9 @@ final class TreemapView: NSView {
 
     func setRoot(_ node: ScanNode?) {
         guard node !== root else { return }
+        // Child-order entries retain nodes by design; a new immutable tree
+        // must release every order (and every package identity) from the old.
+        expansion.reset()
         root = node
         invalidateLayout()
     }
@@ -130,6 +315,8 @@ final class TreemapView: NSView {
 
     private func invalidateLayout() {
         contentRevision += 1
+        renderSnapshot = nil
+        paintedSelectionIndex = nil
         hoveredBoxIndex = nil
         toolTip = nil
         if root == nil { coordinator.invalidate() }
@@ -145,6 +332,8 @@ final class TreemapView: NSView {
         // dozens of sizes and computes one at a time, ending on the last.
         hoveredBoxIndex = nil
         toolTip = nil
+        renderSnapshot = nil
+        paintedSelectionIndex = nil
         requestLayout()
         needsDisplay = true
     }
@@ -211,10 +400,29 @@ final class TreemapView: NSView {
 
     private func layoutDidArrive() {
         accessibilityRequest = nil
+        renderSnapshot = nil
         if let result = coordinator.result, result.viewport == currentViewport {
             refreshAggregateSelection(against: result)
+            paintedSelectionIndex = snapshot(for: result)?.boxIndex(for: selectionModel?.selection)
         }
         needsDisplay = true
+    }
+
+    /// Returns the geometry-derived data for this exact layout and backing
+    /// scale, compiling it at most once.
+    private func snapshot(
+        for result: TreemapLayoutResult<TreemapNodeRef>
+    ) -> TreemapRenderSnapshot? {
+        guard let request = coordinator.resultRequest else { return nil }
+        let scale = backingScale
+        if let renderSnapshot,
+           renderSnapshot.request == request,
+           renderSnapshot.backingScale == scale {
+            return renderSnapshot
+        }
+        let compiled = TreemapRenderSnapshot(result: result, request: request, backingScale: scale)
+        renderSnapshot = compiled
+        return compiled
     }
 
     // MARK: - Drawing
@@ -237,11 +445,8 @@ final class TreemapView: NSView {
         }
         let result = held
 
-        let scale = backingScale
-        // Snapped once, here, and read by index from every pass below. The
-        // passes used to each snap the same rectangle again, which is six
-        // roundings per box, and a maximized 4K window has a great many boxes.
-        let snapped = result.boxes.map { snappedRect($0.frame, scale: scale) }
+        guard let render = snapshot(for: result) else { return }
+        let snapped = render.snappedRects
 
         // **Everything below is limited to `dirtyRect`.** Moving the pointer
         // invalidates two rectangles rather than the view, so a hover costs two
@@ -254,7 +459,12 @@ final class TreemapView: NSView {
         let hairlinePath = CGMutablePath()
         let hairline = CGFloat(TreemapMetrics.siblingHairlineWidthPoints)
 
-        for (index, box) in result.boxes.enumerated() where !box.isSubdivided {
+        let dirtyBoxIndices = render.spatialIndex.candidates(
+            intersecting: dirtyRect,
+            all: render.filledIndices
+        )
+        for index in dirtyBoxIndices {
+            let box = result.boxes[index]
             let rect = snapped[index]
             guard rect.width > 0, rect.height > 0, rect.intersects(dirtyRect) else { continue }
             if box.isAggregate {
@@ -308,11 +518,7 @@ final class TreemapView: NSView {
         // root (ticket 01, decision 9). Same one-path treatment.
         let outlinePath = CGMutablePath()
         let outlineWidth = CGFloat(TreemapMetrics.directoryOutlineWidthPoints)
-        for (index, box) in result.boxes.enumerated()
-        where box.isSubdivided
-            && box.depth > 0
-            && box.depth <= TreemapMetrics.directoryOutlineMaximumDepth
-            && box.frame.shortestSide >= TreemapMetrics.directoryOutlineMinimumSidePoints {
+        for index in render.outlinedIndices {
             let rect = snapped[index]
             guard rect.intersects(dirtyRect) else { continue }
             outlinePath.addRect(rect.insetBy(dx: outlineWidth / 2, dy: outlineWidth / 2))
@@ -511,10 +717,11 @@ final class TreemapView: NSView {
 
     /// The deepest rendered box containing `point`, in view coordinates.
     func boxIndex(at point: NSPoint) -> Int? {
-        guard let result = currentLayout() else { return nil }
+        guard let result = currentLayout(), let render = snapshot(for: result) else { return nil }
         let probe = TreemapPoint(x: Double(point.x), y: Double(point.y))
         var best: Int?
-        for (index, box) in result.boxes.enumerated() where !box.isSubdivided {
+        for index in render.spatialIndex.candidates(at: probe) {
+            let box = result.boxes[index]
             guard box.frame.contains(probe) else { continue }
             if let best, result.boxes[best].depth > box.depth { continue }
             best = index
@@ -546,18 +753,7 @@ final class TreemapView: NSView {
     }
 
     private func selectedBoxIndex(in result: TreemapLayoutResult<TreemapNodeRef>) -> Int? {
-        guard let selection = selectionModel?.selection else { return nil }
-        switch selection {
-        case .node(let node):
-            // A zero-byte node has no rectangle, so this finds nothing and
-            // nothing is stroked — §7.2's "no false rectangle".
-            return result.boxes.firstIndex { $0.node?.node === node }
-        case .aggregate(let descriptor):
-            return result.boxes.firstIndex { box in
-                guard box.isAggregate, let parentIndex = box.parentIndex else { return false }
-                return result.boxes[parentIndex].node?.node === descriptor.directory
-            }
-        }
+        snapshot(for: result)?.boxIndex(for: selectionModel?.selection)
     }
 
     /// After a relayout the bucket may hold different children, so the selected
@@ -566,10 +762,9 @@ final class TreemapView: NSView {
     /// left describing a box that is not there.
     private func refreshAggregateSelection(against result: TreemapLayoutResult<TreemapNodeRef>) {
         guard let model = selectionModel, let current = model.selection?.aggregate else { return }
-        guard let index = result.boxes.firstIndex(where: { box in
-            guard box.isAggregate, let parentIndex = box.parentIndex else { return false }
-            return result.boxes[parentIndex].node?.node === current.directory
-        }) else {
+        guard let index = snapshot(for: result)?.aggregateBoxByDirectoryIdentity[
+            ObjectIdentifier(current.directory)
+        ] else {
             model.clear()
             return
         }
@@ -617,8 +812,9 @@ final class TreemapView: NSView {
         guard let boxIndex,
               let result = coordinator.result,
               result.viewport == currentViewport,
-              boxIndex < result.boxes.count else { return }
-        let rect = snappedRect(result.boxes[boxIndex].frame, scale: backingScale)
+              boxIndex < result.boxes.count,
+              let render = snapshot(for: result) else { return }
+        let rect = render.snappedRects[boxIndex]
         // Slop for the strokes that sit on the rectangle's own edge — the
         // hover stroke, the selection stroke, and the hairline a neighbour
         // draws on the shared edge.
@@ -676,7 +872,8 @@ final class TreemapView: NSView {
     @discardableResult
     func moveSelection(_ direction: NavigationDirection) -> Bool {
         guard let result = currentLayout() else { return false }
-        let candidates = result.boxes.indices.filter { !result.boxes[$0].isSubdivided }
+        guard let render = snapshot(for: result) else { return false }
+        let candidates = render.filledIndices
         guard !candidates.isEmpty else { return false }
 
         guard let currentIndex = selectedBoxIndex(in: result) else {
@@ -741,7 +938,14 @@ final class TreemapView: NSView {
             // The elements carry selected state, so they are stale the moment
             // the selection moves even though the geometry has not changed.
             self.invalidateAccessibilityElements()
-            self.needsDisplay = true
+            let previous = self.paintedSelectionIndex
+            let next = self.coordinator.result.flatMap { result -> Int? in
+                guard result.viewport == self.currentViewport else { return nil }
+                return self.snapshot(for: result)?.boxIndex(for: change.selection)
+            }
+            self.paintedSelectionIndex = next
+            self.invalidate(boxIndex: previous)
+            self.invalidate(boxIndex: next)
             self.announceSelectionChange(change)
         }
     }
@@ -795,8 +999,15 @@ final class TreemapView: NSView {
         // 48×15 pt — a few thousand at any window size, whatever the tree
         // holds. Nothing becomes unreachable: the tree pane carries every node,
         // hierarchy included, which is the pane built for navigating it.
-        let selectedIndex = selectedBoxIndex(in: result)
-        accessibilityChildElements = result.boxes.enumerated().compactMap { index, box in
+        guard let render = snapshot(for: result) else { return }
+        let selectedIndex = render.boxIndex(for: selected)
+        var publishedIndices = render.labelledIndices
+        if let selectedIndex, !result.boxes[selectedIndex].fitsLabel {
+            publishedIndices.append(selectedIndex)
+            publishedIndices.sort()
+        }
+        accessibilityChildElements = publishedIndices.compactMap { index in
+            let box = result.boxes[index]
             // The selected rectangle is always published, however small, so a
             // selection made in the tree is never a thing the map cannot name.
             guard box.fitsLabel || index == selectedIndex else { return nil }

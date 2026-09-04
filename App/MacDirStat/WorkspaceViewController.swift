@@ -2,7 +2,7 @@ import AppKit
 import ScanCore
 import TreemapLayout
 
-enum TreeColumn: String {
+enum TreeColumn: String, Sendable {
     case name
     case size
     case percent
@@ -14,6 +14,35 @@ enum TreeColumn: String {
         case .size: return "Size"
         case .percent: return "%"
         case .items: return "Items"
+        }
+    }
+}
+
+/// A frozen outline sort that is safe to carry to a background task. The
+/// controller used to close over its main-actor fields, making a wide sibling
+/// sort inseparable from the UI thread.
+struct TreeSort: Sendable {
+    let column: TreeColumn
+    let ascending: Bool
+
+    func precedes(_ lhs: ScanNode, _ rhs: ScanNode) -> Bool {
+        switch column {
+        case .name:
+            return ascending
+                ? NameOrder.precedes(lhs.name, rhs.name)
+                : NameOrder.precedes(rhs.name, lhs.name)
+        case .size, .percent:
+            if lhs.subtreeDiskBytes == rhs.subtreeDiskBytes {
+                return NameOrder.precedes(lhs.name, rhs.name)
+            }
+            return ascending
+                ? lhs.subtreeDiskBytes < rhs.subtreeDiskBytes
+                : lhs.subtreeDiskBytes > rhs.subtreeDiskBytes
+        case .items:
+            let left = lhs.presentedDescendantCount
+            let right = rhs.presentedDescendantCount
+            if left == right { return NameOrder.precedes(lhs.name, rhs.name) }
+            return ascending ? left < right : left > right
         }
     }
 }
@@ -78,6 +107,10 @@ final class SortedChildrenCache {
     /// not retain an obsolete root" means in practice.
     var entryCount: Int { entries.count }
 
+    func contains(_ node: ScanNode) -> Bool {
+        entries[ObjectIdentifier(node)] != nil
+    }
+
     func children(of node: ScanNode, orderedBy precedes: (ScanNode, ScanNode) -> Bool) -> [ScanNode] {
         let key = ObjectIdentifier(node)
         if let cached = entries[key] { return cached }
@@ -87,6 +120,14 @@ final class SortedChildrenCache {
         return sorted
     }
 
+    /// Installs work already performed off the main actor.
+    func insert(_ children: [ScanNode], for node: ScanNode) {
+        let key = ObjectIdentifier(node)
+        guard entries[key] == nil else { return }
+        misses += 1
+        entries[key] = children
+    }
+
     func removeAll() {
         entries.removeAll()
     }
@@ -94,6 +135,9 @@ final class SortedChildrenCache {
 
 @MainActor
 final class DirectoryTreeViewController: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate {
+    /// Below this, dispatch overhead costs more than the sort. Above it, even a
+    /// few milliseconds is visible as a stuck disclosure triangle or header.
+    static let backgroundSortThreshold = 1_024
     /// The four columns, in order, with the width each opens at and the width
     /// it will not go below.
     ///
@@ -150,6 +194,9 @@ final class DirectoryTreeViewController: NSViewController, NSOutlineViewDataSour
     /// reason to touch it.
     let childOrder = SortedChildrenCache()
     private var isApplyingSharedSelection = false
+    private var sortGeneration = 0
+    private var descriptorSortTask: Task<Void, Never>?
+    private var expansionSortTasks: [ObjectIdentifier: Task<Void, Never>] = [:]
 
     /// The one shared selection (spec §7.2). The tree writes it when a row is
     /// picked and follows it — expanding ancestors and scrolling — when another
@@ -233,6 +280,11 @@ final class DirectoryTreeViewController: NSViewController, NSOutlineViewDataSour
     }
 
     func setRoot(_ root: ScanNode?) {
+        descriptorSortTask?.cancel()
+        descriptorSortTask = nil
+        for task in expansionSortTasks.values { task.cancel() }
+        expansionSortTasks.removeAll()
+        sortGeneration += 1
         self.root = root
         // Every cached array holds children of the tree that is going away.
         // Nothing may outlive the root it was sorted from.
@@ -360,6 +412,17 @@ final class DirectoryTreeViewController: NSViewController, NSOutlineViewDataSour
         (item as? ScanNode)?.children.isEmpty == false
     }
 
+    /// A very wide folder is sorted before AppKit asks for child 0, 1, 2… .
+    /// Returning false leaves the disclosure responsive; the requested expand
+    /// is replayed when its order is ready.
+    func outlineView(_ outlineView: NSOutlineView, shouldExpandItem item: Any) -> Bool {
+        guard let node = item as? ScanNode,
+              node.children.count >= Self.backgroundSortThreshold,
+              !childOrder.contains(node) else { return true }
+        prepareExpansion(of: node)
+        return false
+    }
+
     func outlineView(
         _ outlineView: NSOutlineView,
         viewFor tableColumn: NSTableColumn?,
@@ -427,8 +490,7 @@ final class DirectoryTreeViewController: NSViewController, NSOutlineViewDataSour
         // and simpler than keying every entry by (node, column, direction),
         // and the user changes sort far less often than the outline view asks
         // for a row.
-        childOrder.removeAll()
-        outlineView.reloadData()
+        resortVisibleTree()
     }
 
     /// The row order for the active column and direction.
@@ -439,22 +501,88 @@ final class DirectoryTreeViewController: NSViewController, NSOutlineViewDataSour
     /// siblings comes first. That is also why every other column falls back to
     /// it on a tie instead of to a localized comparison.
     private func precedes(_ lhs: ScanNode, _ rhs: ScanNode) -> Bool {
-        switch sortColumn {
-        case .name:
-            return sortAscending
-                ? NameOrder.precedes(lhs.name, rhs.name)
-                : NameOrder.precedes(rhs.name, lhs.name)
-        case .size, .percent:
-            // Percent is size, divided by a constant per parent: the same
-            // order, and deliberately the same code.
-            if lhs.subtreeDiskBytes == rhs.subtreeDiskBytes { return NameOrder.precedes(lhs.name, rhs.name) }
-            return sortAscending ? lhs.subtreeDiskBytes < rhs.subtreeDiskBytes : lhs.subtreeDiskBytes > rhs.subtreeDiskBytes
-        case .items:
-            let left = lhs.presentedDescendantCount
-            let right = rhs.presentedDescendantCount
-            if left == right { return NameOrder.precedes(lhs.name, rhs.name) }
-            return sortAscending ? left < right : left > right
+        TreeSort(column: sortColumn, ascending: sortAscending).precedes(lhs, rhs)
+    }
+
+    /// Sorts the root and every currently-open wide directory away from the
+    /// event loop, then swaps all orders and reloads once. Existing rows stay
+    /// usable while this runs instead of disappearing behind a busy header.
+    private func resortVisibleTree() {
+        descriptorSortTask?.cancel()
+        for task in expansionSortTasks.values { task.cancel() }
+        expansionSortTasks.removeAll()
+        sortGeneration += 1
+        let generation = sortGeneration
+        let sort = TreeSort(column: sortColumn, ascending: sortAscending)
+
+        var expanded: [ScanNode] = []
+        if let root { expanded.append(root) }
+        if outlineView.numberOfRows > 0 {
+            for row in 0..<outlineView.numberOfRows {
+                guard let node = outlineView.item(atRow: row) as? ScanNode,
+                      outlineView.isItemExpanded(node),
+                      !expanded.contains(where: { $0 === node }) else { continue }
+                expanded.append(node)
+            }
         }
+        let wide = expanded.filter { $0.children.count >= Self.backgroundSortThreshold }
+        guard !wide.isEmpty else {
+            childOrder.removeAll()
+            outlineView.reloadData()
+            reapplySharedSelection()
+            return
+        }
+
+        descriptorSortTask = Task.detached(priority: .userInitiated) { [weak self] in
+            var prepared: [(ScanNode, [ScanNode])] = []
+            prepared.reserveCapacity(wide.count)
+            for node in wide {
+                guard !Task.isCancelled else { return }
+                prepared.append((node, node.children.sorted(by: sort.precedes)))
+            }
+            guard !Task.isCancelled else { return }
+            await self?.applyPreparedSorts(prepared, expanded: expanded, generation: generation)
+        }
+    }
+
+    private func applyPreparedSorts(
+        _ prepared: [(ScanNode, [ScanNode])],
+        expanded: [ScanNode],
+        generation: Int
+    ) {
+        guard generation == sortGeneration else { return }
+        descriptorSortTask = nil
+        childOrder.removeAll()
+        for (node, children) in prepared { childOrder.insert(children, for: node) }
+        outlineView.reloadData()
+        for node in expanded { outlineView.expandItem(node) }
+        reapplySharedSelection()
+    }
+
+    private func prepareExpansion(of node: ScanNode) {
+        let identifier = ObjectIdentifier(node)
+        guard expansionSortTasks[identifier] == nil else { return }
+        let generation = sortGeneration
+        let sort = TreeSort(column: sortColumn, ascending: sortAscending)
+        expansionSortTasks[identifier] = Task.detached(priority: .userInitiated) { [weak self] in
+            let children = node.children.sorted(by: sort.precedes)
+            guard !Task.isCancelled else { return }
+            await self?.finishExpansionSort(
+                children, node: node, identifier: identifier, generation: generation
+            )
+        }
+    }
+
+    private func finishExpansionSort(
+        _ children: [ScanNode],
+        node: ScanNode,
+        identifier: ObjectIdentifier,
+        generation: Int
+    ) {
+        expansionSortTasks[identifier] = nil
+        guard generation == sortGeneration else { return }
+        childOrder.insert(children, for: node)
+        outlineView.expandItem(node)
     }
 
     /// A numeric cell: right-aligned, one line, and in the tabular face, so a

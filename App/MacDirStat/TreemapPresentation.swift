@@ -16,6 +16,7 @@ import TreemapLayout
 /// runs off the main thread.
 final class PackageExpansion {
     private var expanded: Set<ObjectIdentifier> = []
+    private let childOrder = TreemapChildOrderCache()
     /// Bumped on every change, so the view can tell "same tree, same viewport,
     /// different drill-in" from "nothing changed" without diffing the set.
     private(set) var generation = 0
@@ -33,22 +34,72 @@ final class PackageExpansion {
     }
 
     func reset() {
-        guard !expanded.isEmpty else { return }
-        expanded.removeAll()
-        generation += 1
+        childOrder.removeAll()
+        if !expanded.isEmpty {
+            expanded.removeAll()
+            generation += 1
+        }
     }
 
     /// The drill-in state as of now, frozen so a background layout can read it
     /// without racing the click that changes it. A handful of identifiers at
     /// most: nobody drills into a thousand packages.
     func snapshot() -> PackageExpansionSet {
-        PackageExpansionSet(expanded: expanded)
+        PackageExpansionSet(expanded: expanded, childOrder: childOrder)
+    }
+}
+
+/// Sorted child arrays belong to the immutable scan tree, not to a viewport.
+/// Keeping them across resize/layout requests removes the same O(k log k)
+/// preparation work from every opened directory after its first appearance.
+private final class TreemapChildOrderCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [ObjectIdentifier: [ScanNode]] = [:]
+
+    func children(of node: ScanNode) -> [ScanNode] {
+        let identifier = ObjectIdentifier(node)
+        lock.lock()
+        if let cached = storage[identifier] {
+            lock.unlock()
+            return cached
+        }
+        lock.unlock()
+
+        let ordered = node.children.enumerated().sorted { left, right in
+            let lhs = left.element
+            let rhs = right.element
+            if lhs.subtreeDiskBytes != rhs.subtreeDiskBytes {
+                return lhs.subtreeDiskBytes > rhs.subtreeDiskBytes
+            }
+            if !lhs.name.unicodeScalars.elementsEqual(rhs.name.unicodeScalars) {
+                return lhs.name.unicodeScalars.lexicographicallyPrecedes(rhs.name.unicodeScalars) {
+                    $0.value < $1.value
+                }
+            }
+            return left.offset < right.offset
+        }.map(\.element)
+
+        lock.lock()
+        if let cached = storage[identifier] {
+            lock.unlock()
+            return cached
+        }
+        storage[identifier] = ordered
+        lock.unlock()
+        return ordered
+    }
+
+    func removeAll() {
+        lock.lock()
+        storage.removeAll(keepingCapacity: true)
+        lock.unlock()
     }
 }
 
 /// One frozen reading of which packages are drilled into.
 struct PackageExpansionSet: Sendable {
     let expanded: Set<ObjectIdentifier>
+    fileprivate let childOrder: TreemapChildOrderCache
 
     func isExpanded(_ node: ScanNode) -> Bool {
         expanded.contains(ObjectIdentifier(node))
@@ -95,8 +146,21 @@ struct TreemapNodeRef: TreemapInputNode, Sendable {
 
     var treemapPresentedChildren: [TreemapNodeRef] {
         guard isDrilledInto else { return [] }
-        return node.children.map { TreemapNodeRef(node: $0, expansion: expansion) }
+        return expansion.childOrder.children(of: node).map {
+            TreemapNodeRef(node: $0, expansion: expansion)
+        }
     }
+
+    @discardableResult
+    func treemapForEachPresentedChild(_ visit: (TreemapNodeRef) -> Bool) -> Bool {
+        guard isDrilledInto else { return true }
+        for child in expansion.childOrder.children(of: node) {
+            guard visit(TreemapNodeRef(node: child, expansion: expansion)) else { return false }
+        }
+        return true
+    }
+
+    var treemapPresentedChildrenAreInLayoutOrder: Bool { true }
 
     /// Constant time, because `ScanCore` rolls this count up as it scans. It is
     /// what lets the layout fold a subtree away and still say exactly how many
