@@ -1,30 +1,31 @@
 import Foundation
 
-/// The production `DirectoryProbe`: `FileManager` plus prefetched URL resource
-/// values (spec §5.1, §5.4).
+/// The production `DirectoryProbe`: macOS packed bulk attributes, with the
+/// FileManager resource-value path retained as a compatibility fallback
+/// (spec §5.1, §5.4).
 ///
 /// **Read-only, structurally.** It implements a seam that has no write,
 /// download or open-data requirement, and it calls no such API itself — the
-/// whole adapter is one `contentsOfDirectory` and one `resourceValues` per
-/// directory. `ScanCoreFileSystemTests` asserts that against this file's own
-/// source text, next to the fingerprint proof that a real scan leaves a real
-/// tree byte-identical.
+/// `ScanCoreFileSystemTests` asserts that against this file's own source text,
+/// next to the fingerprint proof that a real scan leaves a real tree
+/// byte-identical.
 ///
-/// **One batched fetch per directory.** `contentsOfDirectory(at:
-/// includingPropertiesForKeys:options:)` populates every key in
-/// `entryKeys` on the URLs it returns, so the `resourceValues` call that
-/// follows reads the values already fetched rather than going back to the disk.
-/// That is what makes "no entry is read twice" (spec §8.2) true of the
-/// production adapter and not just of the engine.
+/// **One batched fetch per directory.** `getattrlistbulk(2)` fills reusable
+/// storage with names, kinds, sizes, link counts and identities. Most entries
+/// become `EntryMeta` directly from that buffer, avoiding one URL and eleven
+/// bridged Foundation values apiece. Package type is resolved once per bounded
+/// extension cache. On a filesystem that cannot vend the bulk attributes,
+/// `contentsOfDirectory(at:includingPropertiesForKeys:options:)` provides the
+/// same facts through the previous implementation.
 ///
 /// **Shallow, never the deep enumerator.** `FileManager.enumerator(at:)`
 /// traverses mount points, which would silently leave the root's device; the
 /// engine recurses itself so every descent passes the boundary check
 /// (spec §3.3, §5.4).
-public struct FileManagerDirectoryProbe: PackageSummarizingProbe {
+public struct FileManagerDirectoryProbe: PackageSummarizingProbe, ConcurrentDirectoryListingProbe {
     public init() {}
 
-    /// The prefetch key set — exactly the facts `EntryMeta` carries.
+    /// The fallback prefetch key set — exactly the facts `EntryMeta` carries.
     static let entryKeys: [URLResourceKey] = [
         .isDirectoryKey,
         .isRegularFileKey,
@@ -44,6 +45,14 @@ public struct FileManagerDirectoryProbe: PackageSummarizingProbe {
         .ubiquitousItemDownloadingStatusKey
     ]
 
+    /// The set form used by fallback `resourceValues(forKeys:)` and root
+    /// metadata.
+    ///
+    /// Building this set in `entryMeta(of:)` used to hash the same eleven keys
+    /// once per filesystem entry. A whole-volume scan calls that helper
+    /// millions of times; the key set is immutable, so build it once.
+    static let entryKeySet = Set(entryKeys)
+
     /// The volume facts pre-flight reads, once, for the root only.
     static let volumeKeys: Set<URLResourceKey> = [
         .volumeIsLocalKey,
@@ -55,6 +64,20 @@ public struct FileManagerDirectoryProbe: PackageSummarizingProbe {
     // MARK: - DirectoryProbe
 
     public func list(_ url: URL) throws -> [EntryMeta] {
+        // `getattrlistbulk` returns the whole directory as packed records from
+        // one reusable buffer: no URL/resource-value object graph per entry.
+        // Filesystems that do not vend the requested attributes fall back to
+        // the exact Foundation path below.
+        if let packed = BulkDirectoryReader.list(
+            url,
+            isPackage: { name in Self.isPackageDirectory(named: name, below: url) }
+        ) {
+            return packed
+        }
+        return try foundationList(url)
+    }
+
+    private func foundationList(_ url: URL) throws -> [EntryMeta] {
         // No `.skipsHiddenFiles`: hidden entries are included, deliberately
         // (spec §3.4). No `.skipsPackageDescendants` either — a package is
         // measured *through* and only presented collapsed (spec §3.4).
@@ -84,8 +107,16 @@ public struct FileManagerDirectoryProbe: PackageSummarizingProbe {
         // Unlike a child, the root has no listing to have described it, so this
         // read is allowed to throw: a root that is missing or unreadable is the
         // one thing that fails a scan outright (spec §5.3).
-        let values = try url.resourceValues(forKeys: Set(Self.entryKeys))
-        return Self.entryMeta(name: url.lastPathComponent, values: values)
+        let values = try url.resourceValues(forKeys: Self.entryKeySet)
+        var meta = Self.entryMeta(name: url.lastPathComponent, values: values)
+        var status = stat()
+        if lstat(url.path, &status) == 0 {
+            meta.fileIdentity = BulkDirectoryReader.fileIdentity(
+                fileID: UInt64(status.st_ino),
+                volumeObject: values.volumeIdentifier as? NSObject
+            )
+        }
+        return meta
     }
 
     public func volumeInfo(for url: URL) throws -> VolumeInfo {
@@ -149,6 +180,7 @@ public struct FileManagerDirectoryProbe: PackageSummarizingProbe {
             .isUbiquitousItemKey,
             .ubiquitousItemDownloadingStatusKey,
         ]
+        let keySet = Set(keys)
 
         var encounteredError = false
         guard let enumerator = FileManager.default.enumerator(
@@ -174,7 +206,7 @@ public struct FileManagerDirectoryProbe: PackageSummarizingProbe {
 
             let values: URLResourceValues
             do {
-                values = try child.resourceValues(forKeys: Set(keys))
+                values = try child.resourceValues(forKeys: keySet)
             } catch {
                 encounteredError = true
                 continue
@@ -235,7 +267,7 @@ public struct FileManagerDirectoryProbe: PackageSummarizingProbe {
     /// The child case: the URL already carries its prefetched values.
     static func entryMeta(of url: URL) -> EntryMeta {
         let name = url.lastPathComponent
-        if let values = try? url.resourceValues(forKeys: Set(entryKeys)) {
+        if let values = try? url.resourceValues(forKeys: entryKeySet) {
             return entryMeta(name: name, values: values)
         }
         // Defensive, and reached only by live change: the entry was listed with
@@ -307,6 +339,21 @@ public struct FileManagerDirectoryProbe: PackageSummarizingProbe {
         // A status macOS does not recognise — the third-party provider case.
         // `nil` means "count the present logical file" (spec §3.4).
         return nil
+    }
+
+    /// Package-ness is a filename-type property on macOS. Resolve an extension
+    /// once through Foundation, then reuse that answer for every directory of
+    /// the same type across the scan. Extensionless directories are ordinary
+    /// unless a future bulk attribute says otherwise.
+    private static let packageExtensions = PackageExtensionCache()
+
+    static func isPackageDirectory(named name: String, below parent: URL) -> Bool {
+        let pathExtension = (name as NSString).pathExtension.lowercased()
+        guard !pathExtension.isEmpty else { return false }
+        return packageExtensions.isPackage(extension: pathExtension) {
+            let child = parent.appendingPathComponent(name, isDirectory: true)
+            return (try? child.resourceValues(forKeys: [.isPackageKey]).isPackage) ?? false
+        }
     }
 
     static func capacity(from values: URLResourceValues) -> VolumeCapacity? {

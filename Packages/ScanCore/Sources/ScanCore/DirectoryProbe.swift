@@ -61,6 +61,11 @@ public extension DirectoryProbe {
     }
 }
 
+/// Opt-in for probes whose independent `list` calls may safely overlap.
+/// Scripted/test probes stay serial by default, preserving their exact call
+/// traces; the production FileManager adapter adopts this capability.
+public protocol ConcurrentDirectoryListingProbe: DirectoryProbe {}
+
 /// The result of measuring a package without materializing its interior as
 /// scan nodes.
 public struct PackageSummary: Sendable, Equatable {

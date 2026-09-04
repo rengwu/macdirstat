@@ -73,10 +73,10 @@ public final class ScanNode: @unchecked Sendable {
     /// measure** (spec §3.1). Zero for directories, symlinks, a second name for
     /// an inode already counted, and anything whose size could not be read.
     public private(set) var ownDiskBytes: Int64
-    /// `ownDiskBytes` plus every descendant's — rolled up incrementally, so this
-    /// is live and correct at every instant during the scan (spec §3.1). This
-    /// is what the treemap draws, what the tree's Size column reads, and what
-    /// every total the app reports is made of.
+    /// `ownDiskBytes` plus every descendant's. Finalized once, off the UI
+    /// thread, before the tree is published. This is what the treemap draws,
+    /// what the tree's Size column reads, and what every total the app reports
+    /// is made of.
     public private(set) var subtreeDiskBytes: Int64
     /// This entry's own content length (`fileSizeKey`), charged wherever
     /// `ownDiskBytes` is charged and zero wherever that is zero.
@@ -86,8 +86,7 @@ public final class ScanNode: @unchecked Sendable {
     /// compressed system binary, a cloud placeholder that is length and no
     /// blocks at all (ticket 13).
     public private(set) var ownContentBytes: Int64
-    /// `ownContentBytes` rolled up, on the same ancestor walk as
-    /// `subtreeDiskBytes`.
+    /// `ownContentBytes` folded with `subtreeDiskBytes` before publication.
     ///
     /// Rolled up rather than kept per file because the divergence is a *folder*
     /// story: `~/Library` is 1.05 TiB of content length on a few dozen GB of
@@ -99,11 +98,11 @@ public final class ScanNode: @unchecked Sendable {
     /// **on disk** — the visible measure, because that is the one with a
     /// rectangle to lose.
     ///
-    /// Rolled up on the same walk as `subtreeDiskBytes`, for one reason: it is the
-    /// count a treemap aggregate reports as *"N items below individual size"*,
-    /// and a layout that has pruned a subtree by area must be able to say how
-    /// many entries it folded **without walking it**. Computing it at draw time
-    /// is what made the whole-tree pre-pass O(total nodes) (ticket 14).
+    /// Finalized with `subtreeDiskBytes`, for one reason: it is the count a
+    /// treemap aggregate reports as *"N items below individual size"*, and a
+    /// layout that has pruned a subtree by area must be able to say how many
+    /// entries it folded **without walking it**. Computing it at draw time is
+    /// what made the whole-tree pre-pass O(total nodes) (ticket 14).
     ///
     /// Zero-attributed entries — empty files, symlinks, hard-link non-owners,
     /// re-entered directories, anything of unknowable size — are *not* counted:
@@ -249,26 +248,20 @@ public final class ScanNode: @unchecked Sendable {
         isPackageSummary = true
     }
 
-    /// Adds a leaf's contribution to this ancestor. The roll-up walks the
-    /// whole parent chain, which is what keeps every open directory's total
-    /// live (spec §3.1).
-    ///
-    /// `attributedNodes` is how many entries *below* this one newly became
-    /// attributed. The return value says whether this directory itself just
-    /// did — it is attributed exactly when its subtree first carries bytes — so
-    /// the caller can add it to everything further up the chain. That is the
-    /// whole of the count's maintenance: no second walk, and no per-node state
-    /// beyond the counter itself.
-    @discardableResult
-    func accumulate(diskBytes: Int64, contentBytes: Int64, files: Int64, attributedNodes: Int = 0) -> Bool {
-        let wasAttributed = subtreeDiskBytes > 0
-        subtreeDiskBytes += diskBytes
-        subtreeContentBytes += contentBytes
-        fileCount += files
-        attributedNodeCount += attributedNodes
-        guard !wasAttributed, subtreeDiskBytes > 0 else { return false }
-        attributedNodeCount += 1
-        return true
+    /// Writes the finished subtree measures once. The scanner's tree is private
+    /// until its terminal event, so updating every ancestor for every file only
+    /// created `O(sum of depths)` memory traffic that no reader could observe.
+    /// The final post-order pass computes these values in `O(nodes)` instead.
+    func finalizeSubtreeMeasures(
+        diskBytes: Int64,
+        contentBytes: Int64,
+        files: Int64,
+        attributedNodes: Int
+    ) {
+        subtreeDiskBytes = diskBytes
+        subtreeContentBytes = contentBytes
+        fileCount = files
+        attributedNodeCount = attributedNodes
     }
 
     /// Writes the two derived subtree counts, once, on the finalization pass

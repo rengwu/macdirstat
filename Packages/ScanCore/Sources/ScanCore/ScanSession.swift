@@ -7,12 +7,12 @@ import Foundation
 /// obtained by confinement rather than by locking the hot path. The tree is
 /// handed to the UI once, with the terminal event, and never touched again.
 ///
-/// The traversal is **serial, iterative, depth-first** over an explicit stack.
-/// Serial because hard-link "first path" ownership is only
-/// well-defined under a deterministic order, because it keeps every lock off
-/// the hot path, and because a scan is confined to one device anyway.
-/// Iterative because a filesystem's depth is the user's to choose, not ours to
-/// survive on the call stack.
+/// The traversal commits **serially, iteratively, depth-first** over an explicit
+/// stack. A bounded production-only window may fetch independent directory
+/// listings ahead, but their nodes, hard-link ownership, errors and progress
+/// are applied only when the deterministic cursor reaches them. Iterative
+/// because a filesystem's depth is the user's to choose, not ours to survive
+/// on the call stack.
 final class ScanSession {
     /// One open directory: its node, its URL, its listing, and how far through
     /// that listing we are.
@@ -35,6 +35,11 @@ final class ScanSession {
         var entries: [EntryMeta] = []
         var cursor: Int = 0
         var listed: Bool = false
+        /// A listing started while an earlier sibling was being traversed.
+        var prefetchedListing: DirectoryListingFuture?
+        /// Read-ahead keyed by this frame's deterministic entry index. Results
+        /// are attached to child frames only when that index is committed.
+        var prefetchedChildren: [Int: DirectoryListingFuture] = [:]
         /// Hidden subdirectories, opened after this directory's visible ones.
         /// See ``ScanSession/traverse()``.
         var pendingHidden: [Frame] = []
@@ -47,6 +52,7 @@ final class ScanSession {
     private let clock: ScanClock
     private let progressInterval: TimeInterval
     private let batchSize: Int
+    private let listingPrefetcher: DirectoryListingPrefetcher?
 
     private let root: ScanNode
     private var rootVolume: FileSystemIdentity?
@@ -65,6 +71,11 @@ final class ScanSession {
 
     private var filesSeen: Int64 = 0
     private var directoriesSeen: Int64 = 0
+    /// The progress card's running measure. The mutable tree has no reader
+    /// until the terminal event, so its per-directory totals are finalized in
+    /// one post-order pass instead of being updated through every ancestor for
+    /// every file.
+    private var attributedDiskBytes: Int64 = 0
     private var currentPathTail: String = ""
 
     private var startedAt: TimeInterval = 0
@@ -75,6 +86,10 @@ final class ScanSession {
     private var fractionWithdrawn = false
     private var entriesSinceClockRead = 0
     private var entriesSinceCancellationCheck = 0
+    /// Prevents two aliases for one not-yet-opened directory from both being
+    /// speculatively listed. The first entry in deterministic order reserves
+    /// the identity; the normal visited index still decides ownership.
+    private var prefetchedDirectoryIdentities: Set<FileSystemIdentity> = []
 
     /// How often the clock is consulted when a cadence is time-based. Reading
     /// the clock per entry would put a syscall in the hot path for a decision
@@ -89,6 +104,13 @@ final class ScanSession {
         self.clock = request.options.clock
         self.progressInterval = request.options.progressInterval
         self.batchSize = request.options.cancellationBatchSize
+        self.listingPrefetcher = request.options.directoryPrefetchConcurrency > 1
+            && request.probe is any ConcurrentDirectoryListingProbe
+            ? DirectoryListingPrefetcher(
+                probe: request.probe,
+                capacity: request.options.directoryPrefetchConcurrency
+            )
+            : nil
         self.diagnostics = ScanDiagnostics(detailLimit: request.options.maxDetailedErrors)
         self.visitedDirectories = VisitedDirectoryIndex(
             isEnabled: request.options.deduplicatesRepeatedDirectories
@@ -103,10 +125,10 @@ final class ScanSession {
         await withTaskCancellationHandler {
             runToTerminalEvent()
         } onCancel: {
-            // Fires the instant the task is cancelled, even mid-listing, so the
-            // claim is never held past the scan (spec §5.6).
+            // Fires the instant the task is cancelled, even mid-listing. The
+            // scope is released after the bounded prefetch queue has joined;
+            // no worker may keep reading after sandbox access is surrendered.
             token.cancel()
-            scope.release()
         }
         scope.release()
         sink.finish()
@@ -216,6 +238,7 @@ final class ScanSession {
     /// Neither changes what is counted, or how many times; both change only
     /// which of two paths to one directory is the one that carries it.
     private func traverse() -> Bool {
+        defer { listingPrefetcher?.cancelAndWait() }
         var stack: [Frame] = [Frame(node: root, url: request.root, identity: rootIdentity)]
         // Mount points, held back until the ordinary walk has finished.
         var deferredMounts: [Frame] = []
@@ -247,6 +270,7 @@ final class ScanSession {
                 // so it is an exclusion and its ancestors stay Complete.
                 diagnostics.exclude(.repeatedDirectory)
                 stack[top].node.markDirectoryCountedElsewhere(owner: owner.pathComponents())
+                discardPrefetchedListing(in: &stack[top])
                 stack.removeLast()
                 emitIfDue()
                 continue
@@ -290,7 +314,16 @@ final class ScanSession {
             if !stack[top].listed {
                 currentPathTail = Self.pathTail(of: stack[top].url)
                 do {
-                    var entries = try probe.list(stack[top].url)
+                    var entries: [EntryMeta]
+                    if let prefetched = stack[top].prefetchedListing {
+                        stack[top].prefetchedListing = nil
+                        if let identity = stack[top].identity {
+                            prefetchedDirectoryIdentities.remove(identity)
+                        }
+                        entries = try prefetched.take()
+                    } else {
+                        entries = try probe.list(stack[top].url)
+                    }
                     // Deterministic order, and locale-independent so two
                     // machines agree: identical trees must produce identical
                     // node order and identical hard-link ownership. Code-point
@@ -301,6 +334,7 @@ final class ScanSession {
                     entries.sort { NameOrder.precedes($0.name, $1.name) }
                     stack[top].entries = entries
                     stack[top].listed = true
+                    fillPrefetchWindow(in: &stack[top])
                     emitIfDue()
                 } catch {
                     // A directory we cannot read is a recoverable problem, not
@@ -313,15 +347,22 @@ final class ScanSession {
                         category: Self.isMissing(error) ? .disappeared : .unreadableDirectory,
                         error: error
                     )
+                    discardPrefetchedListing(in: &stack[top])
                     stack.removeLast()
                     emitIfDue()
                     continue
                 }
             }
 
+            // A consumed child future freed one global slot. Refill from this
+            // directory before continuing its deterministic cursor.
+            fillPrefetchWindow(in: &stack[top])
+
             var descended = false
             while stack[top].cursor < stack[top].entries.count {
-                let meta = stack[top].entries[stack[top].cursor]
+                let entryIndex = stack[top].cursor
+                let meta = stack[top].entries[entryIndex]
+                let prefetched = stack[top].prefetchedChildren.removeValue(forKey: entryIndex)
                 stack[top].cursor += 1
                 entriesSinceCancellationCheck += 1
 
@@ -360,7 +401,8 @@ final class ScanSession {
                             identity: meta.fileIdentity,
                             isMountPoint: isMountPoint,
                             summarizePackage: kind == .package
-                                && request.options.packageScanMode == .summarized
+                                && request.options.packageScanMode == .summarized,
+                            prefetchedListing: prefetched
                         )
                         if isMountPoint {
                             deferredMounts.append(frame)
@@ -402,6 +444,42 @@ final class ScanSession {
         }
 
         return false
+    }
+
+    /// Fills only the prefetcher's free slots, and only with directories the
+    /// traversal will open promptly. Hidden entries and mount points can be
+    /// deferred for most of a volume scan, while summarized packages take a
+    /// different probe path, so none of those retain speculative listings.
+    private func fillPrefetchWindow(in frame: inout Frame) {
+        guard let listingPrefetcher else { return }
+        var index = frame.cursor
+        while index < frame.entries.count {
+            defer { index += 1 }
+            guard frame.prefetchedChildren[index] == nil else { continue }
+            let meta = frame.entries[index]
+            guard meta.cloudDownloadingStatus != .notDownloaded,
+                  isOnRootVolume(meta),
+                  !Self.isHidden(meta.name) else { continue }
+            let kind = Self.kind(of: meta)
+            guard kind == .directory || kind == .package else { continue }
+            if kind == .package, request.options.packageScanMode == .summarized { continue }
+
+            let childURL = frame.url.appendingPathComponent(meta.name)
+            guard !mountPointPaths.contains(childURL.path),
+                  !visitedDirectories.hasClaimed(meta.fileIdentity) else { continue }
+            if let identity = meta.fileIdentity,
+               prefetchedDirectoryIdentities.contains(identity) { continue }
+            guard let future = listingPrefetcher.schedule(childURL) else { return }
+            frame.prefetchedChildren[index] = future
+            if let identity = meta.fileIdentity { prefetchedDirectoryIdentities.insert(identity) }
+        }
+    }
+
+    private func discardPrefetchedListing(in frame: inout Frame) {
+        guard let prefetched = frame.prefetchedListing else { return }
+        frame.prefetchedListing = nil
+        prefetched.discard()
+        if let identity = frame.identity { prefetchedDirectoryIdentities.remove(identity) }
     }
 
     /// Every directory the walk had started or promised to start: the open
@@ -470,13 +548,7 @@ final class ScanSession {
         }
 
         node.attribute(diskBytes: bytes, contentBytes: contentBytes, isRegularFile: isRegularFile)
-
-        rollUp(
-            from: node,
-            diskBytes: bytes,
-            contentBytes: contentBytes,
-            files: isRegularFile ? 1 : 0
-        )
+        attributedDiskBytes += bytes
     }
 
     private func attributePackageSummary(_ node: ScanNode, _ summary: PackageSummary) {
@@ -490,43 +562,7 @@ final class ScanSession {
         )
         filesSeen += summary.fileCount
         directoriesSeen += Int64(summary.directoryCount)
-        rollUp(
-            from: node,
-            diskBytes: bytes,
-            contentBytes: contentBytes,
-            files: summary.fileCount
-        )
-    }
-
-    private func rollUp(
-        from node: ScanNode,
-        diskBytes bytes: Int64,
-        contentBytes: Int64,
-        files: Int64
-    ) {
-        guard bytes > 0 || contentBytes > 0 || files > 0 else { return }
-        // Roll up to every ancestor, so each open directory's total is live at
-        // every instant (spec §3.1). A deduplicated name rolls up zero bytes —
-        // it is still one entry, just not a second copy of the bytes.
-        //
-        // The attributed-entry count rides the same walk. It starts at this
-        // leaf, if it has bytes at all, and grows by one each time a directory
-        // on the chain becomes attributed for the first time: that directory is
-        // a new attributed entry for everything above it, as well as for
-        // itself.
-        var newlyAttributed = bytes > 0 ? 1 : 0
-        var ancestor = node.parent
-        while let current = ancestor {
-            if current.accumulate(
-                diskBytes: bytes,
-                contentBytes: contentBytes,
-                files: files,
-                attributedNodes: newlyAttributed
-            ) {
-                newlyAttributed += 1
-            }
-            ancestor = current.parent
-        }
+        attributedDiskBytes += bytes
     }
 
     private func recordIncompletePackageSummary(_ node: ScanNode) {
@@ -631,7 +667,7 @@ final class ScanSession {
     private func makeProgress(now: TimeInterval, isFinal: Bool = false) -> ProgressSnapshot {
         progressSequence += 1
         let elapsed = max(0, now - startedAt)
-        let bytes = root.subtreeDiskBytes
+        let bytes = attributedDiskBytes
         let items = filesSeen + directoriesSeen
         return ProgressSnapshot(
             attributedDiskBytes: bytes,

@@ -69,6 +69,14 @@ struct VisitedDirectoryIndex {
     /// How many directories are indexed — the memory claim, in one number.
     var count: Int { owners.count }
 
+    /// Read-only hint for speculative listing. Ownership is still settled by
+    /// `claim` at deterministic arrival time; this merely avoids I/O we already
+    /// know cannot be consumed.
+    func hasClaimed(_ identity: FileSystemIdentity?) -> Bool {
+        guard isEnabled, let identity else { return false }
+        return owners[identity] != nil
+    }
+
     /// Claims `identity` for `node`, or reports which node claimed it first.
     mutating func claim(_ identity: FileSystemIdentity?, for node: ScanNode) -> Outcome {
         guard isEnabled, let identity = identity else { return .unidentified }

@@ -26,8 +26,8 @@ public struct VisibleTreeTotals: Sendable, Equatable {
     }
 }
 
-/// The one pass that turns the finished tree's shape into the counts the UI
-/// reads in O(1).
+/// The one pass that turns the finished tree's shape into the measures and
+/// counts the UI reads in O(1).
 ///
 /// **Why a separate pass at all.** The UI needs three different tallies of
 /// *names* — the tree's Items column, the inspector's folder count, and the
@@ -56,6 +56,13 @@ enum TreeCountFinalization {
         /// value is ever read, to split the presented total into files and
         /// folders — so it is a frame field and not a fourth node field.
         var presentedDirectories: Int
+        /// The four subtree measures under construction. Leaves already carry
+        /// their own values; directories receive each finished child's totals
+        /// exactly once.
+        var diskBytes: Int64
+        var contentBytes: Int64
+        var files: Int64
+        var attributedNodes: Int
 
         init(_ node: ScanNode) {
             self.node = node
@@ -63,6 +70,10 @@ enum TreeCountFinalization {
             self.presented = 0
             self.folders = 0
             self.presentedDirectories = 0
+            self.diskBytes = node.ownDiskBytes
+            self.contentBytes = node.ownContentBytes
+            self.files = node.fileCount
+            self.attributedNodes = 0
         }
     }
 
@@ -106,6 +117,10 @@ enum TreeCountFinalization {
                         stack[top].folders += 1 + child.folderDescendantCount
                     }
                     if child.kind == .directory { stack[top].presentedDirectories += 1 }
+                    stack[top].diskBytes += child.subtreeDiskBytes
+                    stack[top].contentBytes += child.subtreeContentBytes
+                    stack[top].files += child.fileCount
+                    stack[top].attributedNodes += child.attributedNodeCount
                 } else {
                     stack.append(Frame(child))
                 }
@@ -114,6 +129,13 @@ enum TreeCountFinalization {
 
             // Every child is folded in, so this node's sums are final.
             let frame = stack.removeLast()
+            let attributedNodes = frame.attributedNodes + (frame.diskBytes > 0 ? 1 : 0)
+            frame.node.finalizeSubtreeMeasures(
+                diskBytes: frame.diskBytes,
+                contentBytes: frame.contentBytes,
+                files: frame.files,
+                attributedNodes: attributedNodes
+            )
             frame.node.finalizeDescendantCounts(presented: frame.presented, folders: frame.folders)
 
             guard let parent = stack.indices.last else {
@@ -131,6 +153,10 @@ enum TreeCountFinalization {
             stack[parent].folders += (node.isDirectoryLike ? 1 : 0) + frame.folders
             stack[parent].presentedDirectories +=
                 (node.kind == .directory ? 1 : 0) + (isPackage ? 0 : frame.presentedDirectories)
+            stack[parent].diskBytes += node.subtreeDiskBytes
+            stack[parent].contentBytes += node.subtreeContentBytes
+            stack[parent].files += node.fileCount
+            stack[parent].attributedNodes += node.attributedNodeCount
         }
 
         return VisibleTreeTotals(

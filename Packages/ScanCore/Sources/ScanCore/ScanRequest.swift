@@ -49,6 +49,10 @@ public struct ScanOptions: Sendable {
     /// Whether packages are expanded into the scan tree or represented by one
     /// measured aggregate node.
     public var packageScanMode: PackageScanMode
+    /// Maximum independent directory listings read ahead. Results are still
+    /// consumed in deterministic depth-first order; this overlaps metadata I/O
+    /// only for probes that explicitly support concurrent listing.
+    public var directoryPrefetchConcurrency: Int
     public var clock: ScanClock
     /// The visited-directory guard's off switch (``VisitedDirectoryIndex``).
     ///
@@ -68,12 +72,14 @@ public struct ScanOptions: Sendable {
         cancellationBatchSize: Int = 256,
         maxDetailedErrors: Int = 1_000,
         packageScanMode: PackageScanMode = .detailed,
+        directoryPrefetchConcurrency: Int = 3,
         clock: ScanClock = MonotonicClock()
     ) {
         self.progressInterval = max(0, progressInterval)
         self.cancellationBatchSize = max(1, cancellationBatchSize)
         self.maxDetailedErrors = max(0, maxDetailedErrors)
         self.packageScanMode = packageScanMode
+        self.directoryPrefetchConcurrency = max(1, directoryPrefetchConcurrency)
         self.clock = clock
     }
 }
