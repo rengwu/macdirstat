@@ -6,6 +6,7 @@ final class MainWindowController: NSWindowController, ScanSourceChoosing, ScanHe
     let statusBarController: StatusBarViewController
     let preferences: Preferences
     let scanNotifier: ScanCompletionNotifying
+    private(set) var commandStripController: TitlebarCommandStripViewController?
 
     convenience init() {
         self.init(preferences: .shared)
@@ -56,10 +57,24 @@ final class MainWindowController: NSWindowController, ScanSourceChoosing, ScanHe
         workspace.listDetailViewController.splitView.autosaveName = "MacDirStatListDetailSplit"
         window.titlebarAppearsTransparent = false
         window.titleVisibility = .visible
-        window.toolbarStyle = .unified
+        // A crisp boundary keeps the compact command strip separate from the
+        // dense table immediately below it.
+        window.titlebarSeparatorStyle = .line
 
         super.init(window: window)
-        window.toolbar = makeToolbar()
+        let commandStrip = TitlebarCommandStripViewController(chooseTarget: self)
+        // Tahoe's titlebar floats over the adjacent scroll view. The automatic
+        // edge treatment leaves dense outline rows recognizable through the
+        // glass, so ask AppKit for its more opaque frosted cutoff. This keeps
+        // the native Liquid Glass controls while protecting their legibility.
+        if #available(macOS 26.1, *) {
+            commandStrip.preferredScrollEdgeEffectStyle = .hard
+        }
+        commandStripController = commandStrip
+        window.addTitlebarAccessoryViewController(commandStrip)
+        workspace.selectionModel.addObserver { [weak commandStrip] change in
+            commandStrip?.setFileActionsEnabled(change.selection?.node != nil)
+        }
         workspace.onScanModelChange = { [weak self, weak statusBar, weak workspace] in
             guard let statusBar, let workspace else { return }
             statusBar.update(model: workspace.model)
@@ -74,13 +89,6 @@ final class MainWindowController: NSWindowController, ScanSourceChoosing, ScanHe
     }
 
     required init?(coder: NSCoder) { nil }
-
-    private func makeToolbar() -> NSToolbar {
-        let toolbar = NSToolbar(identifier: "MacDirStatToolbar")
-        toolbar.displayMode = .iconAndLabel
-        toolbar.delegate = self
-        return toolbar
-    }
 
     // MARK: - Starting a scan
 
@@ -142,43 +150,30 @@ final class MainWindowController: NSWindowController, ScanSourceChoosing, ScanHe
             guard let chooser else { return }
             content?.dismiss(chooser)
         }
-        chooser.onSelect = { [weak self, weak content, weak chooser] choice in
+        chooser.onSearch = { [weak self, weak content, weak chooser] url, mode in
             let packageScanMode = chooser?.packageScanMode ?? .detailed
             if let chooser { content?.dismiss(chooser) }
-            self?.beginScan(root: choice.url, mode: .volumeRoot, packageScanMode: packageScanMode)
+            self?.beginScan(root: url, mode: mode, packageScanMode: packageScanMode)
         }
-        chooser.onChooseFolder = { [weak self, weak content, weak chooser] in
-            let packageScanMode = chooser?.packageScanMode ?? .detailed
-            if let chooser { content?.dismiss(chooser) }
-            DispatchQueue.main.async { self?.showFolderPanel(packageScanMode: packageScanMode) }
+        chooser.onChooseFolder = { [weak self, weak chooser] in
+            guard let chooser else { return }
+            self?.showFolderPanel(for: chooser)
         }
         content.presentAsSheet(chooser)
     }
 
-    private func showFolderPanel(packageScanMode: PackageScanMode? = nil) {
-        guard let window else { return }
+    private func showFolderPanel(for chooser: SourceChooserViewController) {
+        guard let window = chooser.view.window else { return }
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         panel.resolvesAliases = false
-        panel.prompt = "Scan"
-        let fastModeCheckbox = NSButton(
-            checkboxWithTitle: "Fast mode — summarize app bundles",
-            target: nil,
-            action: nil
-        )
-        fastModeCheckbox.state = (packageScanMode ?? preferences.packageScanMode) == .summarized ? .on : .off
-        fastModeCheckbox.toolTip =
-            "Measure each app as one item without building its internal file tree."
-        panel.accessoryView = fastModeCheckbox
-        panel.beginSheetModal(for: window) { [weak self] response in
+        panel.prompt = "Choose"
+        panel.message = "Choose a folder to add to your search sources."
+        panel.beginSheetModal(for: window) { [weak chooser] response in
             guard response == .OK, let url = panel.url else { return }
-            self?.beginScan(
-                root: url,
-                mode: .folder,
-                packageScanMode: fastModeCheckbox.state == .on ? .summarized : .detailed
-            )
+            chooser?.selectFolder(url)
         }
     }
 
@@ -211,109 +206,113 @@ extension MainWindowController: NSMenuDelegate {
     }
 }
 
-extension MainWindowController: NSToolbarDelegate {
-    private static let chooseIdentifier = NSToolbarItem.Identifier("ChooseSource")
-    static let openIdentifier = NSToolbarItem.Identifier("OpenSelection")
-    static let revealIdentifier = NSToolbarItem.Identifier("RevealSelection")
-    static let trackingSeparatorIdentifier = NSToolbarItem.Identifier("ListDetailSeparator")
-    static let toggleDetailIdentifier = NSToolbarItem.Identifier("ToggleDetail")
+/// Four quiet, consistently padded titlebar buttons. Using a titlebar
+/// accessory instead of `NSToolbar` is intentional on current macOS: the
+/// latter mirrors an adjacent scroll view into its glass, which made directory
+/// rows remain plainly visible behind the window controls as the list moved.
+@MainActor
+final class TitlebarCommandStripViewController: NSTitlebarAccessoryViewController {
+    static let symbolPointSize: CGFloat = 12
+    static let buttonSize = NSSize(width: 32, height: 26)
+    static let stripSize = NSSize(width: 159, height: 28)
 
-    /// The toolbar's whole vocabulary: choose a source, the two read-only
-    /// actions (§7.1), and the detail pane's toggle. No fourth verb.
-    ///
-    /// The tracking separator sits where the list/detail divider sits, so the
-    /// toolbar reads as two regions over the two panes instead of one bar
-    /// floating above a seam it ignores. Everything after it belongs to the
-    /// detail pane.
-    private static var itemIdentifiers: [NSToolbarItem.Identifier] {
-        [
-            chooseIdentifier,
-            .flexibleSpace,
-            trackingSeparatorIdentifier,
-            openIdentifier,
-            revealIdentifier,
-            toggleDetailIdentifier,
-        ]
+    let chooseButton: NSButton
+    let openButton: NSButton
+    let revealButton: NSButton
+    let detailsButton: NSButton
+
+    var buttons: [NSButton] { [chooseButton, openButton, revealButton, detailsButton] }
+
+    init(chooseTarget: AnyObject) {
+        chooseButton = Self.makeButton(
+            symbol: "folder",
+            label: "Choose…",
+            toolTip: "Choose a folder or disk to scan",
+            target: chooseTarget,
+            action: #selector(MainWindowController.chooseScanSource(_:))
+        )
+        openButton = Self.makeButton(
+            symbol: "eye",
+            label: FileActionMenu.openTitle,
+            toolTip: "Open the selected item (⌘O)",
+            target: nil,
+            action: #selector(FileActionResponding.openSelectedItem(_:))
+        )
+        revealButton = Self.makeButton(
+            symbol: "magnifyingglass",
+            label: FileActionMenu.revealTitle,
+            toolTip: "Reveal the selected item in Finder (⌘R)",
+            target: nil,
+            action: #selector(FileActionResponding.revealSelectedItem(_:))
+        )
+        detailsButton = Self.makeButton(
+            symbol: "sidebar.trailing",
+            label: "Details",
+            toolTip: "Show or hide the detail pane (⌥⌘I)",
+            target: nil,
+            action: #selector(DetailPaneToggling.toggleDetailPane(_:))
+        )
+        super.init(nibName: nil, bundle: nil)
+        layoutAttribute = .right
+        setFileActionsEnabled(false)
     }
 
-    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        Self.itemIdentifiers
+    required init?(coder: NSCoder) { nil }
+
+    override func loadView() {
+        let divider = NSBox()
+        divider.boxType = .separator
+        divider.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            divider.widthAnchor.constraint(equalToConstant: 1),
+            divider.heightAnchor.constraint(equalToConstant: 14),
+        ])
+
+        let stack = NSStackView(views: [chooseButton, divider, openButton, revealButton, detailsButton])
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.spacing = 5
+        stack.edgeInsets = NSEdgeInsets(top: 1, left: 2, bottom: 1, right: 8)
+        // Titlebar accessories begin life under an autoresizing-mask width
+        // constraint, so give AppKit the strip's intrinsic opening size before
+        // it installs the view in the titlebar hierarchy.
+        stack.frame = NSRect(origin: .zero, size: Self.stripSize)
+        view = stack
     }
 
-    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        Self.itemIdentifiers
+    func setFileActionsEnabled(_ enabled: Bool) {
+        openButton.isEnabled = enabled
+        revealButton.isEnabled = enabled
     }
 
-    func toolbar(
-        _ toolbar: NSToolbar,
-        itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
-        willBeInsertedIntoToolbar flag: Bool
-    ) -> NSToolbarItem? {
-        switch itemIdentifier {
-        case Self.chooseIdentifier:
-            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
-            item.label = "Choose…"
-            item.paletteLabel = "Choose Source"
-            item.toolTip = "Choose a folder or disk to scan"
-            item.image = NSImage(named: NSImage.folderName)
-            item.target = self
-            item.action = #selector(showChooser)
-            return item
-        case Self.openIdentifier:
-            return actionItem(
-                identifier: itemIdentifier,
-                label: FileActionMenu.openTitle,
-                toolTip: "Open the selected item (⌘O)",
-                imageName: NSImage.quickLookTemplateName,
-                action: #selector(FileActionResponding.openSelectedItem(_:))
-            )
-        case Self.trackingSeparatorIdentifier:
-            return NSTrackingSeparatorToolbarItem(
-                identifier: itemIdentifier,
-                splitView: workspaceViewController.listDetailViewController.splitView,
-                dividerIndex: 0
-            )
-        case Self.toggleDetailIdentifier:
-            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
-            item.label = "Details"
-            item.paletteLabel = "Show or Hide Details"
-            item.toolTip = "Show or hide the detail pane (⌥⌘I)"
-            item.image = NSImage(
-                systemSymbolName: "sidebar.trailing",
-                accessibilityDescription: "Show or hide the detail pane"
-            )
-            item.target = nil
-            item.action = #selector(DetailPaneToggling.toggleDetailPane(_:))
-            return item
-        case Self.revealIdentifier:
-            return actionItem(
-                identifier: itemIdentifier,
-                label: FileActionMenu.revealTitle,
-                toolTip: "Reveal the selected item in Finder (⌘R)",
-                imageName: NSImage.revealFreestandingTemplateName,
-                action: #selector(FileActionResponding.revealSelectedItem(_:))
-            )
-        default:
-            return nil
-        }
-    }
-
-    private func actionItem(
-        identifier: NSToolbarItem.Identifier,
+    private static func makeButton(
+        symbol: String,
         label: String,
         toolTip: String,
-        imageName: NSImage.Name,
+        target: AnyObject?,
         action: Selector
-    ) -> NSToolbarItem {
-        let item = NSToolbarItem(itemIdentifier: identifier)
-        item.label = label
-        item.paletteLabel = label
-        item.toolTip = toolTip
-        item.image = NSImage(named: imageName)
-        // Target nil sends it down the responder chain to the workspace, which
-        // is also what validates it against the current selection.
-        item.target = nil
-        item.action = action
-        return item
+    ) -> NSButton {
+        let configuration = NSImage.SymbolConfiguration(pointSize: symbolPointSize, weight: .medium)
+        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)?
+            .withSymbolConfiguration(configuration) ?? NSImage()
+        let button = NSButton(image: image, target: target, action: action)
+        button.title = ""
+        button.bezelStyle = .toolbar
+        button.controlSize = .small
+        // A permanent bezel makes four small commands look like a row of
+        // cramped form buttons. Keep the native toolbar hover and pressed
+        // treatment, but let the symbols sit quietly in the titlebar at rest.
+        button.showsBorderOnlyWhileMouseInside = true
+        button.contentTintColor = .labelColor
+        button.imagePosition = .imageOnly
+        button.imageScaling = .scaleProportionallyDown
+        button.toolTip = toolTip
+        button.setAccessibilityLabel(label)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            button.widthAnchor.constraint(equalToConstant: buttonSize.width),
+            button.heightAnchor.constraint(equalToConstant: buttonSize.height),
+        ])
+        return button
     }
 }

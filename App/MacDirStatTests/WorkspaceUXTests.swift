@@ -230,7 +230,7 @@ final class PreferencesTests: XCTestCase {
     }
 }
 
-/// Copying the path, showing and hiding the detail pane, and the toolbar items
+/// Copying the path, showing and hiding the detail pane, and the titlebar controls
 /// that go with them.
 @MainActor
 final class WorkspaceCommandTests: XCTestCase {
@@ -286,6 +286,33 @@ final class WorkspaceCommandTests: XCTestCase {
         XCTAssertFalse(workspace.preferences.isDetailPaneCollapsed)
     }
 
+    func test_togglingDetailsNeverMovesOrResizesTheWindow() throws {
+        let controller = MainWindowController(
+            preferences: Preferences(store: InMemoryPreferenceStore())
+        )
+        let window = try XCTUnwrap(controller.window)
+        let workspace = controller.workspaceViewController
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+        window.setFrame(NSRect(x: 120, y: 180, width: 720, height: 560), display: false)
+        controller.contentViewController?.view.layoutSubtreeIfNeeded()
+        workspace.listDetailViewController.splitView.layoutSubtreeIfNeeded()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        let originalFrame = window.frame
+
+        workspace.toggleDetailPane(nil)
+        XCTAssertEqual(window.frame, originalFrame, "hiding details changed the window frame")
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        let collapsedFrame = window.frame
+        XCTAssertEqual(collapsedFrame, originalFrame, "hiding details changed the window frame later")
+
+        workspace.toggleDetailPane(nil)
+        XCTAssertEqual(window.frame, collapsedFrame, "showing details changed the window frame")
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+
+        XCTAssertEqual(window.frame, collapsedFrame, "showing details changed the window frame later")
+    }
+
     func test_theDetailMenuItemSaysWhichWayItWillGo() async throws {
         let fixture = try await makeFixture()
         let (workspace, _, _) = fixture.makeWorkspace()
@@ -303,29 +330,42 @@ final class WorkspaceCommandTests: XCTestCase {
         XCTAssertEqual(item.title, MainMenu.showDetailsTitle)
     }
 
-    func test_theToolbarTracksTheDividerAndCanShowTheDetailPane() throws {
+    func test_theTitlebarStripIsCompactAndCanShowTheDetailPane() throws {
         let controller = MainWindowController(preferences: Preferences(store: InMemoryPreferenceStore()))
-        let toolbar = try XCTUnwrap(controller.window?.toolbar)
-        let identifiers = controller.toolbarDefaultItemIdentifiers(toolbar)
-        XCTAssertTrue(identifiers.contains(MainWindowController.trackingSeparatorIdentifier))
-        XCTAssertTrue(identifiers.contains(MainWindowController.toggleDetailIdentifier))
+        let strip = try XCTUnwrap(controller.commandStripController)
+        let toggle = strip.detailsButton
 
-        let separator = controller.toolbar(
-            toolbar,
-            itemForItemIdentifier: MainWindowController.trackingSeparatorIdentifier,
-            willBeInsertedIntoToolbar: false
-        )
-        XCTAssertTrue(separator is NSTrackingSeparatorToolbarItem, "the seam has to be the real item")
-
-        let toggle = try XCTUnwrap(
-            controller.toolbar(
-                toolbar,
-                itemForItemIdentifier: MainWindowController.toggleDetailIdentifier,
-                willBeInsertedIntoToolbar: false
+        XCTAssertNil(controller.window?.toolbar, "a toolbar would mirror scrolled rows into its glass")
+        XCTAssertEqual(strip.buttons.count, 4)
+        XCTAssertEqual(TitlebarCommandStripViewController.buttonSize, NSSize(width: 32, height: 26))
+        XCTAssertEqual(TitlebarCommandStripViewController.symbolPointSize, 12)
+        XCTAssertTrue(strip.buttons.allSatisfy(\.showsBorderOnlyWhileMouseInside))
+        XCTAssertTrue(strip.buttons.allSatisfy { $0.contentTintColor == .labelColor })
+        if #available(macOS 26.1, *) {
+            XCTAssertTrue(
+                strip.preferredScrollEdgeEffectStyle === NSScrollEdgeEffectStyle.hard
             )
-        )
+        }
         XCTAssertEqual(toggle.action, #selector(DetailPaneToggling.toggleDetailPane(_:)))
-        assertNoMutationAffordance(in: [toggle.label], context: "the toolbar")
+        assertNoMutationAffordance(
+            in: strip.buttons.compactMap { $0.accessibilityLabel() },
+            context: "the titlebar command strip"
+        )
+    }
+
+    func test_theTitlebarFileActionsFollowTheSharedSelection() async throws {
+        let fixture = try await makeFixture()
+        let controller = MainWindowController(preferences: Preferences(store: InMemoryPreferenceStore()))
+        let strip = try XCTUnwrap(controller.commandStripController)
+
+        XCTAssertFalse(strip.openButton.isEnabled)
+        XCTAssertFalse(strip.revealButton.isEnabled)
+        controller.workspaceViewController.selectionModel.select(
+            .node(try fixture.node(named: "report.pdf")),
+            source: .tree
+        )
+        XCTAssertTrue(strip.openButton.isEnabled)
+        XCTAssertTrue(strip.revealButton.isEnabled)
     }
 }
 

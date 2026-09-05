@@ -224,8 +224,8 @@ enum MainMenu {
 
     private static func viewMenu() -> NSMenu {
         let menu = NSMenu(title: "View")
-        // The detail pane collapses and there is no toolbar toggle that brings
-        // it back on its own; this is the keyboard half of that pair.
+        // The detail pane collapses; this is the keyboard counterpart to the
+        // titlebar command that brings it back.
         let details = NSMenuItem(
             title: hideDetailsTitle,
             action: #selector(DetailPaneToggling.toggleDetailPane(_:)),
@@ -233,17 +233,6 @@ enum MainMenu {
         )
         details.keyEquivalentModifierMask = [.command, .option]
         menu.addItem(details)
-        menu.addItem(.separator())
-        menu.addItem(
-            withTitle: "Hide Toolbar",
-            action: #selector(NSWindow.toggleToolbarShown(_:)),
-            keyEquivalent: ""
-        )
-        menu.addItem(
-            withTitle: "Customize Toolbar…",
-            action: #selector(NSWindow.runToolbarCustomizationPalette(_:)),
-            keyEquivalent: ""
-        )
         menu.addItem(.separator())
         let fullScreen = NSMenuItem(
             title: "Enter Full Screen",

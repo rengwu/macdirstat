@@ -391,6 +391,61 @@ final class SourceChooserTests: XCTestCase {
         XCTAssertEqual(choices[1].detail, "External disk")
     }
 
+    func test_selectingDisksDoesNotSearchUntilSearchIsPressed() {
+        let choices = SourceChooserModel.visibleChoices(from: [
+            VolumeSourceFacts(url: URL(fileURLWithPath: "/"), name: "Macintosh HD", isLocal: true),
+            VolumeSourceFacts(url: URL(fileURLWithPath: "/Volumes/USB"), name: "USB", isLocal: true),
+        ])
+        let controller = SourceChooserViewController(choices: choices)
+        controller.loadViewIfNeeded()
+        var searchedURLs: [URL] = []
+        controller.onSearch = { url, mode in
+            searchedURLs.append(url)
+            XCTAssertEqual(mode, .volumeRoot)
+        }
+        XCTAssertFalse(controller.searchButton.isEnabled)
+        controller.sourceTable.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        controller.sourceTable.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
+        XCTAssertTrue(searchedURLs.isEmpty)
+        XCTAssertTrue(controller.searchButton.isEnabled)
+
+        controller.searchButton.performClick(nil)
+
+        XCTAssertEqual(searchedURLs, [choices[1].url])
+    }
+
+    func test_choosingAndReplacingFolderOnlySearchesOnConfirmation() {
+        let controller = SourceChooserViewController(choices: [], packageScanMode: .summarized)
+        var searchedURLs: [URL] = []
+        controller.onSearch = { url, mode in
+            searchedURLs.append(url)
+            XCTAssertEqual(mode, .folder)
+        }
+        controller.selectFolder(URL(fileURLWithPath: "/Users/Shared"))
+        let replacement = URL(fileURLWithPath: "/Applications")
+        controller.selectFolder(replacement)
+        XCTAssertTrue(searchedURLs.isEmpty)
+        XCTAssertEqual(controller.sourceTable.numberOfRows, 1)
+        XCTAssertEqual(controller.sourceTable.selectedRow, 0)
+        XCTAssertEqual(controller.packageScanMode, .summarized)
+
+        controller.searchButton.performClick(nil)
+
+        XCTAssertEqual(searchedURLs, [replacement])
+    }
+
+    func test_cancellingAfterSelectionDoesNotSearch() {
+        let controller = SourceChooserViewController(choices: [])
+        controller.onSearch = { _, _ in XCTFail("Cancel must not start a search") }
+        var dismissed = false
+        controller.onCancel = { dismissed = true }
+        controller.selectFolder(URL(fileURLWithPath: "/Applications"))
+
+        controller.cancelOperation(nil)
+
+        XCTAssertTrue(dismissed)
+    }
+
     func test_escapeDismissesTheChooser() {
         let controller = SourceChooserViewController(choices: [])
         var dismissed = false
@@ -404,7 +459,7 @@ final class SourceChooserTests: XCTestCase {
 
 @MainActor
 final class AppShellTests: XCTestCase {
-    func test_mainMenuAndShellAreProgrammaticAndReadOnly() {
+    func test_mainMenuAndShellAreProgrammaticAndReadOnly() throws {
         let menu = MainMenu.make()
         let allTitles = menu.items.flatMap { item in
             [item.title] + (item.submenu?.items.map(\.title) ?? [])
@@ -442,8 +497,19 @@ final class AppShellTests: XCTestCase {
             row.splitViewItems[1].holdingPriority,
             "extra width belongs to the list, not the detail pane"
         )
-        XCTAssertNotNil(controller.window?.toolbar)
-        XCTAssertEqual(controller.window?.toolbarStyle, .unified)
+        XCTAssertNil(controller.window?.toolbar)
+        XCTAssertEqual(controller.window?.titlebarSeparatorStyle, .line)
+        let strip = try XCTUnwrap(controller.commandStripController)
+        XCTAssertEqual(controller.window?.titlebarAccessoryViewControllers.count, 1)
+        XCTAssertTrue(controller.window?.titlebarAccessoryViewControllers.first === strip)
+        XCTAssertEqual(strip.layoutAttribute, .right)
+        XCTAssertEqual(strip.buttons.count, 4)
+        XCTAssertTrue(strip.buttons.allSatisfy { $0.controlSize == .small })
+        if #available(macOS 26.1, *) {
+            XCTAssertTrue(
+                strip.preferredScrollEdgeEffectStyle === NSScrollEdgeEffectStyle.hard
+            )
+        }
         XCTAssertNotNil(controller.statusBarController.view.superview)
     }
 
@@ -471,7 +537,7 @@ final class AppShellTests: XCTestCase {
             detail.maximumThickness - detail.minimumThickness, 80,
             "a range this divider cannot travel in is a fixed pane wearing a divider"
         )
-        XCTAssertFalse(list.canCollapse, "a pane with no toolbar toggle must not be collapsible")
+        XCTAssertFalse(list.canCollapse, "a pane with no titlebar toggle must not be collapsible")
 
         XCTAssertGreaterThan(
             workspace.splitView.bounds.height

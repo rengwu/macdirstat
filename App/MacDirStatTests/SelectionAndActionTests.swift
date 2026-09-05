@@ -332,7 +332,7 @@ final class ReadOnlyActionTests: XCTestCase {
         )
     }
 
-    func test_everyMenuToolbarAndContextMenuCarriesOnlyTheTwoReadOnlyActions() async throws {
+    func test_everyMenuCommandStripAndContextMenuCarriesOnlyTheTwoReadOnlyActions() async throws {
         let fixture = try await makeFixture()
         let (workspace, _, _) = fixture.makeWorkspace()
 
@@ -362,13 +362,12 @@ final class ReadOnlyActionTests: XCTestCase {
         assertNoMutationAffordance(in: contextMenu.items.map(\.title), context: "the context menu")
 
         let controller = MainWindowController()
-        let toolbar = try XCTUnwrap(controller.window?.toolbar)
-        let toolbarLabels = controller.toolbarDefaultItemIdentifiers(toolbar).compactMap {
-            controller.toolbar(toolbar, itemForItemIdentifier: $0, willBeInsertedIntoToolbar: false)?.label
+        let commandLabels = try XCTUnwrap(controller.commandStripController).buttons.compactMap {
+            $0.accessibilityLabel()
         }
-        assertNoMutationAffordance(in: toolbarLabels, context: "the toolbar")
-        XCTAssertTrue(toolbarLabels.contains(FileActionMenu.openTitle))
-        XCTAssertTrue(toolbarLabels.contains(FileActionMenu.revealTitle))
+        assertNoMutationAffordance(in: commandLabels, context: "the titlebar command strip")
+        XCTAssertTrue(commandLabels.contains(FileActionMenu.openTitle))
+        XCTAssertTrue(commandLabels.contains(FileActionMenu.revealTitle))
 
         workspace.selectionModel.select(.node(try fixture.node(named: "report.pdf")), source: .tree)
         let elements = workspace.treemapViewController.treemapView.accessibilityRectangleElements()
@@ -382,7 +381,7 @@ final class ReadOnlyActionTests: XCTestCase {
 @MainActor
 final class WorkspaceLayoutTests: XCTestCase {
     /// The window rendered **blank** during this ticket: a full-size window,
-    /// toolbar and status bar drawn, and the three panes not drawn at all —
+    /// window chrome and status bar drawn, and the three panes not drawn —
     /// while every one of them was laid out correctly and answering
     /// accessibility queries. Nothing failed; it only looked wrong.
     ///
@@ -427,7 +426,11 @@ final class WorkspaceLayoutTests: XCTestCase {
         let statusHeight = controller.statusBarController.view.frame.height
         XCTAssertGreaterThan(statusHeight, 0)
         let workspace = controller.workspaceViewController
-        XCTAssertEqual(workspace.view.frame.height, 700 - statusHeight, accuracy: 0.5)
+        XCTAssertEqual(
+            workspace.view.frame.height,
+            700 - statusHeight - WorkspaceContainerViewController.titlebarContentSeparation,
+            accuracy: 0.5
+        )
 
         let rows = workspace.splitView.arrangedSubviews.map(\.frame)
         XCTAssertEqual(rows.count, 2)

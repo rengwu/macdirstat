@@ -31,6 +31,9 @@ build: ## Build the debug app
 	@$(XCODEBUILD) build -scheme $(SCHEME) -configuration $(CONFIG) -derivedDataPath $(DERIVED)
 
 run: build ## Build and launch the dev instance
+	@touch "$(APP)"
+	@# Refresh Launch Services after an in-place build so it reloads the app icon.
+	@/System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister -f "$(APP)"
 	@open $(APP)
 
 rerun: stop run ## Quit a running dev instance, rebuild, and launch it again

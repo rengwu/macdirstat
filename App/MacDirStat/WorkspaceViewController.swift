@@ -1467,7 +1467,7 @@ final class ListDetailSplitViewController: GrabbableSplitViewController {
         let list = NSSplitViewItem(viewController: tree)
         list.minimumThickness = WorkspaceSplitViewController.treeMinimumThickness
         // Collapsing it would leave nothing to drag it back with: there is no
-        // toolbar toggle for this pane, unlike the inspector.
+        // titlebar toggle for this pane, unlike the inspector.
         list.canCollapse = false
         list.holdingPriority = .defaultLow
 
@@ -1476,6 +1476,11 @@ final class ListDetailSplitViewController: GrabbableSplitViewController {
         detail.maximumThickness = WorkspaceSplitViewController.inspectorMaximumThickness
         detail.preferredThicknessFraction = 300.0 / 1_100.0
         detail.canCollapse = true
+        // An inspector otherwise prefers to keep its sibling fixed when it is
+        // shown, which makes AppKit widen (and sometimes move) the window by
+        // the inspector's width. Showing details must consume space inside the
+        // existing split view instead.
+        detail.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
         detail.holdingPriority = GrabbableSplitViewController.holdsItsSize
 
         addSplitViewItem(list)
@@ -1575,7 +1580,7 @@ final class WorkspaceSplitViewController: GrabbableSplitViewController,
 
         let top = NSSplitViewItem(viewController: listDetailViewController)
         top.minimumThickness = Self.listDetailMinimumHeight
-        // Neither half of the workspace collapses: there is no toolbar toggle
+        // Neither half of the workspace collapses: there is no titlebar toggle
         // to bring either back, and a window showing only one of the two
         // readings is not the workspace §7.1 describes.
         top.canCollapse = false
@@ -1752,7 +1757,16 @@ final class WorkspaceSplitViewController: GrabbableSplitViewController,
     @objc func toggleDetailPane(_ sender: Any?) {
         let item = listDetailViewController.splitViewItems[1]
         let collapsed = !item.isCollapsed
-        item.animator().isCollapsed = collapsed
+        let window = view.window
+        let frame = window?.frame
+        // `collapseBehavior` on the item makes this redistribute only the
+        // space inside the split view. Preserve the frame as an absolute
+        // boundary as well: some AppKit versions still apply the inspector's
+        // standard window expansion before resolving the split constraints.
+        item.isCollapsed = collapsed
+        if let window, let frame, window.frame != frame {
+            window.setFrame(frame, display: false)
+        }
         preferences.isDetailPaneCollapsed = collapsed
     }
 
@@ -1823,6 +1837,12 @@ final class WorkspaceSplitViewController: GrabbableSplitViewController,
 
 @MainActor
 final class WorkspaceContainerViewController: NSViewController {
+    /// A scroll view touching the content edge is mirrored into the floating
+    /// titlebar on Tahoe. A physical one-point boundary opts the dense table
+    /// out of that edge-to-edge treatment while remaining visually covered by
+    /// the window's native separator.
+    static let titlebarContentSeparation: CGFloat = 1
+
     let workspace: WorkspaceSplitViewController
     let statusBar: StatusBarViewController
     private var statusHeight: NSLayoutConstraint!
@@ -1847,7 +1867,10 @@ final class WorkspaceContainerViewController: NSViewController {
         root.addSubview(status)
         statusHeight = status.heightAnchor.constraint(equalToConstant: 26)
         NSLayoutConstraint.activate([
-            split.topAnchor.constraint(equalTo: root.topAnchor),
+            split.topAnchor.constraint(
+                equalTo: root.topAnchor,
+                constant: Self.titlebarContentSeparation
+            ),
             split.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             split.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             split.bottomAnchor.constraint(equalTo: status.topAnchor),

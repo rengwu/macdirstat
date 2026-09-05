@@ -61,7 +61,7 @@ protocol PathCopying: AnyObject {
     @objc func copySelectedPath(_ sender: Any?)
 }
 
-/// Choosing what to scan, from the menu bar rather than the toolbar button.
+/// Choosing what to scan, from the menu bar or the titlebar command strip.
 @MainActor
 @objc
 protocol ScanSourceChoosing: AnyObject {

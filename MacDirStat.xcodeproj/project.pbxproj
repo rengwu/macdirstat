@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		AB000000000000000000B060 /* AppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F060 /* AppIcon.icns */; };
 		AB000000000000000000B001 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F001 /* main.swift */; };
 		AB000000000000000000B002 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F002 /* AppDelegate.swift */; };
 		AB000000000000000000B003 /* MainWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F003 /* MainWindowController.swift */; };
@@ -48,6 +49,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		AB000000000000000000F060 /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = Resources/AppIcon.icns; sourceTree = "<group>"; };
 		AB000000000000000000F001 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		AB000000000000000000F002 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		AB000000000000000000F003 /* MainWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainWindowController.swift; sourceTree = "<group>"; };
@@ -147,6 +149,7 @@
 				AB000000000000000000F019 /* InspectorContent.swift */,
 				AB000000000000000000F01A /* InspectorViewController.swift */,
 				AB000000000000000000F006 /* Info.plist */,
+				AB000000000000000000F060 /* AppIcon.icns */,
 			);
 			path = MacDirStat;
 			sourceTree = "<group>";
@@ -266,6 +269,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AB000000000000000000B060 /* AppIcon.icns in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

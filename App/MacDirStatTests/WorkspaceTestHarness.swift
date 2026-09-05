@@ -213,7 +213,7 @@ final class AnnouncementSpy: AccessibilityAnnouncing {
     func announce(_ message: String) { messages.append(message) }
 }
 
-/// Every verb this app must never offer, in menus, context menus, the toolbar
+/// Every verb this app must never offer, in menus, context menus, the command strip
 /// or the accessibility tree (§7.1).
 let mutationVerbs = [
     "Delete", "Remove", "Trash", "Clean", "Move", "Rename", "Copy",

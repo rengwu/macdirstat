@@ -103,7 +103,8 @@ nothing, so the inspector can explain the visible figure where the two diverge â
 a sparse disk image, a compressed binary, a cloud placeholder. `CONTEXT.md` has
 the full vocabulary.
 
-The source chooser and folder picker also offer **Fast mode**. macOS does not
+The source chooser also offers **Fast mode**. Select a disk or use **Choose
+Folderâ€¦** to add a folder, then click **Search** to start. macOS does not
 publish a reliable recursive size for directories, so the scanner still visits
 the files inside an application bundle, but it requests only size metadata and
 keeps the bundle as one aggregate node. It avoids sorting and materializing the
