@@ -1,0 +1,11 @@
+Generated using the built-in image_gen tool. Exported to exactly 1024x1024 pixels.
+
+Use case: stylized-concept
+Asset type: macOS app icon master artwork for MacDirStat, a disk usage treemap visualizer.
+Primary request: Generate one vibrant polished 3D app icon, exactly 1024x1024 pixels, full square canvas with sharp 90-degree outer corners, absolutely no squircle or rounded-square icon container.
+Subject: A bold, compact rectangular treemap mosaic made of about 10 tightly packed solid rectangular blocks of different areas and modestly different heights, like a beautifully sculpted disk-space map. One large block and a few medium blocks anchor the composition; smaller blocks fill subdivisions logically. All blocks belong to one cohesive square footprint, with narrow precise channels between them. Show the top faces prominently with a restrained three-quarter perspective and shallow dimensional extrusion. The treemap is the single unmistakable hero symbol, readable at small app-icon sizes.
+Style/medium: Premium stylized 3D product render, refined tactile glossy enamel with subtle bevels, richly saturated vibrant colors, clean geometry, sophisticated lighting and strong silhouette. Colorful blocks spanning cyan, blue, violet, magenta, coral and golden orange with controlled grouping.
+Scene/backdrop: Deep rich indigo background with subtle studio illumination, fully opaque and extending to all four sharp corners of the image. No background tile, border or outer frame.
+Composition: Single centered large treemap sculpture occupying approximately 78 percent of canvas width, comfortably inset, no cropping. Controlled perspective, balanced visual mass, crisp and intentional.
+Lighting: Soft key light from upper left, luminous color, convincing restrained contact shadows, gentle edge highlights, polished but no glare obscuring geometry.
+Constraints: Exactly square 1024x1024. NO rounded-square or squircle boundary, NO rounded backdrop tile, NO text, letters, numbers, logos, watermark, badge, magnifying glass, pie chart, hard-drive hardware, floating particles or unrelated decoration. Render only one final icon, not a presentation or grid of options.
