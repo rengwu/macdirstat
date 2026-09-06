@@ -1,120 +1,121 @@
 # MacDirStat
 
-A native macOS disk visualizer: scan one folder or volume, and read it as a
-synchronized directory tree and a classic flat treemap. Read-only — the only
-file actions are Open and Reveal.
+**See what’s taking up space on your Mac.**
 
-## Layout
+MacDirStat is a native macOS disk visualizer with a directory tree and a classic
+flat treemap. Pick a folder or disk, scan it, and select a rectangle to find the
+file behind it. It’s free, open source, and read-only.
 
-| Path | What it is |
+![MacDirStat showing a directory tree, a treemap colored by file type, and details for a selected video](docs/images/macdirstat.png)
+
+*The app scanning sample files. Rectangle area represents on-disk size.*
+
+[Get started](#get-started) · [Releases](https://github.com/rengwu/macdirstat/releases) · [Report a bug](https://github.com/rengwu/macdirstat/issues) · [MIT license](LICENSE)
+
+## What it does
+
+- **Find large files visually.** The tree and treemap share one selection; the
+  detail pane shows the selected item’s size, path, and share of its folder.
+- **Scan local folders and disks.** Hidden files are included. Network volumes
+  aren’t supported.
+- **Keep app bundles compact.** Fast mode measures their contents but shows each
+  package as one item. Turn it off before scanning to browse inside packages.
+- **Stop a scan and explore what it found.** Cancelled scans retain their partial
+  results, with totals marked as lower bounds.
+- **Open or reveal a file in Finder.** MacDirStat has no delete, move, or cleanup
+  actions.
+
+## Get started
+
+**Requires macOS 14 Sonoma or later. Builds for Apple Silicon and Intel Macs.**
+
+There is no packaged download yet. Developer ID signing and notarization are
+still pending; for now, build from source. Packaged downloads will appear on the
+[Releases page](https://github.com/rengwu/macdirstat/releases).
+
+### Build and install
+
+Building requires the **full Xcode app**, including its macOS SDK. The standalone
+Command Line Tools are not enough to build and test the app. You do not need a
+paid Apple Developer account for a local build.
+
+1. Install Xcode and open it once to finish setup. If needed, select it with
+   `sudo xcode-select -s /Applications/Xcode.app`.
+2. Clone the repository and build:
+
+   ```sh
+   git clone https://github.com/rengwu/macdirstat.git
+   cd macdirstat
+   make release
+   ```
+
+3. Open the build folder:
+
+   ```sh
+   open .build/xcode/Build/Products/Release
+   ```
+
+4. Drag **MacDirStat.app** to **Applications**, then launch it.
+
+To run directly from a development checkout, use `make run`.
+
+## Your first scan
+
+1. Click **Choose…**, or press **⌘O**.
+2. Select a disk, or use **Choose Folder…** to add a folder.
+3. Choose whether to use **Fast mode**, then click **Search**.
+4. Watch the progress card while the scan runs. The tree and treemap appear when
+   it finishes; **Cancel** stops early and keeps what was found.
+5. Select a file in the tree or treemap to inspect it. Expand folders in the tree
+   to browse, or use **Reveal in Finder** to locate the selected item.
+
+| Shortcut | Action |
 | --- | --- |
-| `MacDirStat.xcodeproj` | The app project: one macOS App target and one test target |
-| `App/MacDirStat` | AppKit shell — programmatic lifecycle, no storyboard, not document-based |
-| `App/MacDirStatTests` | The app's tests: formatting, status line, selection, inspector, treemap view |
-| `Packages/ScanCore` | Foundation-only scan engine: traversal, aggregation, cancellation, progress, errors |
-| `Packages/TreemapLayout` | Foundation-only rectangle layout: squarified geometry and the merge rule |
-| `TestPlans/CI.xctestplan` | The one test plan |
-| `Makefile` | Build, run and test tasks — `make help` lists them |
+| ⌘O | Choose a folder or disk to scan |
+| ⌘R | Reveal the selected item in Finder |
+| ⌥⌘C | Copy the selected item’s path |
+| ⌘D | Show or hide the detail pane |
 
-The two packages import Foundation and nothing else — not AppKit, not SwiftUI,
-not even CoreGraphics — so they test headlessly and own their own geometry
-types.
+### Reading the sizes
 
-## Requirements
+**On-disk size** drives rectangle area and the Size column. **Content length**
+is the file’s logical length; the detail pane shows it when the displayed figures
+differ, such as for sparse files or compressed files. Sizes use binary units
+(KiB, MiB, GiB).
 
-**Xcode is required**, not just the Command Line Tools: `xcodebuild` and the
-XCTest framework both ship with it. With the Command Line Tools alone you can
-build the packages and typecheck the app, but you cannot run a single test.
+A scan with unreadable entries is marked **Incomplete**: its totals are lower
+bounds. The result describes the files the scan could measure, rather than a
+promise of how much space deleting them would recover. Fast mode retains measured
+package totals without keeping their internal file trees.
 
-```sh
-sudo xcode-select -s /Applications/Xcode.app
-```
+## Privacy
 
-Deployment floor: **macOS 14**.
+MacDirStat scans filesystem metadata locally, without reading file contents.
+There are no accounts, analytics, or scan uploads. Opening a selected file hands
+it to its default application through macOS.
 
-## Building and running
+Scan results are held in memory and are not saved between launches. The app saves
+window settings, scan preferences, and recent folder paths locally. Clear recent
+paths with **File → Open Recent → Clear Menu**.
 
-`make` wraps the `xcodebuild` invocations; `make help` lists every target.
-Everything builds into `.build/xcode`, which is gitignored.
+## Feedback and bugs
 
-```sh
-make run      # build the debug app and launch it
-make rerun    # quit a running instance, rebuild, launch again
-make console  # launch in the terminal with its console output attached
-make stop     # quit a running instance
-make release  # build the release app
-```
+[Open an issue](https://github.com/rengwu/macdirstat/issues) with the app version,
+your macOS version, whether your Mac uses Apple Silicon or Intel, and the steps
+to reproduce the problem. For scan issues, include whether Fast mode was enabled
+and whether you scanned a folder, internal disk, or external disk. A small sample
+folder that reproduces the issue is especially useful.
 
-The window remembers its dividers, column layout, sort order, Fast mode and
-recent folders between launches. To get a first run back:
+Screenshots can include filenames and paths; remove any private details before
+sharing them.
 
-```sh
-make reset
-```
+## Development
 
-## Running the tests
+Built with Swift and AppKit. The scan engine and treemap layout are separate
+Foundation-only packages with no third-party package dependencies.
 
-The packages test on their own, headlessly:
-
-```sh
-make test-packages
-```
-
-Everything, including the app target, runs sequentially so a package failure
-cannot be hidden by a green app test result:
-
-```sh
-make test
-```
-
-The underlying commands, if you would rather run them directly:
-
-```sh
-swift test --package-path Packages/ScanCore
-swift test --package-path Packages/TreemapLayout
-
-xcodebuild test -project MacDirStat.xcodeproj -scheme MacDirStat-CI \
-  -testPlan CI -destination 'platform=macOS'
-
-xcodebuild build -project MacDirStat.xcodeproj -scheme MacDirStat \
-  -configuration Release -destination 'platform=macOS'
-```
-
-## How a scan reaches the screen
-
-The engine walks the tree on its own thread and **hands it over once**, with the
-terminal event. While the scan runs, the window shows the progress card — bytes
-counted, files, folders, elapsed, items per second, the folder being read, and a
-percentage on volume scans — and the tree and treemap fill in when it finishes.
-
-That is deliberate. The engine used to republish the tree several times a second
-by copying the folders it was still working on and reusing the finished ones by
-reference, and those reused nodes kept pointing up into the live tree the scan
-thread was still writing to. The % column divided by a total that was still
-moving, and a selection held across a republish could outlive the copy it came
-from. One tree makes both impossible rather than fixed.
-
-## What the two size figures mean
-
-**On-disk size** is the blocks an entry occupies, and it is the measure: it
-drives the treemap's area, the Size column and every total. **Content length** is
-how many bytes the content is; it is carried beside on-disk size and drives
-nothing, so the inspector can explain the visible figure where the two diverge —
-a sparse disk image, a compressed binary, a cloud placeholder. `CONTEXT.md` has
-the full vocabulary.
-
-The source chooser also offers **Fast mode**. Select a disk or use **Choose
-Folder…** to add a folder, then click **Search** to start. macOS does not
-publish a reliable recursive size for directories, so the scanner still visits
-the files inside an application bundle, but it requests only size metadata and
-keeps the bundle as one aggregate node. It avoids sorting and materializing the
-often enormous internal app tree while retaining the app's measured total.
-
-## Design record
-
-`.plan/maps/macos-disk-visualizer/spec.md` is the original specification. It is a
-record, not a contract: the decisions listed at the top of that file supersede
-the body wherever the two disagree.
+See [the development guide](docs/DEVELOPING.md) for build commands, tests, and
+repository structure, or [CONTEXT.md](CONTEXT.md) for measurement terminology.
 
 ## License
 
