@@ -700,15 +700,18 @@ final class TreemapView: NSView {
     private static let labelAttributes: [NSAttributedString.Key: Any] = {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingTail
+        let halo = NSShadow()
+        halo.shadowColor = TreemapChrome.labelHalo
+        halo.shadowOffset = .zero
+        halo.shadowBlurRadius = 1
         return [
             .font: NSFont.systemFont(
                 ofSize: CGFloat(TreemapMetrics.labelFontSizePoints), weight: .semibold
             ),
             .foregroundColor: TreemapChrome.labelForeground,
-            // A negative stroke width fills *and* strokes, which is the halo
-            // §6.3 asks for in one pass.
-            .strokeColor: TreemapChrome.labelHalo,
-            .strokeWidth: -3.0,
+            // Keep the halo behind the glyphs: stroking their edges eats into
+            // the small white letterforms and makes them look hollow.
+            .shadow: halo,
             .paragraphStyle: paragraph,
         ]
     }()
