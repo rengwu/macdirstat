@@ -42,17 +42,16 @@ final class MenuBarTests: XCTestCase {
         }
     }
 
-    /// ⌘O keeps Finder's meaning and the app's own primary verb takes ⇧⌘O —
-    /// it used to have no key, and no menu item, at all.
+    /// ⌘O belongs to choosing a scan source, regardless of file selection.
     func test_scanningHasAMenuItemAndAKey() throws {
         let file = try menu(titled: "File")
         let scan = try item(MainMenu.scanFolderTitle, in: file)
         XCTAssertEqual(scan.keyEquivalent, "o")
-        XCTAssertEqual(scan.keyEquivalentModifierMask, [.command, .shift])
+        XCTAssertEqual(scan.keyEquivalentModifierMask, .command)
         XCTAssertEqual(scan.action, #selector(ScanSourceChoosing.chooseScanSource(_:)))
 
         let open = try item(FileActionMenu.openTitle, in: file)
-        XCTAssertEqual(open.keyEquivalent, "o")
+        XCTAssertEqual(open.keyEquivalent, "")
         XCTAssertEqual(open.keyEquivalentModifierMask, .command)
     }
 
@@ -65,8 +64,8 @@ final class MenuBarTests: XCTestCase {
 
     func test_theDetailPaneHasAMenuItem() throws {
         let details = try item(MainMenu.hideDetailsTitle, in: try menu(titled: "View"))
-        XCTAssertEqual(details.keyEquivalent, "i")
-        XCTAssertEqual(details.keyEquivalentModifierMask, [.command, .option])
+        XCTAssertEqual(details.keyEquivalent, "d")
+        XCTAssertEqual(details.keyEquivalentModifierMask, .command)
         XCTAssertEqual(details.action, #selector(DetailPaneToggling.toggleDetailPane(_:)))
     }
 
@@ -336,7 +335,9 @@ final class WorkspaceCommandTests: XCTestCase {
         let toggle = strip.detailsButton
 
         XCTAssertNil(controller.window?.toolbar, "a toolbar would mirror scrolled rows into its glass")
-        XCTAssertEqual(strip.buttons.count, 4)
+        XCTAssertEqual(strip.buttons.count, 3)
+        XCTAssertFalse(strip.buttons.contains { $0.action == #selector(FileActionResponding.openSelectedItem(_:)) })
+        XCTAssertEqual(strip.revealButton.toolTip, "Reveal in Finder")
         XCTAssertEqual(TitlebarCommandStripViewController.buttonSize, NSSize(width: 32, height: 26))
         XCTAssertEqual(TitlebarCommandStripViewController.symbolPointSize, 12)
         XCTAssertTrue(strip.buttons.allSatisfy(\.showsBorderOnlyWhileMouseInside))
@@ -358,13 +359,11 @@ final class WorkspaceCommandTests: XCTestCase {
         let controller = MainWindowController(preferences: Preferences(store: InMemoryPreferenceStore()))
         let strip = try XCTUnwrap(controller.commandStripController)
 
-        XCTAssertFalse(strip.openButton.isEnabled)
         XCTAssertFalse(strip.revealButton.isEnabled)
         controller.workspaceViewController.selectionModel.select(
             .node(try fixture.node(named: "report.pdf")),
             source: .tree
         )
-        XCTAssertTrue(strip.openButton.isEnabled)
         XCTAssertTrue(strip.revealButton.isEnabled)
     }
 }

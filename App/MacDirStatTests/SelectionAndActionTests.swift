@@ -277,13 +277,13 @@ final class ReadOnlyActionTests: XCTestCase {
         XCTAssertEqual(actions.opened.count, 1, "Return opens a leaf row")
     }
 
-    func test_theCommandKeyEquivalentsAreOAndR() {
+    func test_onlyRevealHasAFileActionShortcut() {
         let menu = MainMenu.make()
         let items = menu.items.flatMap { $0.submenu?.items ?? [] }
         let open = items.first { $0.title == FileActionMenu.openTitle }
         let reveal = items.first { $0.title == FileActionMenu.revealTitle }
 
-        XCTAssertEqual(open?.keyEquivalent, "o")
+        XCTAssertEqual(open?.keyEquivalent, "")
         XCTAssertEqual(open?.keyEquivalentModifierMask, .command)
         XCTAssertEqual(reveal?.keyEquivalent, "r")
         XCTAssertEqual(reveal?.keyEquivalentModifierMask, .command)
@@ -366,7 +366,8 @@ final class ReadOnlyActionTests: XCTestCase {
             $0.accessibilityLabel()
         }
         assertNoMutationAffordance(in: commandLabels, context: "the titlebar command strip")
-        XCTAssertTrue(commandLabels.contains(FileActionMenu.openTitle))
+        XCTAssertFalse(commandLabels.contains(FileActionMenu.openTitle))
+        XCTAssertTrue(commandLabels.contains(MainMenu.scanFolderTitle))
         XCTAssertTrue(commandLabels.contains(FileActionMenu.revealTitle))
 
         workspace.selectionModel.select(.node(try fixture.node(named: "report.pdf")), source: .tree)

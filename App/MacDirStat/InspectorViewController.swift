@@ -66,16 +66,28 @@ struct InspectorRootView: View {
     var body: some View {
         Group {
             if let content = state.content {
-                ScrollView {
-                    InspectorBody(content: content, onOpen: state.onOpen, onReveal: state.onReveal)
-                        .padding(14)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        // The path is, as the builder says, the whole point —
-                        // and until this was here there was no way to get it
-                        // out of the app. Selection is read-only by
-                        // construction: it copies, it cannot edit.
-                        .textSelection(.enabled)
+                VStack(spacing: 0) {
+                    ScrollView {
+                        InspectorBody(content: content)
+                            .padding(14)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                    if content.showsActions {
+                        Divider()
+                        HStack(spacing: 8) {
+                            Spacer(minLength: 0)
+                            Button(FileActionMenu.openTitle, action: state.onOpen)
+                            Button(FileActionMenu.revealTitle, action: state.onReveal)
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(Color(nsColor: .controlBackgroundColor))
+                    }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 Text("Select an item in the tree\nor treemap to see its details.")
                     .multilineTextAlignment(.center)
@@ -89,8 +101,6 @@ struct InspectorRootView: View {
 
 struct InspectorBody: View {
     let content: InspectorContent
-    let onOpen: () -> Void
-    let onReveal: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -156,14 +166,6 @@ struct InspectorBody: View {
                             .foregroundColor(.secondary)
                     }
                 }
-            }
-
-            if content.showsActions {
-                HStack(spacing: 8) {
-                    Button(FileActionMenu.openTitle, action: onOpen)
-                    Button(FileActionMenu.revealTitle, action: onReveal)
-                }
-                .padding(.top, 2)
             }
 
             if let footnote = content.footnote {

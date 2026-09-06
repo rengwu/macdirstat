@@ -503,7 +503,7 @@ final class AppShellTests: XCTestCase {
         XCTAssertEqual(controller.window?.titlebarAccessoryViewControllers.count, 1)
         XCTAssertTrue(controller.window?.titlebarAccessoryViewControllers.first === strip)
         XCTAssertEqual(strip.layoutAttribute, .right)
-        XCTAssertEqual(strip.buttons.count, 4)
+        XCTAssertEqual(strip.buttons.count, 3)
         XCTAssertTrue(strip.buttons.allSatisfy { $0.controlSize == .small })
         if #available(macOS 26.1, *) {
             XCTAssertTrue(
@@ -585,6 +585,8 @@ final class AppShellTests: XCTestCase {
         // band, so a divider that drags also *looks* like one.
         XCTAssertTrue(split is WorkspaceSplitView)
         XCTAssertTrue(rowSplit is WorkspaceSplitView)
+        XCTAssertEqual(split.dividerStyle, .thin)
+        XCTAssertEqual(rowSplit.dividerStyle, .thin)
         XCTAssertEqual(split.dividerColor, .separatorColor)
         XCTAssertEqual(rowSplit.dividerColor, .separatorColor)
         XCTAssertEqual(workspace.grabBand(forDividerAt: 0), horizontal)

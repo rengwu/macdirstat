@@ -298,9 +298,9 @@ final class InspectorContentTests: XCTestCase {
         XCTAssertEqual(content.sizeText, "0 bytes")
     }
 
-    // MARK: - The tooltip says the same things
+    // MARK: - The tooltip prioritizes the rectangle’s size
 
-    func test_theTooltipCarriesNameBothByteFiguresKindAndFullPath() async throws {
+    func test_theTooltipShowsNameOnDiskSizeAndScanShare() async throws {
         let fixture = try await ScannedFixture.make(in: self) { root in
             try writeFile("notes.pdf", bytes: 4_096, in: root)
         }
@@ -308,11 +308,7 @@ final class InspectorContentTests: XCTestCase {
 
         let tooltip = builder.tooltip(for: .node(node), in: context(fixture))
 
-        XCTAssertTrue(tooltip.contains("notes.pdf"))
-        XCTAssertTrue(tooltip.contains("4.00 KiB"))
-        XCTAssertTrue(tooltip.contains("4,096 bytes"))
-        XCTAssertTrue(tooltip.contains("Document"))
-        XCTAssertTrue(tooltip.contains(fixture.root.appendingPathComponent("notes.pdf").path))
+        XCTAssertEqual(tooltip, "notes.pdf\n\n4.00 KiB on disk\n100.0% of scan")
     }
 
     func test_theAccessibilityLabelCarriesNameSizeAndKind() async throws {

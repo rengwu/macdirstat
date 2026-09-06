@@ -133,6 +133,24 @@ final class SortedChildrenCache {
     }
 }
 
+/// Keep native header text, sorting, and resizing, but omit the separator
+/// after the last column: there is no adjacent column to separate there.
+@MainActor
+final class WorkspaceTableHeaderCell: NSTableHeaderCell {
+    override func draw(withFrame cellFrame: NSRect, in controlView: NSView) {
+        guard let header = controlView as? NSTableHeaderView,
+              header.tableView?.tableColumns.last?.headerCell === self else {
+            super.draw(withFrame: cellFrame, in: controlView)
+            return
+        }
+        NSGraphicsContext.saveGraphicsState()
+        NSRect(x: cellFrame.minX, y: cellFrame.minY,
+               width: max(0, cellFrame.width - 1), height: cellFrame.height).clip()
+        super.draw(withFrame: cellFrame, in: controlView)
+        NSGraphicsContext.restoreGraphicsState()
+    }
+}
+
 @MainActor
 final class DirectoryTreeViewController: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate {
     /// Below this, dispatch overhead costs more than the sort. Above it, even a
@@ -381,7 +399,7 @@ final class DirectoryTreeViewController: NSViewController, NSOutlineViewDataSour
 
     private func addColumn(_ column: TreeColumn, width: CGFloat, minWidth: CGFloat) {
         let tableColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(column.rawValue))
-        tableColumn.title = column.title
+        tableColumn.headerCell = WorkspaceTableHeaderCell(textCell: column.title)
         tableColumn.width = width
         tableColumn.minWidth = minWidth
         // Only the name column follows the pane; the numeric three keep the
@@ -839,7 +857,7 @@ final class TreemapPaneViewController: NSViewController {
             emptyState.centerYAnchor.constraint(equalTo: root.centerYAnchor),
             emptyState.widthAnchor.constraint(lessThanOrEqualTo: root.widthAnchor, multiplier: 0.85),
             scanCard.centerXAnchor.constraint(equalTo: root.centerXAnchor),
-            scanCard.centerYAnchor.constraint(equalTo: root.centerYAnchor, constant: -20),
+            scanCard.centerYAnchor.constraint(equalTo: root.centerYAnchor),
             scanCard.widthAnchor.constraint(lessThanOrEqualTo: root.widthAnchor, multiplier: 0.84),
             {
                 let constraint = scanCard.widthAnchor.constraint(equalToConstant: 540)
@@ -958,28 +976,42 @@ final class ScanProgressCardView: NSVisualEffectView {
         progressBar.isIndeterminate = true
         progressBar.startAnimation(nil)
         approximation.font = .systemFont(ofSize: 11)
-        approximation.textColor = .tertiaryLabelColor
+        approximation.textColor = .secondaryLabelColor
+        approximation.isHidden = true
 
-        let telemetry = NSGridView(views: [[
-            telemetryColumn("MEASURED", measured), telemetryColumn("FILES", files),
-            telemetryColumn("FOLDERS", folders), telemetryColumn("ELAPSED", elapsed),
-            telemetryColumn("THROUGHPUT", throughput),
-        ]])
-        telemetry.row(at: 0).height = 48
+        let telemetry = NSStackView(views: [
+            telemetryColumn("Measured", measured), telemetryColumn("Files", files),
+            telemetryColumn("Folders", folders), telemetryColumn("Elapsed", elapsed),
+        ])
+        telemetry.orientation = .horizontal
+        telemetry.alignment = .top
+        telemetry.distribution = .fillEqually
+        telemetry.spacing = 16
+
+        throughput.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        throughput.textColor = .secondaryLabelColor
 
         let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancel(_:)))
         cancel.bezelStyle = .rounded
-        cancel.contentTintColor = .systemRed
-        let actionRow = NSStackView(views: [NSView(), cancel])
+        let actionRow = NSStackView(views: [throughput, NSView(), cancel])
         actionRow.orientation = .horizontal
 
-        let stack = NSStackView(views: [title, currentPath, progressBar, approximation, telemetry, actionRow])
+        let progress = NSStackView(views: [progressBar, approximation])
+        progress.orientation = .vertical
+        progress.alignment = .leading
+        progress.spacing = 6
+        progressBar.widthAnchor.constraint(equalTo: progress.widthAnchor).isActive = true
+
+        let stack = NSStackView(views: [title, currentPath, progress, telemetry, actionRow])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 9
+        stack.spacing = 8
+        stack.setCustomSpacing(16, after: currentPath)
+        stack.setCustomSpacing(20, after: progress)
+        stack.setCustomSpacing(18, after: telemetry)
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
-        [currentPath, progressBar, approximation, telemetry, actionRow].forEach {
+        [currentPath, progress, telemetry, actionRow].forEach {
             $0.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
         NSLayoutConstraint.activate([
@@ -1010,11 +1042,13 @@ final class ScanProgressCardView: NSVisualEffectView {
             progressBar.minValue = 0
             progressBar.maxValue = 1
             progressBar.doubleValue = fraction
+            approximation.isHidden = false
             approximation.stringValue = "About \(Int((fraction * 100).rounded()))% of used space"
         } else {
             progressBar.isIndeterminate = true
             progressBar.startAnimation(nil)
             approximation.stringValue = ""
+            approximation.isHidden = true
         }
     }
 
@@ -1022,17 +1056,27 @@ final class ScanProgressCardView: NSVisualEffectView {
         lastPathRefreshElapsed = nil
         currentPath.stringValue = "Preparing…"
         approximation.stringValue = ""
+        approximation.isHidden = true
+        measured.stringValue = "0 bytes"
+        files.stringValue = "0"
+        folders.stringValue = "0"
+        elapsed.stringValue = "0:00"
+        throughput.stringValue = "0 items/s"
+        progressBar.isIndeterminate = true
+        progressBar.startAnimation(nil)
     }
 
     private func telemetryColumn(_ label: String, _ value: NSTextField) -> NSView {
         let heading = NSTextField(labelWithString: label)
-        heading.font = .systemFont(ofSize: 9.5, weight: .medium)
-        heading.textColor = .tertiaryLabelColor
+        heading.font = .systemFont(ofSize: 11, weight: .regular)
+        heading.textColor = .secondaryLabelColor
         value.font = .monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
         let stack = NSStackView(views: [heading, value])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 2
+        stack.spacing = 5
+        value.lineBreakMode = .byTruncatingTail
+        value.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         return stack
     }
 
@@ -1332,15 +1376,7 @@ final class BackgroundView: NSView {
     }
 }
 
-/// A workspace split view, with the two things a stock one leaves to chance on
-/// a dark, custom-drawn workspace: a divider you can *see*, and a resize cursor
-/// over the whole band you can actually grab it by.
-///
-/// A 1 pt hairline over a treemap is invisible, and a divider nobody can find
-/// is a divider nobody believes drags — which is exactly the report this
-/// answers. The cursor rects are the same band
-/// ``GrabbableSplitViewController/grabBand(forDividerAt:)`` hit-tests, so what
-/// the pointer promises and what the click does are one measurement.
+/// A thin native divider with a wider invisible grab area and resize cursor.
 @MainActor
 final class WorkspaceSplitView: NSSplitView {
     override var dividerColor: NSColor { .separatorColor }
@@ -1451,6 +1487,7 @@ final class ListDetailSplitViewController: GrabbableSplitViewController {
         inspectorViewController = inspector
         super.init(nibName: nil, bundle: nil)
         splitView = WorkspaceSplitView()
+        splitView.dividerStyle = .thin
         splitView.isVertical = true
 
         // A plain pane, not an AppKit sidebar. The sidebar behaviour put a
@@ -1558,6 +1595,7 @@ final class WorkspaceSplitViewController: GrabbableSplitViewController,
         listDetailViewController = ListDetailSplitViewController(tree: tree, inspector: inspector)
         super.init(nibName: nil, bundle: nil)
         splitView = WorkspaceSplitView()
+        splitView.dividerStyle = .thin
         // The workspace stacks: list and detail across the top, treemap across
         // the whole width below them.
         splitView.isVertical = false

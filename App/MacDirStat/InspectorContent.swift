@@ -320,38 +320,32 @@ struct InspectorContentBuilder {
         }
     }
 
-    // MARK: - Tooltip (spec §6.3)
+    // MARK: - Tooltip
 
-    /// Name, IEC size **and** exact grouped bytes, full path, the ticket-01
-    /// flags — the same facts as the inspector, one hover away.
+    /// A quick reading of the rectangle: identity first, then its on-disk
+    /// size and share. Leave a visual break between the name and measurement.
     func tooltip(for selection: WorkspaceSelection, in context: SelectionContext) -> String {
         switch selection {
         case .node(let node):
             let bytes = node.subtreeDiskBytes
-            let size = node.readState == .unreadable
-                ? "Unknown — size never guessed"
-                : "\(formatter.bytes(bytes)) · \(formatter.exactBytes(bytes))"
-            var lines = [
-                node.name,
-                size,
-                "\(kindLabel(node)) · \(formatter.share(childBytes: bytes, parentBytes: context.totalBytes)) of scan",
-            ]
-            // The same rule as the inspector's row, from the same function, so
-            // the two can never disagree about whether this item diverges.
-            if node.readState != .unreadable, let length = divergentContentLength(node) {
-                lines.append("\(length) in length")
+            var lines = [node.name, ""]
+            if node.readState == .unreadable {
+                lines.append("Size unknown · unreadable")
+            } else {
+                lines.append("\(formatter.bytes(bytes)) on disk")
+                lines.append("\(formatter.share(childBytes: bytes, parentBytes: context.totalBytes)) of scan")
+                if node.readState == .incomplete {
+                    lines.append("Incomplete · size is a lower bound")
+                }
             }
-            let flags = tooltipFlags(node)
-            if !flags.isEmpty { lines.append(flags.joined(separator: " · ")) }
-            lines.append(node.url(root: context.rootURL).path)
             return lines.joined(separator: "\n")
         case .aggregate(let descriptor):
             let count = formatter.count(Int64(descriptor.itemCount))
             return [
-                "\(count) items below individual size",
-                "combined \(formatter.bytes(descriptor.bytes)) · \(formatter.exactBytes(descriptor.bytes))",
-                "Selectable · all still listed in the tree",
-                "in \(descriptor.directory.url(root: context.rootURL).path)",
+                "\(count) small items · merged",
+                "",
+                "\(formatter.bytes(descriptor.bytes)) on disk",
+                "\(formatter.share(childBytes: descriptor.bytes, parentBytes: context.totalBytes)) of scan",
             ].joined(separator: "\n")
         }
     }
@@ -409,20 +403,6 @@ struct InspectorContentBuilder {
         let onDisk = formatter.bytes(node.subtreeDiskBytes)
         let length = formatter.bytes(node.subtreeContentBytes)
         return onDisk == length ? nil : length
-    }
-
-    private func tooltipFlags(_ node: ScanNode) -> [String] {
-        var flags: [String] = []
-        if node.kind == .package { flags.append("Package") }
-        if node.kind == .symbolicLink { flags.append("Symbolic link — never followed") }
-        if case .hardLinkElsewhere = node.attribution { flags.append("Hard link — counted elsewhere") }
-        if case .directoryCountedElsewhere = node.attribution { flags.append("Another path to a folder counted elsewhere") }
-        switch node.readState {
-        case .unreadable: flags.append("Unreadable — size not guessed")
-        case .incomplete: flags.append("Incomplete — lower bound")
-        case .complete: break
-        }
-        return flags
     }
 
     /// The ticket-01 per-item semantics, stated in words rather than encoded in

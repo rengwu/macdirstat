@@ -283,9 +283,9 @@ final class TreemapRenderingTests: XCTestCase {
         let tooltip = try XCTUnwrap(view.toolTip)
         XCTAssertTrue(tooltip.contains("movie.mp4"))
         let occupied = try onDiskBytes(of: fixture.root.appendingPathComponent("movie.mp4"))
-        XCTAssertTrue(tooltip.contains(groupedBytesText(occupied)),
-                      "the tooltip carries the exact grouped bytes too: \(tooltip)")
-        XCTAssertTrue(tooltip.contains(fixture.root.appendingPathComponent("movie.mp4").path))
+        XCTAssertTrue(tooltip.contains("\(DisplayFormatter().bytes(occupied)) on disk"))
+        XCTAssertTrue(tooltip.contains("of scan"))
+        XCTAssertFalse(tooltip.contains(fixture.root.path), "full paths belong in the detail pane")
     }
 
     func test_directoryRegionsAreOutlinedAndCarryNoFillOfTheirOwn() async throws {

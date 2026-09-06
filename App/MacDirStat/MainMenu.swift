@@ -8,7 +8,7 @@ import AppKit
 /// including in the text fields of an `NSOpenPanel`. So Edit, View, Window and
 /// Help are here for the key equivalents as much as for the items.
 enum MainMenu {
-    static let scanFolderTitle = "Scan Folder…"
+    static let scanFolderTitle = "Open Folder…"
     static let openRecentTitle = "Open Recent"
     static let clearRecentTitle = "Clear Menu"
     static let copyPathTitle = "Copy Path"
@@ -110,7 +110,7 @@ enum MainMenu {
             action: #selector(ScanSourceChoosing.chooseScanSource(_:)),
             keyEquivalent: "o"
         )
-        scan.keyEquivalentModifierMask = [.command, .shift]
+        scan.keyEquivalentModifierMask = .command
         menu.addItem(scan)
 
         let recent = NSMenuItem(title: openRecentTitle, action: nil, keyEquivalent: "")
@@ -118,13 +118,13 @@ enum MainMenu {
         menu.addItem(recent)
         menu.addItem(.separator())
 
-        // ⌘O keeps Finder's meaning — open what is selected — and the chooser
-        // takes ⇧⌘O above.
+        // Opening a selected file remains available without taking the source
+        // chooser’s keyboard shortcut.
         menu.addItem(
             NSMenuItem(
                 title: FileActionMenu.openTitle,
                 action: #selector(FileActionResponding.openSelectedItem(_:)),
-                keyEquivalent: "o"
+                keyEquivalent: ""
             )
         )
         menu.addItem(
@@ -229,9 +229,9 @@ enum MainMenu {
         let details = NSMenuItem(
             title: hideDetailsTitle,
             action: #selector(DetailPaneToggling.toggleDetailPane(_:)),
-            keyEquivalent: "i"
+            keyEquivalent: "d"
         )
-        details.keyEquivalentModifierMask = [.command, .option]
+        details.keyEquivalentModifierMask = .command
         menu.addItem(details)
         menu.addItem(.separator())
         let fullScreen = NSMenuItem(

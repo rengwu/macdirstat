@@ -206,7 +206,7 @@ extension MainWindowController: NSMenuDelegate {
     }
 }
 
-/// Four quiet, consistently padded titlebar buttons. Using a titlebar
+/// Three quiet, consistently padded titlebar buttons. Using a titlebar
 /// accessory instead of `NSToolbar` is intentional on current macOS: the
 /// latter mirrors an adjacent scroll view into its glass, which made directory
 /// rows remain plainly visible behind the window controls as the list moved.
@@ -214,41 +214,33 @@ extension MainWindowController: NSMenuDelegate {
 final class TitlebarCommandStripViewController: NSTitlebarAccessoryViewController {
     static let symbolPointSize: CGFloat = 12
     static let buttonSize = NSSize(width: 32, height: 26)
-    static let stripSize = NSSize(width: 159, height: 28)
+    static let stripSize = NSSize(width: 122, height: 28)
 
     let chooseButton: NSButton
-    let openButton: NSButton
     let revealButton: NSButton
     let detailsButton: NSButton
 
-    var buttons: [NSButton] { [chooseButton, openButton, revealButton, detailsButton] }
+    var buttons: [NSButton] { [chooseButton, revealButton, detailsButton] }
 
     init(chooseTarget: AnyObject) {
         chooseButton = Self.makeButton(
             symbol: "folder",
-            label: "Choose…",
-            toolTip: "Choose a folder or disk to scan",
+            label: MainMenu.scanFolderTitle,
+            toolTip: "Open Folder… (⌘O)",
             target: chooseTarget,
             action: #selector(MainWindowController.chooseScanSource(_:))
-        )
-        openButton = Self.makeButton(
-            symbol: "eye",
-            label: FileActionMenu.openTitle,
-            toolTip: "Open the selected item (⌘O)",
-            target: nil,
-            action: #selector(FileActionResponding.openSelectedItem(_:))
         )
         revealButton = Self.makeButton(
             symbol: "magnifyingglass",
             label: FileActionMenu.revealTitle,
-            toolTip: "Reveal the selected item in Finder (⌘R)",
+            toolTip: "Reveal in Finder",
             target: nil,
             action: #selector(FileActionResponding.revealSelectedItem(_:))
         )
         detailsButton = Self.makeButton(
             symbol: "sidebar.trailing",
             label: "Details",
-            toolTip: "Show or hide the detail pane (⌥⌘I)",
+            toolTip: "Show or hide the detail pane (⌘D)",
             target: nil,
             action: #selector(DetailPaneToggling.toggleDetailPane(_:))
         )
@@ -268,7 +260,7 @@ final class TitlebarCommandStripViewController: NSTitlebarAccessoryViewControlle
             divider.heightAnchor.constraint(equalToConstant: 14),
         ])
 
-        let stack = NSStackView(views: [chooseButton, divider, openButton, revealButton, detailsButton])
+        let stack = NSStackView(views: [chooseButton, divider, revealButton, detailsButton])
         stack.orientation = .horizontal
         stack.alignment = .centerY
         stack.spacing = 5
@@ -281,7 +273,6 @@ final class TitlebarCommandStripViewController: NSTitlebarAccessoryViewControlle
     }
 
     func setFileActionsEnabled(_ enabled: Bool) {
-        openButton.isEnabled = enabled
         revealButton.isEnabled = enabled
     }
 
@@ -299,7 +290,7 @@ final class TitlebarCommandStripViewController: NSTitlebarAccessoryViewControlle
         button.title = ""
         button.bezelStyle = .toolbar
         button.controlSize = .small
-        // A permanent bezel makes four small commands look like a row of
+        // A permanent bezel makes three small commands look like a row of
         // cramped form buttons. Keep the native toolbar hover and pressed
         // treatment, but let the symbols sit quietly in the titlebar at rest.
         button.showsBorderOnlyWhileMouseInside = true

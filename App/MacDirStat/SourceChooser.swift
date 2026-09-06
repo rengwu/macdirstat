@@ -129,6 +129,7 @@ final class SourceChooserViewController: NSViewController, NSTableViewDataSource
 
     private let choices: [SourceChoice]
     private var folderURL: URL?
+    private var sourceListHeight: NSLayoutConstraint?
     private let emptyLabel = NSTextField(labelWithString: "No eligible disks are mounted. Choose a folder below.")
     let sourceTable = NSTableView()
     let searchButton = NSButton(title: "Search", target: nil, action: nil)
@@ -146,7 +147,7 @@ final class SourceChooserViewController: NSViewController, NSTableViewDataSource
         self.choices = choices
         super.init(nibName: nil, bundle: nil)
         fastModeCheckbox.state = packageScanMode == .summarized ? .on : .off
-        preferredContentSize = NSSize(width: 520, height: 350)
+        preferredContentSize = NSSize(width: 480, height: 300)
     }
 
     required init?(coder: NSCoder) { nil }
@@ -156,14 +157,14 @@ final class SourceChooserViewController: NSViewController, NSTableViewDataSource
         root.translatesAutoresizingMaskIntoConstraints = false
 
         let title = NSTextField(labelWithString: "Choose a Source")
-        title.font = .systemFont(ofSize: 19, weight: .semibold)
-        let subtitle = NSTextField(labelWithString: "Select a disk or folder, then click Search.")
+        title.font = .systemFont(ofSize: 17, weight: .semibold)
+        let subtitle = NSTextField(labelWithString: "Select a disk or choose a folder to scan.")
         subtitle.textColor = .secondaryLabelColor
 
         let sourceList = NSBox()
         sourceList.boxType = .custom
         sourceList.titlePosition = .noTitle
-        sourceList.cornerRadius = 10
+        sourceList.cornerRadius = 6
         sourceList.borderColor = .separatorColor
         sourceList.borderWidth = 1
         sourceList.fillColor = .controlBackgroundColor
@@ -195,42 +196,34 @@ final class SourceChooserViewController: NSViewController, NSTableViewDataSource
         emptyLabel.textColor = .secondaryLabelColor
         emptyLabel.isHidden = !choices.isEmpty
 
-        let divider = NSBox()
-        divider.boxType = .separator
-        let folder = NSButton(title: "  Choose Folder…", target: self, action: #selector(chooseFolder(_:)))
+        let folder = NSButton(title: "Choose Folder…", target: self, action: #selector(chooseFolder(_:)))
         folder.setAccessibilityLabel("Choose Folder…")
-        folder.isBordered = false
+        folder.bezelStyle = .rounded
         folder.alignment = .left
         folder.font = .systemFont(ofSize: 13, weight: .medium)
-        folder.contentTintColor = .controlAccentColor
         folder.image = NSImage(systemSymbolName: "folder.badge.plus", accessibilityDescription: nil)
         folder.imagePosition = .imageLeading
         folder.imageHugsTitle = true
         folder.toolTip = "Add a folder to the sources above"
 
-        [scrollView, emptyLabel, divider, folder].forEach {
+        [scrollView, emptyLabel].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             listContent.addSubview($0)
         }
+        let listHeight = scrollView.heightAnchor.constraint(equalToConstant: sourceListContentHeight)
+        sourceListHeight = listHeight
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: listContent.topAnchor, constant: 4),
             scrollView.leadingAnchor.constraint(equalTo: listContent.leadingAnchor, constant: 4),
             scrollView.trailingAnchor.constraint(equalTo: listContent.trailingAnchor, constant: -4),
-            scrollView.heightAnchor.constraint(equalToConstant: CGFloat(min(4, max(2, choices.count + 1))) * 60 + 24),
+            listHeight,
             emptyLabel.centerXAnchor.constraint(equalTo: scrollView.centerXAnchor),
             emptyLabel.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor),
-            divider.topAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: 4),
-            divider.leadingAnchor.constraint(equalTo: listContent.leadingAnchor, constant: 12),
-            divider.trailingAnchor.constraint(equalTo: listContent.trailingAnchor, constant: -12),
-            folder.topAnchor.constraint(equalTo: divider.bottomAnchor, constant: 4),
-            folder.leadingAnchor.constraint(equalTo: listContent.leadingAnchor, constant: 16),
-            folder.trailingAnchor.constraint(equalTo: listContent.trailingAnchor, constant: -16),
-            folder.heightAnchor.constraint(equalToConstant: 36),
-            folder.bottomAnchor.constraint(equalTo: listContent.bottomAnchor, constant: -4),
+            scrollView.bottomAnchor.constraint(equalTo: listContent.bottomAnchor, constant: -4),
         ])
 
         fastModeCheckbox.toolTip = "Measure each app as one item without building its internal file tree."
-        let fastModeDetail = NSTextField(labelWithString: "Summarize app bundles without showing their contents.")
+        let fastModeDetail = NSTextField(labelWithString: "Measure apps without listing the files inside them.")
         fastModeDetail.font = .systemFont(ofSize: 11)
         fastModeDetail.textColor = .secondaryLabelColor
 
@@ -246,7 +239,7 @@ final class SourceChooserViewController: NSViewController, NSTableViewDataSource
         buttons.orientation = .horizontal
         buttons.spacing = 8
 
-        [title, subtitle, sourceList, fastModeCheckbox, fastModeDetail, buttons].forEach {
+        [title, subtitle, sourceList, folder, fastModeCheckbox, fastModeDetail, buttons].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview($0)
         }
@@ -258,18 +251,26 @@ final class SourceChooserViewController: NSViewController, NSTableViewDataSource
             sourceList.topAnchor.constraint(equalTo: subtitle.bottomAnchor, constant: 18),
             sourceList.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 24),
             sourceList.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -24),
-            fastModeCheckbox.topAnchor.constraint(equalTo: sourceList.bottomAnchor, constant: 18),
+            folder.topAnchor.constraint(equalTo: sourceList.bottomAnchor, constant: 10),
+            folder.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+            fastModeCheckbox.topAnchor.constraint(equalTo: folder.bottomAnchor, constant: 20),
             fastModeCheckbox.leadingAnchor.constraint(equalTo: title.leadingAnchor),
             fastModeDetail.topAnchor.constraint(equalTo: fastModeCheckbox.bottomAnchor, constant: 2),
             fastModeDetail.leadingAnchor.constraint(equalTo: fastModeCheckbox.leadingAnchor, constant: 20),
             buttons.topAnchor.constraint(equalTo: fastModeDetail.bottomAnchor, constant: 20),
             buttons.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -24),
             buttons.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -20),
-            searchButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 88),
+            searchButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 80),
+            cancel.widthAnchor.constraint(equalTo: searchButton.widthAnchor),
             root.widthAnchor.constraint(equalToConstant: preferredContentSize.width),
         ])
         view = root
         preferredContentSize = root.fittingSize
+    }
+
+    private var sourceListContentHeight: CGFloat {
+        // Inset tables reserve padding above and below their rows.
+        CGFloat(min(4, max(1, choices.count + (folderURL == nil ? 0 : 1)))) * 60 + 24
     }
 
     override func viewDidAppear() {
@@ -327,7 +328,10 @@ final class SourceChooserViewController: NSViewController, NSTableViewDataSource
         loadViewIfNeeded()
         folderURL = url
         emptyLabel.isHidden = true
+        sourceListHeight?.constant = sourceListContentHeight
         sourceTable.reloadData()
+        preferredContentSize = view.fittingSize
+        view.window?.setContentSize(preferredContentSize)
         sourceTable.selectRowIndexes(IndexSet(integer: choices.count), byExtendingSelection: false)
         sourceTable.scrollRowToVisible(choices.count)
     }
