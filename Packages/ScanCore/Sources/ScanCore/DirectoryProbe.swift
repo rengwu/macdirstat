@@ -69,6 +69,22 @@ public protocol ConcurrentDirectoryListingProbe: DirectoryProbe {}
 /// The result of measuring a package without materializing its interior as
 /// scan nodes.
 public struct PackageSummary: Sendable, Equatable {
+    /// One contribution per multiply-linked inode, already included in the
+    /// totals. The session reconciles these against its scan-wide index.
+    public struct HardLink: Sendable, Equatable {
+        public var identity: FileSystemIdentity
+        public var relativePath: [String]
+        public var diskBytes: Int64
+        public var contentBytes: Int64
+
+        public init(identity: FileSystemIdentity, relativePath: [String], diskBytes: Int64, contentBytes: Int64) {
+            self.identity = identity
+            self.relativePath = relativePath
+            self.diskBytes = max(0, diskBytes)
+            self.contentBytes = max(0, contentBytes)
+        }
+    }
+
     public var diskBytes: Int64
     public var contentBytes: Int64
     public var fileCount: Int64
@@ -76,6 +92,7 @@ public struct PackageSummary: Sendable, Equatable {
     public var isComplete: Bool
     public var remoteOnlyItems: Int
     public var crossedVolumeBoundaries: Int
+    public var hardLinks: [HardLink]
 
     public init(
         diskBytes: Int64,
@@ -84,7 +101,8 @@ public struct PackageSummary: Sendable, Equatable {
         directoryCount: Int,
         isComplete: Bool = true,
         remoteOnlyItems: Int = 0,
-        crossedVolumeBoundaries: Int = 0
+        crossedVolumeBoundaries: Int = 0,
+        hardLinks: [HardLink] = []
     ) {
         self.diskBytes = max(0, diskBytes)
         self.contentBytes = max(0, contentBytes)
@@ -93,6 +111,7 @@ public struct PackageSummary: Sendable, Equatable {
         self.isComplete = isComplete
         self.remoteOnlyItems = max(0, remoteOnlyItems)
         self.crossedVolumeBoundaries = max(0, crossedVolumeBoundaries)
+        self.hardLinks = hardLinks
     }
 }
 

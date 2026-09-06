@@ -468,15 +468,18 @@ struct InspectorContentBuilder {
         }
 
         if node.kind == .package {
+            var detail = "macOS presents this folder as a single item."
+            if node.isPackageSummary {
+                detail += " Fast mode keeps its contents collapsed. Scan again with Fast mode off to browse them."
+            } else if !node.children.isEmpty {
+                detail += " Expand it in the tree to browse its scanned contents."
+            }
             notes.append(
                 .init(
                     severity: .info,
                     glyph: "▣",
                     title: "Package.",
-                    detail: """
-                        Measured by enumerating its descendants during the scan, so this total \
-                        is exact. Expanding it in the tree subdivides its box.
-                        """
+                    detail: detail
                 )
             )
         }

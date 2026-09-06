@@ -116,7 +116,7 @@ final class InspectorContentTests: XCTestCase {
         )
     }
 
-    func test_aPackageIsOneItemAndSaysExpandingItSubdividesItsBox() async throws {
+    func test_aDetailedPackageOffersToBrowseItsScannedContents() async throws {
         let fixture = try await ScannedFixture.make(in: self) { root in
             let package = try makeDirectory("Editor.app", in: root)
             let contents = try makeDirectory("Contents", in: package)
@@ -130,7 +130,53 @@ final class InspectorContentTests: XCTestCase {
         XCTAssertEqual(content.subtitle, "Package")
         XCTAssertEqual(content.sizeCaption, "total on disk")
         XCTAssertTrue(content.notes.contains { $0.title == "Package." })
-        XCTAssertTrue(content.notes.contains { $0.detail.contains("subdivides its box") })
+        XCTAssertTrue(content.notes.contains { $0.detail.contains("Expand it in the tree") })
+    }
+
+    func test_aFastPackageExplainsHowToBrowseItsContents() async throws {
+        let fixture = try await ScannedFixture.make(in: self, packageScanMode: .summarized) { root in
+            let package = try makeDirectory("Editor.app", in: root)
+            try writeFile("file.bin", bytes: 512, in: package)
+        }
+        let package = try fixture.node(named: "Editor.app")
+        XCTAssertTrue(package.isPackageSummary)
+        XCTAssertTrue(package.children.isEmpty)
+        let content = builder.content(for: .node(package), in: context(fixture))
+        let note = try XCTUnwrap(content.notes.first { $0.title == "Package." })
+        XCTAssertTrue(note.detail.contains("Fast mode off"))
+        XCTAssertFalse(note.detail.contains("Expand it"))
+    }
+
+    func test_incompletePackagesKeepTheLowerBoundWarningInBothModes() async throws {
+        for mode in [PackageScanMode.detailed, .summarized] {
+            let fixture = try await ScannedFixture.make(in: self, packageScanMode: mode) { root in
+                let package = try makeDirectory("Editor.app", in: root)
+                try writeFile("readable.bin", bytes: 512, in: package)
+                let locked = try makeDirectory("locked", in: package)
+                try writeFile("hidden.bin", bytes: 64, in: locked)
+                try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: locked.path)
+            }
+            let package = try fixture.node(named: "Editor.app")
+            try XCTSkipIf(package.readState == .complete, "this host can read chmod-000 directories")
+            XCTAssertEqual(package.readState, .incomplete)
+            let content = builder.content(for: .node(package), in: context(fixture))
+            let note = try XCTUnwrap(content.notes.first { $0.title == "Package." })
+            XCTAssertFalse(note.detail.contains("exact"))
+            XCTAssertTrue(content.notes.contains { $0.severity == .warning && $0.detail.contains("lower bound") })
+            XCTAssertEqual(note.detail.contains("Fast mode off"), mode == .summarized)
+        }
+    }
+
+    func test_anEmptyPackageDoesNotOfferToExpandMissingContents() async throws {
+        let fixture = try await ScannedFixture.make(in: self) { root in
+            _ = try makeDirectory("Empty.app", in: root)
+        }
+        let package = try fixture.node(named: "Empty.app")
+        XCTAssertTrue(package.children.isEmpty)
+        let content = builder.content(for: .node(package), in: context(fixture))
+        let note = try XCTUnwrap(content.notes.first { $0.title == "Package." })
+        XCTAssertFalse(note.detail.contains("Expand it"))
+        XCTAssertFalse(note.detail.contains("exact"))
     }
 
     func test_anUnreadableEntryNeverGuessesASizeAndItsAncestorsAreIncomplete() async throws {

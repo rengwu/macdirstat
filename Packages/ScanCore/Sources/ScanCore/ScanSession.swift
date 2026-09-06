@@ -536,7 +536,7 @@ final class ScanSession {
                     // and one set of contents.
                     bytes = 0
                     contentBytes = 0
-                    node.markHardLinkElsewhere(owner: owner.pathComponents())
+                    node.markHardLinkElsewhere(owner: owner)
                 }
             } else {
                 // A size we could not read is never guessed (spec §3.5) — and
@@ -552,8 +552,17 @@ final class ScanSession {
     }
 
     private func attributePackageSummary(_ node: ScanNode, _ summary: PackageSummary) {
-        let bytes = max(0, summary.diskBytes)
-        let contentBytes = max(0, summary.contentBytes)
+        var bytes = max(0, summary.diskBytes)
+        var contentBytes = max(0, summary.contentBytes)
+        for link in summary.hardLinks {
+            if case .duplicate = hardLinks.claim(
+                link.identity,
+                ownerPath: node.pathComponents() + link.relativePath
+            ) {
+                bytes -= link.diskBytes
+                contentBytes -= link.contentBytes
+            }
+        }
         node.attributePackageSummary(
             diskBytes: bytes,
             contentBytes: contentBytes,

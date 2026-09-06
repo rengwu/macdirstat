@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		AB000000000000000000B061 /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F061 /* LICENSE */; };
 		AB000000000000000000B060 /* AppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F060 /* AppIcon.icns */; };
 		AB000000000000000000B001 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F001 /* main.swift */; };
 		AB000000000000000000B002 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000F002 /* AppDelegate.swift */; };
@@ -49,6 +50,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		AB000000000000000000F061 /* LICENSE */ = {isa = PBXFileReference; lastKnownFileType = text; path = LICENSE; sourceTree = "<group>"; };
 		AB000000000000000000F060 /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = Resources/AppIcon.icns; sourceTree = "<group>"; };
 		AB000000000000000000F001 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		AB000000000000000000F002 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
@@ -105,6 +107,7 @@
 		AB0000000000000000000002 = {
 			isa = PBXGroup;
 			children = (
+				AB000000000000000000F061 /* LICENSE */,
 				AB0000000000000000000004 /* App */,
 				AB0000000000000000000009 /* TestPlans */,
 				AB0000000000000000000003 /* Products */,
@@ -270,6 +273,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				AB000000000000000000B060 /* AppIcon.icns in Resources */,
+				AB000000000000000000B061 /* LICENSE in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

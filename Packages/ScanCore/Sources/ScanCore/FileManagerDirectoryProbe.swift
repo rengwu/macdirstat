@@ -199,7 +199,7 @@ public struct FileManagerDirectoryProbe: PackageSummarizingProbe, ConcurrentDire
         var directoryCount = 0
         var remoteOnlyItems = 0
         var crossedVolumeBoundaries = 0
-        var hardLinkOwners = Set<FileSystemIdentity>()
+        var hardLinkOwners: [FileSystemIdentity: PackageSummary.HardLink] = [:]
 
         for case let child as URL in enumerator {
             if shouldStop() { return nil }
@@ -233,22 +233,41 @@ public struct FileManagerDirectoryProbe: PackageSummarizingProbe, ConcurrentDire
                 continue
             }
             guard values.isRegularFile == true else { continue }
+            // Count names, including weightless duplicates, just as the
+            // detailed scanner does. Byte ownership is a separate concern.
+            fileCount += 1
 
             guard let allocation = values.fileAllocatedSize else {
                 encounteredError = true
                 continue
             }
 
+            let measured = Int64(max(0, allocation))
+            let contentLength = Int64(max(0, values.fileSize ?? allocation))
             if let links = values.linkCount, links > 1,
                let object = values.fileResourceIdentifier as? NSObject {
                 let identity = FileSystemIdentity(object)
-                guard hardLinkOwners.insert(identity).inserted else { continue }
+                // The enumerator may canonicalize /var to /private/var, so
+                // derive the relative path from depth, not absolute prefixes.
+                let path = Array(child.pathComponents.suffix(enumerator.level))
+                if let owner = hardLinkOwners[identity] {
+                    // Enumeration order is unspecified. Keep the same owner
+                    // path a detailed walk would encounter first.
+                    if Self.packagePathPrecedes(path, owner.relativePath) {
+                        hardLinkOwners[identity]?.relativePath = path
+                    }
+                    continue
+                }
+                hardLinkOwners[identity] = PackageSummary.HardLink(
+                    identity: identity,
+                    relativePath: path,
+                    diskBytes: measured,
+                    contentBytes: contentLength
+                )
             }
 
-            let measured = Int64(max(0, allocation))
             diskBytes += measured
-            contentBytes += Int64(max(0, values.fileSize ?? allocation))
-            fileCount += 1
+            contentBytes += contentLength
         }
 
         return PackageSummary(
@@ -258,8 +277,27 @@ public struct FileManagerDirectoryProbe: PackageSummarizingProbe, ConcurrentDire
             directoryCount: directoryCount,
             isComplete: !encounteredError,
             remoteOnlyItems: remoteOnlyItems,
-            crossedVolumeBoundaries: crossedVolumeBoundaries
+            crossedVolumeBoundaries: crossedVolumeBoundaries,
+            hardLinks: hardLinkOwners.values.sorted {
+                Self.packagePathPrecedes($0.relativePath, $1.relativePath)
+            }
         )
+    }
+
+    /// Mirrors the detailed cursor: name order, with hidden directories
+    /// deferred until their visible siblings have finished. Hidden files are
+    /// not deferred. Only the paths of hard links need this comparison.
+    private static func packagePathPrecedes(_ lhs: [String], _ rhs: [String]) -> Bool {
+        for index in 0..<min(lhs.count, rhs.count) {
+            let left = lhs[index]
+            let right = rhs[index]
+            if left.utf8.elementsEqual(right.utf8) { continue }
+            let leftDeferred = index < lhs.count - 1 && left.hasPrefix(".")
+            let rightDeferred = index < rhs.count - 1 && right.hasPrefix(".")
+            if leftDeferred != rightDeferred { return !leftDeferred }
+            return NameOrder.precedes(left, right)
+        }
+        return lhs.count < rhs.count
     }
 
     // MARK: - Building an `EntryMeta`

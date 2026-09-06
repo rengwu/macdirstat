@@ -115,3 +115,7 @@ often enormous internal app tree while retaining the app's measured total.
 `.plan/maps/macos-disk-visualizer/spec.md` is the original specification. It is a
 record, not a contract: the decisions listed at the top of that file supersede
 the body wherever the two disagree.
+
+## License
+
+[MIT](LICENSE) — Copyright (c) 2026 John Goh.

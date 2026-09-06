@@ -28,18 +28,12 @@ struct HardLinkIndex {
         /// The first in-scope name for this inode; it owns the bytes.
         case owner
         /// A later name for an inode already counted at `of`.
-        case duplicate(of: ScanNode)
-
-        static func == (lhs: Outcome, rhs: Outcome) -> Bool {
-            switch (lhs, rhs) {
-            case (.notALink, .notALink), (.owner, .owner): return true
-            case (.duplicate(let a), .duplicate(let b)): return a === b
-            default: return false
-            }
-        }
+        case duplicate(of: [String])
     }
 
-    private var owners: [FileSystemIdentity: ScanNode] = [:]
+    // Paths also represent owners inside summarized packages, which have no
+    // materialized file node. Retain only one path per multiply-linked inode.
+    private var owners: [FileSystemIdentity: [String]] = [:]
     /// `volumeSupportsHardLinksKey`, read once at pre-flight. Where the volume
     /// cannot hold a hard link, no dedup is possible and the whole mechanism is
     /// skipped.
@@ -63,10 +57,16 @@ struct HardLinkIndex {
             return .notALink
         }
 
+        return claim(identity, ownerPath: node.pathComponents())
+    }
+
+    /// A package summary has already established that this is a hard link.
+    mutating func claim(_ identity: FileSystemIdentity, ownerPath: @autoclosure () -> [String]) -> Outcome {
+        guard isEnabled else { return .notALink }
         if let owner = owners[identity] {
             return .duplicate(of: owner)
         }
-        owners[identity] = node
+        owners[identity] = ownerPath()
         return .owner
     }
 }

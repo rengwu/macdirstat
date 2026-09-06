@@ -188,7 +188,7 @@ final class IdentityTests: XCTestCase {
         guard case .duplicate(let owner) = index.claim(
             EntryMeta(name: "linked-again", linkCount: 2, fileIdentity: inode7), for: second
         ) else { return XCTFail("expected the second name to find the owner") }
-        XCTAssertTrue(owner === node)
+        XCTAssertEqual(owner, node.pathComponents())
         XCTAssertEqual(index.count, 1, "a hit inserts nothing")
     }
 

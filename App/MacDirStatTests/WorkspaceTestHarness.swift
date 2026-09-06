@@ -29,6 +29,7 @@ final class ScannedFixture {
 
     static func make(
         in testCase: XCTestCase,
+        packageScanMode: PackageScanMode = .detailed,
         file: StaticString = #filePath,
         line: UInt = #line,
         _ build: (URL) throws -> Void
@@ -54,7 +55,7 @@ final class ScannedFixture {
                 finished.fulfill()
             }
         }
-        model.start(root: root, mode: .folder)
+        model.start(root: root, mode: .folder, packageScanMode: packageScanMode)
         await testCase.fulfillment(of: [finished], timeout: 20)
         guard let rootNode = model.root else {
             XCTFail("fixture scan produced no tree", file: file, line: line)
