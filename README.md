@@ -27,13 +27,20 @@ file behind it. It’s free, open source, and read-only.
 
 ## Get started
 
-**Requires macOS 14 Sonoma or later. Builds for Apple Silicon and Intel Macs.**
+**Requires macOS 14 Sonoma or later. Runs on Apple Silicon and Intel Macs.**
 
-There is no packaged download yet. Developer ID signing and notarization are
-still pending; for now, build from source. Packaged downloads will appear on the
-[Releases page](https://github.com/rengwu/macdirstat/releases).
+1. Download the [MacDirStat 1.0.0 universal ZIP](https://github.com/rengwu/macdirstat/releases/download/v1.0.0/MacDirStat-1.0.0-macos-universal.zip).
+2. Extract it and drag **MacDirStat.app** to **Applications**.
+3. Launch MacDirStat and choose a folder or disk to scan.
 
-### Build and install
+This is a **prerelease**, ad hoc signed but not yet Developer ID signed or
+notarized. macOS may block the first launch; if you trust this download, follow
+[Apple’s instructions for opening an app from an unidentified developer](https://support.apple.com/guide/mac-help/mh40616/mac).
+You do not need Xcode or an Apple Developer account to run the download.
+See the [release notes and checksums](https://github.com/rengwu/macdirstat/releases/tag/v1.0.0)
+for verification and known limitations.
+
+### Build from source
 
 Building requires the **full Xcode app**, including its macOS SDK. The standalone
 Command Line Tools are not enough to build and test the app. You do not need a
