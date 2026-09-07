@@ -116,6 +116,7 @@ Foundation-only packages with no third-party package dependencies.
 
 See [the development guide](docs/DEVELOPING.md) for build commands, tests, and
 repository structure, or [CONTEXT.md](CONTEXT.md) for measurement terminology.
+Maintainers can use [the release guide](docs/RELEASING.md) to prepare a GitHub release.
 
 ## License
 

@@ -21,7 +21,7 @@ RUNNING      := $(CONFIG)/$(SCHEME).app/Contents/MacOS
 XCODEBUILD   := xcodebuild -project $(PROJECT) -destination '$(DESTINATION)'
 
 .DEFAULT_GOAL := help
-.PHONY: help build run rerun console stop release test test-packages test-app reset clean
+.PHONY: help build run rerun console stop release package test test-packages test-app reset clean
 
 help: ## List the targets
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -47,6 +47,9 @@ stop: ## Quit a running dev instance
 
 release: ## Build the release app
 	@$(XCODEBUILD) build -scheme $(SCHEME) -configuration Release -derivedDataPath $(DERIVED)
+
+package: ## Build verified release ZIPs (VERSION=1.0.0 BUILD_NUMBER=1 make package)
+	@./Scripts/package-release.sh
 
 test: ## Run everything: both packages, then the app target
 	@$(MAKE) --no-print-directory test-packages

@@ -14,6 +14,7 @@ make rerun    # quit the dev instance, rebuild, and launch again
 make console  # launch with console output attached
 make stop     # quit the dev instance
 make release  # build the Release app for Intel and Apple Silicon
+VERSION=1.0.0 BUILD_NUMBER=1 make package  # build and verify release ZIPs
 ```
 
 The Release app is at
@@ -21,6 +22,10 @@ The Release app is at
 signs locally with an ad hoc identity; `make release` does not notarize or
 package the app for public distribution. The MIT license is copied into the app’s
 resources.
+
+`make package` produces versioned app and debug-symbol ZIPs, checksums, and release
+notes in `dist/`. See [the release guide](RELEASING.md) for the GitHub workflow
+and the steps to review a draft before publishing.
 
 The app remembers divider positions, columns, sort order, Fast mode, and recent
 folders. To reset this local state:
