@@ -161,7 +161,7 @@ public final class ScriptedDirectoryProbe: DirectoryProbe, @unchecked Sendable {
         /// filesystem is presented as part of the root's own volume.
         mountPoints: Set<String> = []
     ) {
-        self.rootURL = rootURL.standardizedFileURL
+        self.rootURL = rootURL
         self.root = root
         self.info = volumeInfo
         self.metadataFailure = metadataFailure
@@ -195,7 +195,7 @@ public final class ScriptedDirectoryProbe: DirectoryProbe, @unchecked Sendable {
 
     public func metadata(of url: URL) throws -> EntryMeta {
         let entry = try record(.metadata, url)
-        if let failure = metadataFailure, url.standardizedFileURL == rootURL { throw failure }
+        if let failure = metadataFailure, relativePath(of: url).isEmpty { throw failure }
         return entry.meta
     }
 
@@ -229,10 +229,13 @@ public final class ScriptedDirectoryProbe: DirectoryProbe, @unchecked Sendable {
     }
 
     private func relativePath(of url: URL) -> String {
-        let full = url.standardizedFileURL.pathComponents
+        // These paths describe a virtual filesystem, including test chains
+        // longer than PATH_MAX. Filesystem normalization can truncate them
+        // on macOS 15; compare URL components without consulting the host.
+        let full = url.pathComponents
         let base = rootURL.pathComponents
         guard full.count >= base.count, Array(full.prefix(base.count)) == base else {
-            return url.standardizedFileURL.path
+            return url.path
         }
         return full.dropFirst(base.count).joined(separator: "/")
     }

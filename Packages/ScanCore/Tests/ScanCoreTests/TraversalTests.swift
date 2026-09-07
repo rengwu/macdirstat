@@ -80,6 +80,7 @@ final class TraversalTests: XCTestCase {
 
         guard let result = events.result else { return XCTFail("expected a result") }
         XCTAssertEqual(result.reason, .completed)
+        XCTAssertEqual(result.errors.total, 0, "the virtual tree must not inherit the host's path-length limit")
         XCTAssertEqual(result.root.subtreeDiskBytes, 7)
         XCTAssertEqual(result.root.fileCount, 1)
         XCTAssertEqual(probe.listedPaths.count, depth + 1, "one listing per directory, root included")
