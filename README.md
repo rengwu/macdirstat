@@ -6,6 +6,10 @@ MacDirStat is a native macOS disk visualizer with a directory tree and a classic
 flat treemap. Pick a folder or disk, scan it, and select a rectangle to find the
 file behind it. It’s free, open source, and read-only.
 
+[![Download for macOS — v1.0.0](https://img.shields.io/badge/Download_for_macOS-v1.0.0-007AFF?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/rengwu/macdirstat/releases/download/v1.0.0/MacDirStat-1.0.0-macos-universal.zip)
+
+macOS 14+ · Apple Silicon & Intel · Prerelease
+
 ![MacDirStat showing a disk scan, a treemap colored by file type, and details for Visual Studio Code](docs/images/macdirstat.png)
 
 *A disk scan with Visual Studio Code selected. Rectangle area represents on-disk size.*
